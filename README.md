@@ -238,6 +238,20 @@ code-memory ingest /path/to/repo
 
 This walks the repo, extracts symbols / imports / calls with tree-sitter, writes them to the FalkorDB graph, and indexes each symbol snippet into Qdrant via `bge-m3`.
 
+> [!WARNING]
+> **First ingest can take a while.** Wall time is dominated by embedding every
+> symbol through Ollama (`bge-m3` on CPU is the bottleneck on most laptops) and
+> scales roughly linearly with codebase size. Rough orders of magnitude on an
+> M-series Mac:
+>
+> - Small repo (~1k symbols): seconds
+> - Mid repo (~10k symbols): a few minutes
+> - Large repo (100k+ symbols): tens of minutes to an hour+
+>
+> GPU-accelerated Ollama, fewer files (tune ignore globs), or a smaller
+> embedding model (`nomic-embed-text`) all cut this down. Subsequent
+> `reingest` calls only touch changed files, so the slow path is one-time.
+
 ### Query the memory
 
 ```bash
