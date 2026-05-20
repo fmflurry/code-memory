@@ -136,9 +136,9 @@ The result is a memory that **gets smarter the more the agent uses the
 codebase**, without ever bloating the context window. Each task teaches the
 system; each query pays back only the few KB that are actually relevant.
 
-> Status: MCP server is on the [roadmap](#roadmap). Today, the same primitives
-> are reachable via the CLI (`retrieve`, `record`, `reingest`) and can be
-> wired up via shell hooks in the meantime.
+> Status: an MCP server ships in the package (see [MCP server](#mcp-server)
+> below). The same primitives remain reachable via the CLI (`retrieve`,
+> `record`, `reingest`) for shell-hook workflows.
 
 ---
 
@@ -260,6 +260,91 @@ code-memory record \
   --verdict pass
 ```
 
+### MCP server
+
+`code-memory` ships an MCP (Model Context Protocol) server that exposes the
+same primitives as native tools. The agent can call them in its normal
+tool-selection loop — no shell parsing, no slash command.
+
+Tools advertised:
+
+| Tool                    | Purpose                                                       |
+| ----------------------- | ------------------------------------------------------------- |
+| `codememory_retrieve`   | Semantic + graph + episodic recall (returns a Context Pack).  |
+| `codememory_record`     | Log a finished task (prompt / plan / patch / verdict).        |
+| `codememory_reingest`   | Re-index a single file after edits.                           |
+
+Transport: stdio. Script entrypoint: `code-memory-mcp`.
+
+#### Recommended: `uvx` (no clone, no venv)
+
+Requires [`uv`](https://docs.astral.sh/uv/) (`brew install uv` / `pipx install uv`).
+`uvx` fetches, caches, and runs the package in an isolated environment.
+
+##### Claude Code
+
+```bash
+claude mcp add code-memory \
+  --scope user \
+  --env CODE_MEMORY_PROJECT=auto \
+  -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
+```
+
+##### OpenCode
+
+```json
+{
+  "mcp": {
+    "code-memory": {
+      "type": "local",
+      "command": ["uvx", "--from", "git+https://github.com/fmflurry/code-memory", "code-memory-mcp"],
+      "enabled": true,
+      "environment": { "CODE_MEMORY_PROJECT": "auto" }
+    }
+  }
+}
+```
+
+Pin a version by appending `@<tag-or-sha>` to the git URL, e.g.
+`git+https://github.com/fmflurry/code-memory@v0.1.0`.
+
+> Once the package is published to PyPI the `--from git+…` part drops:
+> `command: ["uvx", "code-memory-mcp"]`.
+
+The server resolves the project slug from the cwd by default (git toplevel
+basename), so it Just Works across repos. Override per-call with the
+`project` argument or globally via `CODE_MEMORY_PROJECT`.
+
+#### Alternative: pipx (persistent install on `$PATH`)
+
+```bash
+pipx install git+https://github.com/fmflurry/code-memory
+# then in any MCP client:
+#   command: ["code-memory-mcp"]
+```
+
+#### Local checkout (development)
+
+```json
+{
+  "mcp": {
+    "code-memory": {
+      "type": "local",
+      "command": ["/absolute/path/to/code-memory/.venv/bin/code-memory-mcp"],
+      "enabled": true,
+      "environment": { "CODE_MEMORY_PROJECT": "auto" }
+    }
+  }
+}
+```
+
+#### Run directly (debug)
+
+```bash
+uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
+# speaks JSON-RPC on stdio; useful with `npx @modelcontextprotocol/inspector`
+```
+
 ### Inspect the stores
 
 | Store      | UI                                                  |
@@ -289,7 +374,7 @@ src/code_memory/
 
 - [ ] Per-project namespacing (separate graphs/collections per repo)
 - [ ] File-watcher daemon for live re-ingest
-- [ ] MCP server (`memory.retrieve`, `memory.record`, `memory.reingest`)
+- [x] MCP server (`codememory_retrieve`, `codememory_record`, `codememory_reingest`)
 - [ ] Cross-encoder rerank step
 - [ ] Resolved call edges (bind `CALLS` targets to actual `Symbol` nodes)
 - [ ] More languages (Rust, Go, Java, C#)

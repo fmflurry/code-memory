@@ -16,6 +16,8 @@ dependencies = [
   "pydantic>=2.8",
   "typer>=0.12",
   "rich>=13.7",
+  "mcp>=1.0",
+  "anyio>=4.4",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +30,7 @@ dev = [
 
 [project.scripts]
 code-memory = "code_memory.cli:app"
+code-memory-mcp = "code_memory.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/code_memory"]
