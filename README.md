@@ -83,18 +83,19 @@ Net effect: memory grows with the repo; **context stays roughly constant**.
 
 ---
 
-## Auto-learning and auto-query (planned)
+## Auto-learning and auto-query
 
-Today the agent has to call `code-memory retrieve` and `code-memory record`
-explicitly (or via a hook). That works but pushes discipline onto the user and
-the agent. The goal is to make memory **ambient**: the agent uses it without
-thinking about it, and the memory updates itself as the agent works.
+Without MCP, the agent has to call `code-memory retrieve` and `code-memory
+record` explicitly (or via a hook). That works but pushes discipline onto
+the user and the agent. The goal is to make memory **ambient**: the agent
+uses it without thinking about it, and the memory updates itself as the
+agent works.
 
-This is what the planned **MCP server** unlocks.
+This is what the **MCP server** unlocks.
 
 ### Auto-query
 
-Once `code-memory` is exposed as an MCP server, it advertises tools like:
+Exposed as an MCP server, `code-memory` advertises tools like:
 
 - `memory.retrieve(query, k)` — semantic + graph recall
 - `memory.neighbors(symbol)` — structural expansion around a symbol
@@ -137,6 +138,10 @@ this closes the loop:
 The result is a memory that **gets smarter the more the agent uses the
 codebase**, without ever bloating the context window. Each task teaches the
 system; each query pays back only the few KB that are actually relevant.
+
+Between sessions, `code-memory ingest` uses a **git delta** to catch up
+anything the live hooks missed — see [Git-aware incremental
+ingest](#git-aware-incremental-ingest) below.
 
 > Status: an MCP server ships in the package (see [MCP server](#mcp-server)
 > below). The same primitives remain reachable via the CLI (`retrieve`,
@@ -412,7 +417,12 @@ src/code_memory/
 ├── graph/            # FalkorDB store
 ├── extractor/        # tree-sitter -> symbols / imports / calls
 ├── episodic/         # SQLite task log
-├── orchestrator/     # ingest pipeline, retrieve, context pack
+├── orchestrator/     # ingest pipeline, retrieval, context pack
+│   ├── pipeline.py       # ingest_repo / ingest_file / reingest_file
+│   ├── retrieve.py       # Retriever + ContextPack rendering
+│   ├── ingest_state.py   # per-repo last_sha checkpoint (SQLite)
+│   └── git_delta.py      # git diff -> changed / deleted / dirty
+├── mcp_server.py     # stdio MCP server (`code-memory-mcp`)
 └── cli.py            # typer-based CLI entrypoint
 ```
 
@@ -420,13 +430,16 @@ src/code_memory/
 
 ## Roadmap
 
-- [ ] Per-project namespacing (separate graphs/collections per repo)
-- [ ] File-watcher daemon for live re-ingest
+- [x] Per-project namespacing (separate graphs / collections per repo)
 - [x] MCP server (`codememory_retrieve`, `codememory_record`, `codememory_reingest`)
+- [x] Git-aware incremental ingest (delta against last ingested commit)
+- [ ] File-watcher daemon for live re-ingest
+- [ ] Branch-aware index (auto re-walk on branch change)
 - [ ] Cross-encoder rerank step
 - [ ] Resolved call edges (bind `CALLS` targets to actual `Symbol` nodes)
 - [ ] More languages (Rust, Go, Java, C#)
 - [ ] Hook recipes for Claude Code, OpenCode, Cursor
+- [ ] PyPI release (drops the `--from git+…` from the `uvx` install)
 
 ---
 
