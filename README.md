@@ -233,24 +233,51 @@ You should now have a working `code-memory` CLI on your `$PATH` (inside the venv
 ### Ingest a repository
 
 ```bash
-code-memory ingest /path/to/repo
+code-memory ingest /path/to/repo                 # auto: incremental if known, else full
+code-memory ingest /path/to/repo --full          # force a complete re-walk
+code-memory ingest /path/to/repo --since main    # diff main..HEAD
+code-memory ingest /path/to/repo --dry-run       # show the plan, write nothing
 ```
 
 This walks the repo, extracts symbols / imports / calls with tree-sitter, writes them to the FalkorDB graph, and indexes each symbol snippet into Qdrant via `bge-m3`.
 
+#### Git-aware incremental ingest
+
+After the first run, `code-memory` remembers the HEAD commit it last ingested
+(per repository, in the project's SQLite). Subsequent `ingest` calls run
+`git diff <last_sha>..HEAD --name-status -M` and only touch what actually
+changed:
+
+- **Added / Modified** files → re-extracted and re-embedded
+- **Deleted** files → records dropped from FalkorDB + Qdrant
+- **Renamed** files → old path purged, new path ingested
+- **Dirty worktree** (uncommitted edits, including untracked) → also re-ingested
+
+When the stored SHA is no longer reachable (history rewrite, branch deletion),
+the next run automatically falls back to a full walk and re-records.
+Non-git checkouts always do a full walk.
+
+Check what's pending:
+
+```bash
+code-memory ingest-status /path/to/repo
+# -> { "last_sha": "...", "head_sha": "...", "drift": {"changed": 7, "deleted": 1}, "dirty": 3 }
+```
+
 > [!WARNING]
-> **First ingest can take a while.** Wall time is dominated by embedding every
-> symbol through Ollama (`bge-m3` on CPU is the bottleneck on most laptops) and
-> scales roughly linearly with codebase size. Rough orders of magnitude on an
-> M-series Mac:
+> **The first ingest can take a while.** Wall time is dominated by embedding
+> every symbol through Ollama (`bge-m3` on CPU is the bottleneck on most
+> laptops) and scales roughly linearly with codebase size. Rough orders of
+> magnitude on an M-series Mac:
 >
 > - Small repo (~1k symbols): seconds
 > - Mid repo (~10k symbols): a few minutes
 > - Large repo (100k+ symbols): tens of minutes to an hour+
 >
-> GPU-accelerated Ollama, fewer files (tune ignore globs), or a smaller
-> embedding model (`nomic-embed-text`) all cut this down. Subsequent
-> `reingest` calls only touch changed files, so the slow path is one-time.
+> Subsequent runs use the git delta described above, so they finish in
+> seconds even on large repos. GPU-accelerated Ollama, fewer files (tune
+> ignore globs), or a smaller embedding model (`nomic-embed-text`) all cut
+> the first-run cost too.
 
 ### Query the memory
 

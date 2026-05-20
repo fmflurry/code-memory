@@ -8,6 +8,7 @@ from rich import print as rprint
 from .config import detect_project_slug
 from .episodic import Episode
 from .orchestrator import Pipeline, Retriever
+from .orchestrator import git_delta as _git_delta
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="code-memory CLI")
 
@@ -24,12 +25,71 @@ ProjectOpt = typer.Option(
 def ingest(
     root: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True),
     project: str | None = ProjectOpt,
+    full: bool = typer.Option(
+        False, "--full", help="Force a full walk; ignore stored state."
+    ),
+    since: str | None = typer.Option(
+        None, "--since", help="Base ref (branch/tag/sha) to diff against HEAD."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be ingested; don't write."
+    ),
 ) -> None:
-    """Ingest a repository."""
+    """Ingest a repository.
+
+    Default: git-aware incremental — diff prior state to HEAD.
+    """
     slug = project or detect_project_slug(root)
     pipe = Pipeline(project=slug)
-    stats = pipe.ingest_repo(root)
-    rprint({"project": slug, "ingested": stats.__dict__})
+    stats = pipe.ingest_repo(
+        root,
+        mode="full" if full else "auto",
+        since=since,
+        dry_run=dry_run,
+    )
+    rprint({"project": slug, "dry_run": dry_run, "ingested": stats.__dict__})
+
+
+@app.command("ingest-status")
+def ingest_status(
+    root: Path = typer.Argument(
+        Path("."), exists=True, file_okay=False, dir_okay=True
+    ),
+    project: str | None = ProjectOpt,
+) -> None:
+    """Show stored ingest state for ROOT (last commit, branch, drift vs HEAD)."""
+    slug = project or detect_project_slug(root)
+    pipe = Pipeline(project=slug)
+    prior = pipe.state.get(root)
+    payload: dict[str, object] = {"project": slug, "repo_root": str(Path(root).resolve())}
+    if prior is None:
+        payload["state"] = None
+    else:
+        payload["state"] = {
+            "last_sha": prior.last_sha,
+            "last_ts": prior.last_ts,
+            "branch": prior.branch,
+        }
+
+    if _git_delta.is_git_repo(root):
+        try:
+            head = _git_delta.head_sha(root)
+            branch = _git_delta.current_branch(root)
+            payload["head_sha"] = head
+            payload["branch"] = branch
+            if prior is not None and _git_delta.is_reachable(root, prior.last_sha):
+                d = _git_delta.diff(root, prior.last_sha, head)
+                payload["drift"] = {
+                    "changed": len(d.changed),
+                    "deleted": len(d.deleted),
+                }
+            payload["dirty"] = len(_git_delta.dirty_files(root))
+        except _git_delta.GitError as e:
+            payload["git_error"] = str(e)
+    else:
+        payload["git"] = False
+
+    rprint(payload)
 
 
 @app.command()

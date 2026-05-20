@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from ..config import CONFIG, Config, detect_project_slug
 from ..embed import OllamaEmbedder
@@ -12,6 +13,10 @@ from ..episodic.sqlite_store import episode_payload, episode_text
 from ..extractor import ExtractedFile, Extractor, Symbol
 from ..graph import FalkorStore, GraphEdge, GraphNode
 from ..vector import QdrantStore, VectorRecord
+from . import git_delta
+from .ingest_state import IngestStateStore
+
+IngestMode = Literal["auto", "full", "incremental"]
 
 
 def _id(*parts: str) -> str:
@@ -26,6 +31,12 @@ class IngestStats:
     imports: int = 0
     calls: int = 0
     chunks: int = 0
+    deleted: int = 0
+    skipped: int = 0
+    mode: str = "full"
+    base_sha: str | None = None
+    head_sha: str | None = None
+    notes: list[str] = field(default_factory=list)
 
 
 class Pipeline:
@@ -48,18 +59,178 @@ class Pipeline:
         self.vector.ensure_collection(self.cfg.qdrant_code)
         self.vector.ensure_collection(self.cfg.qdrant_episodes)
         self.graph.ensure_indexes()
+        self.state = IngestStateStore(self.cfg.episodic_db)
 
-    def ingest_repo(self, root: str | Path) -> IngestStats:
+    def ingest_repo(
+        self,
+        root: str | Path,
+        *,
+        mode: IngestMode = "auto",
+        since: str | None = None,
+        dry_run: bool = False,
+    ) -> IngestStats:
+        """Ingest a repository.
+
+        mode:
+          - "auto": git-incremental if prior state exists and base is reachable,
+                   else full walk
+          - "full": always walk every file (clears stored ingest_state on success)
+          - "incremental": require git + base; raise if not available
+        since: explicit base ref (branch/tag/sha). Overrides stored state when set.
+        dry_run: compute plan and return stats with notes; don't touch storage.
+        """
+        root_path = Path(root).resolve()
+        is_git = git_delta.is_git_repo(root_path)
+
+        if mode == "full" or (mode == "auto" and not is_git):
+            stats = self._ingest_full(root_path, dry_run=dry_run)
+            if is_git and not dry_run:
+                self._record_state(root_path, stats)
+            return stats
+
+        # git path
+        if not is_git:
+            raise RuntimeError(f"{root_path} is not a git repository (mode={mode!r})")
+
+        head = git_delta.head_sha(root_path)
+        branch = git_delta.current_branch(root_path)
+        base = self._resolve_base(root_path, since=since, mode=mode)
+
+        if base is None:
+            # auto + git + no prior + no --since => full walk, then record state
+            stats = self._ingest_full(root_path, dry_run=dry_run)
+            stats.head_sha = head
+            stats.notes.append("no prior ingest state; performed full walk")
+            if not dry_run:
+                self._record_state(root_path, stats, head=head, branch=branch)
+            return stats
+
+        # Incremental
+        delta = git_delta.changed_since(root_path, base, include_dirty=True)
+        stats = self._ingest_delta(
+            root_path, delta, base_sha=base, head_sha=head, dry_run=dry_run
+        )
+        stats.mode = "incremental"
+        if not dry_run:
+            self._record_state(root_path, stats, head=head, branch=branch)
+        return stats
+
+    # -- internals -------------------------------------------------------
+
+    def _resolve_base(
+        self, root: Path, *, since: str | None, mode: IngestMode
+    ) -> str | None:
+        if since is not None:
+            try:
+                return git_delta.resolve_ref(root, since)
+            except git_delta.GitError as e:
+                raise RuntimeError(f"could not resolve --since {since!r}: {e}") from e
+
+        prior = self.state.get(root)
+        if prior is None:
+            if mode == "incremental":
+                raise RuntimeError(
+                    f"no prior ingest state for {root}; run a full ingest first"
+                )
+            return None
+
+        if not git_delta.is_reachable(root, prior.last_sha):
+            # history rewrite or branch deletion — fall back
+            self.state.clear(root)
+            return None
+
+        return prior.last_sha
+
+    def _ingest_full(self, root: Path, *, dry_run: bool) -> IngestStats:
         extractor = Extractor()
-        stats = IngestStats()
+        stats = IngestStats(mode="full")
         for ex in extractor.walk(root):
-            self.ingest_file(ex)
             stats.files += 1
             stats.symbols += len(ex.symbols)
             stats.imports += len(ex.imports)
             stats.calls += len(ex.calls)
             stats.chunks += len(ex.symbols) or 1
+            if dry_run:
+                continue
+            self.ingest_file(ex)
         return stats
+
+    def _ingest_delta(
+        self,
+        root: Path,
+        delta: git_delta.Delta,
+        *,
+        base_sha: str,
+        head_sha: str,
+        dry_run: bool,
+    ) -> IngestStats:
+        stats = IngestStats(mode="incremental", base_sha=base_sha, head_sha=head_sha)
+
+        for path in delta.deleted:
+            path_str = str(path)
+            stats.deleted += 1
+            if dry_run:
+                continue
+            self.graph.delete_file(path_str)
+            self.vector.delete_by_path(self.cfg.qdrant_code, path_str)
+
+        for path in delta.reingest_paths():
+            if not path.is_file():
+                # file deleted between diff and now, or extractor can't see it
+                stats.skipped += 1
+                continue
+            if dry_run:
+                ex = self._extract_one(path)
+                if ex is None:
+                    stats.skipped += 1
+                    continue
+                stats.files += 1
+                stats.symbols += len(ex.symbols)
+                stats.imports += len(ex.imports)
+                stats.calls += len(ex.calls)
+                stats.chunks += len(ex.symbols) or 1
+                continue
+
+            ex = self.reingest_file(path)
+            if ex is None:
+                stats.skipped += 1
+                continue
+            stats.files += 1
+            stats.symbols += len(ex.symbols)
+            stats.imports += len(ex.imports)
+            stats.calls += len(ex.calls)
+            stats.chunks += len(ex.symbols) or 1
+
+        if delta.is_empty:
+            stats.notes.append("no changes since last ingest")
+        return stats
+
+    @staticmethod
+    def _extract_one(path: Path) -> ExtractedFile | None:
+        from ..extractor.treesitter import extract_file
+
+        return extract_file(path)
+
+    def _record_state(
+        self,
+        root: Path,
+        stats: IngestStats,
+        *,
+        head: str | None = None,
+        branch: str | None = None,
+    ) -> None:
+        sha = head or stats.head_sha
+        if sha is None and git_delta.is_git_repo(root):
+            try:
+                sha = git_delta.head_sha(root)
+                if branch is None:
+                    branch = git_delta.current_branch(root)
+            except git_delta.GitError:
+                sha = None
+        if sha is None:
+            return
+        stats.head_sha = sha
+        self.state.set(root, sha=sha, branch=branch)
 
     def ingest_file(self, ex: ExtractedFile) -> None:
         self._upsert_graph(ex)
