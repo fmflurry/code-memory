@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import sys
+from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich import print as rprint
@@ -20,6 +24,21 @@ ProjectOpt = typer.Option(
     help="Project slug for namespaced storage. Auto-detected if omitted.",
 )
 
+JsonOpt = typer.Option(
+    False,
+    "--json",
+    help="Emit machine-readable JSON to stdout instead of rich output.",
+)
+
+
+def _emit(payload: Any, *, as_json: bool) -> None:
+    if as_json:
+        sys.stdout.write(json.dumps(payload, default=str))
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+    else:
+        rprint(payload)
+
 
 @app.command()
 def ingest(
@@ -34,6 +53,7 @@ def ingest(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would be ingested; don't write."
     ),
+    as_json: bool = JsonOpt,
 ) -> None:
     """Ingest a repository.
 
@@ -47,7 +67,10 @@ def ingest(
         since=since,
         dry_run=dry_run,
     )
-    rprint({"project": slug, "dry_run": dry_run, "ingested": stats.__dict__})
+    _emit(
+        {"project": slug, "dry_run": dry_run, "ingested": asdict(stats)},
+        as_json=as_json,
+    )
 
 
 @app.command("ingest-status")
@@ -56,6 +79,7 @@ def ingest_status(
         Path("."), exists=True, file_okay=False, dir_okay=True
     ),
     project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
 ) -> None:
     """Show stored ingest state for ROOT (last commit, branch, drift vs HEAD)."""
     slug = project or detect_project_slug(root)
@@ -89,22 +113,31 @@ def ingest_status(
     else:
         payload["git"] = False
 
-    rprint(payload)
+    _emit(payload, as_json=as_json)
 
 
 @app.command()
 def reingest(
     path: Path = typer.Argument(..., exists=True, file_okay=True, dir_okay=False),
     project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
 ) -> None:
     """Re-ingest a single file."""
     slug = project or detect_project_slug(path)
     pipe = Pipeline(project=slug)
     ex = pipe.reingest_file(path)
     if ex is None:
-        rprint("[yellow]Unsupported file type[/]")
+        _emit({"error": "unsupported file type", "path": str(path)}, as_json=as_json)
         raise typer.Exit(code=1)
-    rprint({"project": slug, "path": ex.path, "symbols": len(ex.symbols), "imports": len(ex.imports)})
+    _emit(
+        {
+            "project": slug,
+            "path": ex.path,
+            "symbols": len(ex.symbols),
+            "imports": len(ex.imports),
+        },
+        as_json=as_json,
+    )
 
 
 @app.command()
@@ -113,11 +146,15 @@ def retrieve(
     k: int = typer.Option(8, "--k", help="top-k code"),
     eps: int = typer.Option(5, "--eps", help="top-k episodes"),
     project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
 ) -> None:
     """Retrieve context pack for a natural-language query."""
     r = Retriever(project=project)
     pack = r.retrieve(query, top_k_code=k, top_k_eps=eps)
-    rprint(pack.render())
+    if as_json:
+        _emit(pack.to_dict(), as_json=True)
+    else:
+        rprint(pack.render())
 
 
 @app.command()
@@ -127,6 +164,7 @@ def record(
     patch: str = typer.Option("", "--patch"),
     verdict: str = typer.Option("", "--verdict"),
     project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
 ) -> None:
     """Record a task episode."""
     pipe = Pipeline(project=project)
@@ -137,15 +175,16 @@ def record(
         verdict=verdict or None,
     )
     ep_id = pipe.record_episode(ep)
-    rprint({"project": pipe.slug, "id": ep_id})
+    _emit({"project": pipe.slug, "id": ep_id}, as_json=as_json)
 
 
 @app.command()
 def project(
     root: Path | None = typer.Argument(None, exists=True, file_okay=False, dir_okay=True),
+    as_json: bool = JsonOpt,
 ) -> None:
     """Print the resolved project slug for ROOT (or cwd)."""
-    rprint({"slug": detect_project_slug(root)})
+    _emit({"slug": detect_project_slug(root)}, as_json=as_json)
 
 
 if __name__ == "__main__":

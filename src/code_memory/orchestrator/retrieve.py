@@ -40,6 +40,39 @@ class ContextPack:
                 lines.append(f"- {n['labels']} {n['key']}")
         return "\n".join(lines)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Machine-readable representation for plugin / tool consumers."""
+        return {
+            "query": self.query,
+            "code": [
+                {
+                    "path": h.payload.get("path"),
+                    "start": h.payload.get("start"),
+                    "end": h.payload.get("end"),
+                    "kind": h.payload.get("kind"),
+                    "name": h.payload.get("name"),
+                    "score": h.score,
+                }
+                for h in self.code_hits
+            ],
+            "episodes": [
+                {
+                    "id": ep.id,
+                    "verdict": ep.verdict,
+                    "prompt": ep.prompt[:240],
+                    "score": next(
+                        (h.score for h in self.episode_hits if h.id == ep.id),
+                        None,
+                    ),
+                }
+                for ep in self.episodes
+            ],
+            "graph": [
+                {"labels": n.get("labels"), "key": n.get("key")}
+                for n in self.graph_expansion[:25]
+            ],
+        }
+
 
 class Retriever:
     def __init__(

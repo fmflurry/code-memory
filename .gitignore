@@ -15,3 +15,7 @@ data/
 .idea/
 .vscode/
 .DS_Store
+
+# Node / OpenCode plugin
+node_modules/
+*.tsbuildinfo

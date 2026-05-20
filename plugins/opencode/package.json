@@ -1,0 +1,27 @@
+{
+  "name": "@code-memory/opencode-plugin",
+  "version": "0.1.0",
+  "description": "OpenCode plugin: auto-retrieve and auto-learn against a local code-memory backend.",
+  "type": "module",
+  "main": "src/code-memory.ts",
+  "exports": {
+    ".": "./src/code-memory.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.4 <2"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.4.6",
+    "@types/node": "^22",
+    "typescript": "^5.5"
+  },
+  "files": [
+    "src/",
+    "skills/",
+    "README.md"
+  ],
+  "license": "MIT"
+}
