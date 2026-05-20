@@ -63,6 +63,30 @@ def lang_for(path: str | Path) -> str | None:
 
 MAX_FILE_BYTES = 500_000  # skip files larger than ~500KB (bundles, minified)
 MAX_LINE_LEN = 2000  # likely minified if any line is this long
+MINIFIED_SNIFF_BYTES = 4096  # bytes to inspect for minified-file heuristic
+MINIFIED_AVG_LINE = 200  # avg line length above this in sniff window => minified
+
+
+def looks_minified(sample: str) -> bool:
+    """Detect minified / pre-bundled JS without parsing.
+
+    Triggers when:
+    - the sniffed window has no newline (one giant line), or
+    - the average line length within the sniffed window exceeds
+      ``MINIFIED_AVG_LINE``, or
+    - any line in the sniffed window exceeds ``MAX_LINE_LEN``.
+
+    Vite/webpack dep caches and minified bundles all match at least one.
+    """
+    if not sample:
+        return False
+    if "\n" not in sample:
+        return True
+    lines = sample.splitlines()
+    if any(len(line) > MAX_LINE_LEN for line in lines):
+        return True
+    avg = len(sample) / max(len(lines), 1)
+    return avg > MINIFIED_AVG_LINE
 
 
 def extract_file(path: str | Path) -> ExtractedFile | None:
@@ -77,8 +101,8 @@ def extract_file(path: str | Path) -> ExtractedFile | None:
     if size > MAX_FILE_BYTES:
         return None
     source = p.read_text(encoding="utf-8", errors="replace")
-    if any(len(line) > MAX_LINE_LEN for line in source.splitlines()[:50]):
-        return None  # minified / generated
+    if looks_minified(source[:MINIFIED_SNIFF_BYTES]):
+        return None  # minified / bundled / generated
     parser = _parser_for(lang)
     tree = parser.parse(source.encode("utf-8"))
     root = tree.root_node
@@ -143,39 +167,62 @@ def _callee_name(node: Node, source: str) -> str | None:
     return _slice(source, fn).split("(")[0].strip()
 
 
+DEFAULT_IGNORE_DIRS: tuple[str, ...] = (
+    ".git",
+    "node_modules",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+    "out",
+    "coverage",
+    ".turbo",
+    ".cache",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "target",
+    # Angular / Vite / Nx / Yarn / Parcel / SvelteKit caches and tarballs
+    ".angular",
+    ".nx",
+    ".yarn",
+    ".parcel-cache",
+    ".svelte-kit",
+    "bower_components",
+    "vendor",
+    "tmp",
+)
+
+
 class Extractor:
     """Convenience wrapper to walk a directory."""
 
     def __init__(
         self,
-        ignore_dirs: tuple[str, ...] = (
-            ".git",
-            "node_modules",
-            ".venv",
-            "venv",
-            "dist",
-            "build",
-            ".next",
-            ".nuxt",
-            "out",
-            "coverage",
-            ".turbo",
-            ".cache",
-            "__pycache__",
-            ".mypy_cache",
-            ".pytest_cache",
-            ".ruff_cache",
-            "target",
-        ),
+        ignore_dirs: tuple[str, ...] = DEFAULT_IGNORE_DIRS,
+        *,
+        respect_gitignore: bool = True,
     ) -> None:
         self.ignore_dirs = ignore_dirs
+        self.respect_gitignore = respect_gitignore
 
     def walk(self, root: str | Path):
+        from .gitignore import GitignoreMatcher
+
         root_path = Path(root).resolve()
+        matcher = (
+            GitignoreMatcher.from_root(root_path) if self.respect_gitignore else None
+        )
+        ignore_set = set(self.ignore_dirs)
         for p in root_path.rglob("*"):
             if not p.is_file():
                 continue
-            if any(part in self.ignore_dirs for part in p.parts):
+            if any(part in ignore_set for part in p.parts):
+                continue
+            if matcher is not None and matcher.match(p, is_dir=False):
                 continue
             ex = extract_file(p)
             if ex is not None:
