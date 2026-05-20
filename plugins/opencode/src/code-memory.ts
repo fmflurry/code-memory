@@ -24,8 +24,11 @@ import {
   type LogLevel,
   type MemoryClient,
   createMemoryClient,
-} from "./memory-client.ts";
-import { extractQueryFromMessage, isSubstantiveCodeIntent } from "./intent.ts";
+} from "./code-memory-lib/memory-client.ts";
+import {
+  extractQueryFromMessage,
+  isSubstantiveCodeIntent,
+} from "./code-memory-lib/intent.ts";
 
 const execFile = promisify(execFileCb);
 

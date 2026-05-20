@@ -40,20 +40,34 @@ hook degrades to a benign no-op — your OpenCode session is never blocked.
    code-memory ingest /path/to/repo
    ```
 
-## Install in your OpenCode config
+## Install
 
-Add the plugin path to `opencode.jsonc` (or the equivalent JSON config):
+OpenCode auto-discovers plugins under `~/.config/opencode/plugins/` (global)
+or `<project>/.opencode/plugins/` (project-local). The bundled installer
+symlinks this plugin into either location:
 
-```jsonc
-{
-  "plugin": [
-    "{env:HOME}/Workspace/code-memory/plugins/opencode/src/code-memory.ts"
-  ]
-}
+```bash
+# global (default) — pick this for everyday use
+./plugins/opencode/install.sh
+
+# project-local (only for the current repo)
+cd /path/to/repo
+~/Workspace/code-memory/plugins/opencode/install.sh --project
+
+# custom directory
+./plugins/opencode/install.sh --target /some/other/dir
 ```
 
-If you keep this repo elsewhere, adjust the path. OpenCode loads `.ts`
-plugins directly via Bun — no build step needed.
+The installer creates two symlinks:
+- `code-memory.ts` → the plugin entry
+- `code-memory-lib/` → the helper modules
+
+OpenCode loads `.ts` files at the top level of the plugin dir directly via
+Bun — no build step needed. The `code-memory-lib/` subdirectory is treated
+as private support code (the same convention used by `worktree.ts` /
+`worktree/` in many setups).
+
+Restart OpenCode after install.
 
 ### Use alongside the MCP server (recommended)
 
