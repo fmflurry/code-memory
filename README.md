@@ -17,6 +17,8 @@ Structural symbol graph &nbsp;·&nbsp; semantic vector recall &nbsp;·&nbsp; epi
 [![tree-sitter](https://img.shields.io/badge/parser-tree--sitter-228B22)](https://tree-sitter.github.io/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+**Jump to:** [Get it running](#installation) &nbsp;·&nbsp; [Plug it into your agent](#mcp-server)
+
 </div>
 
 ---
@@ -29,7 +31,7 @@ Structural symbol graph &nbsp;·&nbsp; semantic vector recall &nbsp;·&nbsp; epi
 - **Semantic memory** — vector embeddings of every symbol, queryable by natural language (Qdrant + Ollama).
 - **Episodic memory** — a task log of past prompts, plans, patches, and outcomes (SQLite + embedded recall).
 
-It runs entirely on your machine. No OpenAI calls. No cloud. No vendor lock-in. Designed to be *boring infrastructure* you can wire into any harness via CLI, hooks, or MCP.
+It runs entirely on your machine. No OpenAI calls. No cloud. No vendor lock-in. Designed to be _boring infrastructure_ you can wire into any harness via CLI, hooks, or MCP.
 
 <div align="center">
   <img src="docs/architecture.png" alt="code-memory architecture — agent → orchestrator → extractor / embedder / episodic → FalkorDB + Qdrant + SQLite" width="900">
@@ -107,7 +109,7 @@ answering.
 In practice this means:
 
 - "How does the auth middleware work?" → agent calls `memory.retrieve("auth
-  middleware")` → gets the relevant 3-5 chunks → answers.
+middleware")` → gets the relevant 3-5 chunks → answers.
 - "Refactor `UserService` to use the new repo pattern." → agent calls
   `memory.neighbors("UserService")` → sees every caller and dependency before
   touching code.
@@ -144,15 +146,15 @@ system; each query pays back only the few KB that are actually relevant.
 
 ## Requirements
 
-| Component         | Minimum version | Notes                                                              |
-| ----------------- | --------------- | ------------------------------------------------------------------ |
-| **Python**        | 3.11            | Used to build the orchestrator, CLI, and extractor.                |
-| **Docker**        | 20.x (Compose v2) | Runs FalkorDB and Qdrant locally.                                |
-| **Ollama**        | latest          | Local embeddings backend.                                          |
-| **Embedding model** | `bge-m3`      | Pulled via `ollama pull bge-m3`. Alternatives: `nomic-embed-text`. |
-| **Disk**          | ~3 GB           | Ollama model (~1.2 GB) + Docker volumes + Python deps.             |
-| **RAM**           | 8 GB+           | 16 GB+ recommended for large repos.                                |
-| **OS**            | macOS / Linux / Windows (WSL2) | Tested on Apple Silicon (M-series) and Linux x86_64. |
+| Component           | Minimum version                | Notes                                                              |
+| ------------------- | ------------------------------ | ------------------------------------------------------------------ |
+| **Python**          | 3.11                           | Used to build the orchestrator, CLI, and extractor.                |
+| **Docker**          | 20.x (Compose v2)              | Runs FalkorDB and Qdrant locally.                                  |
+| **Ollama**          | latest                         | Local embeddings backend.                                          |
+| **Embedding model** | `bge-m3`                       | Pulled via `ollama pull bge-m3`. Alternatives: `nomic-embed-text`. |
+| **Disk**            | ~3 GB                          | Ollama model (~1.2 GB) + Docker volumes + Python deps.             |
+| **RAM**             | 8 GB+                          | 16 GB+ recommended for large repos.                                |
+| **OS**              | macOS / Linux / Windows (WSL2) | Tested on Apple Silicon (M-series) and Linux x86_64.               |
 
 ### Optional
 
@@ -268,11 +270,11 @@ tool-selection loop — no shell parsing, no slash command.
 
 Tools advertised:
 
-| Tool                    | Purpose                                                       |
-| ----------------------- | ------------------------------------------------------------- |
-| `codememory_retrieve`   | Semantic + graph + episodic recall (returns a Context Pack).  |
-| `codememory_record`     | Log a finished task (prompt / plan / patch / verdict).        |
-| `codememory_reingest`   | Re-index a single file after edits.                           |
+| Tool                  | Purpose                                                      |
+| --------------------- | ------------------------------------------------------------ |
+| `codememory_retrieve` | Semantic + graph + episodic recall (returns a Context Pack). |
+| `codememory_record`   | Log a finished task (prompt / plan / patch / verdict).       |
+| `codememory_reingest` | Re-index a single file after edits.                          |
 
 Transport: stdio. Script entrypoint: `code-memory-mcp`.
 
@@ -297,7 +299,12 @@ claude mcp add code-memory \
   "mcp": {
     "code-memory": {
       "type": "local",
-      "command": ["uvx", "--from", "git+https://github.com/fmflurry/code-memory", "code-memory-mcp"],
+      "command": [
+        "uvx",
+        "--from",
+        "git+https://github.com/fmflurry/code-memory",
+        "code-memory-mcp"
+      ],
       "enabled": true,
       "environment": { "CODE_MEMORY_PROJECT": "auto" }
     }
@@ -347,11 +354,11 @@ uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
 
 ### Inspect the stores
 
-| Store      | UI                                                  |
-| ---------- | --------------------------------------------------- |
-| FalkorDB   | http://localhost:3000  (graph browser, Cypher)      |
-| Qdrant     | http://localhost:6333/dashboard                     |
-| SQLite     | `sqlite3 ./data/episodic.db`                        |
+| Store    | UI                                            |
+| -------- | --------------------------------------------- |
+| FalkorDB | http://localhost:3000 (graph browser, Cypher) |
+| Qdrant   | http://localhost:6333/dashboard               |
+| SQLite   | `sqlite3 ./data/episodic.db`                  |
 
 ---
 
