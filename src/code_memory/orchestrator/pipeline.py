@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config import CONFIG
+from ..config import CONFIG, Config, detect_project_slug
 from ..embed import OllamaEmbedder
 from ..episodic import Episode, EpisodicStore
 from ..episodic.sqlite_store import episode_payload, episode_text
@@ -33,17 +33,20 @@ class Pipeline:
 
     def __init__(
         self,
+        project: str | None = None,
         embedder: OllamaEmbedder | None = None,
         vector: QdrantStore | None = None,
         graph: FalkorStore | None = None,
         episodic: EpisodicStore | None = None,
     ) -> None:
+        self.slug = project or detect_project_slug()
+        self.cfg: Config = CONFIG.for_project(self.slug)
         self.embedder = embedder or OllamaEmbedder()
         self.vector = vector or QdrantStore()
-        self.graph = graph or FalkorStore()
-        self.episodic = episodic or EpisodicStore()
-        self.vector.ensure_collection(CONFIG.qdrant_code)
-        self.vector.ensure_collection(CONFIG.qdrant_episodes)
+        self.graph = graph or FalkorStore(graph_name=self.cfg.falkor_graph)
+        self.episodic = episodic or EpisodicStore(path=self.cfg.episodic_db)
+        self.vector.ensure_collection(self.cfg.qdrant_code)
+        self.vector.ensure_collection(self.cfg.qdrant_episodes)
         self.graph.ensure_indexes()
 
     def ingest_repo(self, root: str | Path) -> IngestStats:
@@ -69,7 +72,7 @@ class Pipeline:
         if ex is None:
             return None
         self.graph.delete_file(ex.path)
-        self.vector.delete_by_path(CONFIG.qdrant_code, ex.path)
+        self.vector.delete_by_path(self.cfg.qdrant_code, ex.path)
         self.ingest_file(ex)
         return ex
 
@@ -77,7 +80,7 @@ class Pipeline:
         ep_id = self.episodic.add(ep)
         vec = self.embedder.embed_one(episode_text(ep))
         self.vector.upsert(
-            CONFIG.qdrant_episodes,
+            self.cfg.qdrant_episodes,
             [VectorRecord(id=ep_id, vector=vec, payload=episode_payload(ep))],
         )
         return ep_id
@@ -172,7 +175,7 @@ class Pipeline:
                 )
                 for c, v in zip(batch, vectors, strict=True)
             ]
-            self.vector.upsert(CONFIG.qdrant_code, records)
+            self.vector.upsert(self.cfg.qdrant_code, records)
 
 
 @dataclass

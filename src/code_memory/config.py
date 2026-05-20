@@ -1,12 +1,61 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import re
+import subprocess
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
 def _env(key: str, default: str) -> str:
     return os.environ.get(key, default)
+
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def slugify(name: str) -> str:
+    s = _SLUG_RE.sub("-", name.lower()).strip("-")
+    return s or "default"
+
+
+def _git_toplevel(start: Path) -> Path | None:
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(start), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    top = out.stdout.strip()
+    return Path(top) if top else None
+
+
+def detect_project_slug(root: str | Path | None = None) -> str:
+    """Resolve project slug.
+
+    Priority:
+      1. explicit `root` (path) -> git toplevel basename, else dir name
+      2. CODE_MEMORY_PROJECT env var
+      3. cwd -> git toplevel basename, else cwd name
+    """
+    if root is not None:
+        p = Path(root).resolve()
+        top = _git_toplevel(p if p.is_dir() else p.parent)
+        return slugify((top or p).name)
+
+    env = os.environ.get("CODE_MEMORY_PROJECT")
+    if env:
+        return slugify(env)
+
+    cwd = Path.cwd()
+    top = _git_toplevel(cwd)
+    return slugify((top or cwd).name)
 
 
 @dataclass(frozen=True)
@@ -24,6 +73,17 @@ class Config:
     falkor_graph: str = _env("FALKOR_GRAPH", "code_graph")
 
     episodic_db: Path = Path(_env("EPISODIC_DB", "./data/episodic.db"))
+    data_dir: Path = Path(_env("DATA_DIR", "./data"))
+
+    def for_project(self, slug: str) -> Config:
+        slug = slugify(slug)
+        return replace(
+            self,
+            qdrant_code=f"{self.qdrant_code}__{slug}",
+            qdrant_episodes=f"{self.qdrant_episodes}__{slug}",
+            falkor_graph=f"{self.falkor_graph}__{slug}",
+            episodic_db=self.data_dir / slug / "episodic.db",
+        )
 
 
 CONFIG = Config()

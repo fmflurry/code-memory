@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..config import CONFIG
+from ..config import CONFIG, Config, detect_project_slug
 from ..embed import OllamaEmbedder
 from ..episodic import Episode, EpisodicStore
 from ..graph import FalkorStore
@@ -44,15 +44,18 @@ class ContextPack:
 class Retriever:
     def __init__(
         self,
+        project: str | None = None,
         embedder: OllamaEmbedder | None = None,
         vector: QdrantStore | None = None,
         graph: FalkorStore | None = None,
         episodic: EpisodicStore | None = None,
     ) -> None:
+        self.slug = project or detect_project_slug()
+        self.cfg: Config = CONFIG.for_project(self.slug)
         self.embedder = embedder or OllamaEmbedder()
         self.vector = vector or QdrantStore()
-        self.graph = graph or FalkorStore()
-        self.episodic = episodic or EpisodicStore()
+        self.graph = graph or FalkorStore(graph_name=self.cfg.falkor_graph)
+        self.episodic = episodic or EpisodicStore(path=self.cfg.episodic_db)
 
     def retrieve(
         self,
@@ -62,8 +65,8 @@ class Retriever:
         graph_depth: int = 1,
     ) -> ContextPack:
         qvec = self.embedder.embed_one(query)
-        code_hits = self.vector.search(CONFIG.qdrant_code, qvec, top_k=top_k_code)
-        ep_hits = self.vector.search(CONFIG.qdrant_episodes, qvec, top_k=top_k_eps)
+        code_hits = self.vector.search(self.cfg.qdrant_code, qvec, top_k=top_k_code)
+        ep_hits = self.vector.search(self.cfg.qdrant_episodes, qvec, top_k=top_k_eps)
         episodes = self.episodic.by_ids([h.id for h in ep_hits])
 
         graph_expansion: list[dict[str, Any]] = []
