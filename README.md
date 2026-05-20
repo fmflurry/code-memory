@@ -31,23 +31,114 @@ Structural symbol graph &nbsp;·&nbsp; semantic vector recall &nbsp;·&nbsp; epi
 
 It runs entirely on your machine. No OpenAI calls. No cloud. No vendor lock-in. Designed to be *boring infrastructure* you can wire into any harness via CLI, hooks, or MCP.
 
+<div align="center">
+  <img src="docs/architecture.png" alt="code-memory architecture — agent → orchestrator → extractor / embedder / episodic → FalkorDB + Qdrant + SQLite" width="900">
+</div>
+
+---
+
+## Why it doesn't blow up your context window
+
+Naive "give the LLM your whole repo" approaches die fast: context windows are
+finite, attention degrades with size, and tokens cost money. `code-memory`
+sidesteps that by **keeping the bulk of the knowledge outside the prompt** and
+injecting only a small, query-relevant slice when the agent actually needs it.
+
+The trick is a two-phase split:
+
+1. **Offline — index everything, inject nothing.**
+   Ingest walks the repo once, chunks code with tree-sitter, embeds each chunk
+   with `bge-m3`, and stores:
+   - vectors in **Qdrant** (semantic recall)
+   - symbol / import / call edges in **FalkorDB** (structural recall)
+   - past prompts / plans / patches / verdicts in **SQLite** (episodic recall)
+
+   None of this lives in the LLM context. It lives on disk.
+
+2. **Online — retrieve a small, focused Context Pack.**
+   When the agent has a question, it sends a natural-language query. The
+   retriever:
+   - embeds the query and pulls top-k semantically similar chunks from Qdrant
+   - expands the neighborhood in FalkorDB (callers, callees, imports, types)
+   - pulls a few similar past episodes from SQLite
+   - returns a compact, ranked **Context Pack** — typically a handful of
+     snippets, not the whole repo
+
+The agent only ever sees the Context Pack, not the index behind it. The repo
+can be 5 MB or 500 MB — what hits the prompt is the same small budget of
+relevant chunks.
+
 ```
-              query
-                │
-                ▼
-        ┌───────────────┐
-        │  Embed (bge-m3)│
-        └───────┬───────┘
-                │
-   ┌────────────┴────────────┐
-   ▼                         ▼
-Qdrant                  FalkorDB
-(semantic top-k)        (graph neighbors)
-   │                         │
-   └────────────┬────────────┘
-                ▼
-         Context Pack → Agent
+500 MB repo on disk     ─┐
+                         │   index (Qdrant + FalkorDB + SQLite)
+                         ▼
+                  ┌──────────────┐
+   query  ──────► │  retriever   │ ──►  ~few KB Context Pack  ──►  LLM prompt
+                  └──────────────┘
 ```
+
+Net effect: memory grows with the repo; **context stays roughly constant**.
+
+---
+
+## Auto-learning and auto-query (planned)
+
+Today the agent has to call `code-memory retrieve` and `code-memory record`
+explicitly (or via a hook). That works but pushes discipline onto the user and
+the agent. The goal is to make memory **ambient**: the agent uses it without
+thinking about it, and the memory updates itself as the agent works.
+
+This is what the planned **MCP server** unlocks.
+
+### Auto-query
+
+Once `code-memory` is exposed as an MCP server, it advertises tools like:
+
+- `memory.retrieve(query, k)` — semantic + graph recall
+- `memory.neighbors(symbol)` — structural expansion around a symbol
+- `memory.episodes(query)` — similar past tasks
+
+The agent's normal tool-selection loop picks `memory.retrieve` the same way it
+picks `Read` or `Grep` today — whenever the model judges that more context
+would help. No slash command, no hook, no human in the loop. The user just
+asks their question; the agent silently pulls the right chunks before
+answering.
+
+In practice this means:
+
+- "How does the auth middleware work?" → agent calls `memory.retrieve("auth
+  middleware")` → gets the relevant 3-5 chunks → answers.
+- "Refactor `UserService` to use the new repo pattern." → agent calls
+  `memory.neighbors("UserService")` → sees every caller and dependency before
+  touching code.
+- "We had this bug last month, what did we do?" → agent calls
+  `memory.episodes(...)` → recalls the prior fix.
+
+### Auto-learning
+
+The same MCP surface exposes write-side tools:
+
+- `memory.record(prompt, plan, patch, verdict)` — log a finished task
+- `memory.reingest(path)` — refresh the index for a changed file
+
+Combined with editor / harness hooks (file save, commit, task completion),
+this closes the loop:
+
+- **File saved** → `memory.reingest(path)` keeps the index live, so retrieval
+  never goes stale.
+- **Task finished** → `memory.record(...)` writes the episode (what was
+  asked, what was planned, what was patched, did it pass) into SQLite +
+  Qdrant.
+- **Next similar task** → that episode surfaces automatically via
+  `memory.episodes(...)`.
+
+The result is a memory that **gets smarter the more the agent uses the
+codebase**, without ever bloating the context window. Each task teaches the
+system; each query pays back only the few KB that are actually relevant.
+
+> Status: MCP server is on the [roadmap](#roadmap). Today, the same primitives
+> are reachable via the CLI (`retrieve`, `record`, `reingest`) and can be
+> wired up via shell hooks in the meantime.
 
 ---
 
