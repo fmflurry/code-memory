@@ -53,6 +53,8 @@ export interface MemoryClient {
   readonly available: boolean;
   retrieve(query: string, opts?: { k?: number; eps?: number }): Promise<ContextPack | null>;
   reingest(path: string): Promise<void>;
+  resolve(): Promise<void>;
+  ingest(opts?: { full?: boolean }): Promise<void>;
   record(input: { prompt: string; plan?: string; patch?: string; verdict?: string }): Promise<void>;
 }
 
@@ -124,6 +126,35 @@ export async function createMemoryClient(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log("warn", `reingest(${path}) failed: ${msg}`);
+      }
+    },
+
+    async resolve() {
+      if (!available) return;
+      const args = ["resolve", "--json", ...baseArgs()];
+      try {
+        await execFile(binary, args, { cwd, timeout: mutateTimeout });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log("warn", `resolve failed: ${msg}`);
+      }
+    },
+
+    async ingest(options = {}) {
+      if (!available) return;
+      const args = [
+        "ingest",
+        cwd,
+        "--json",
+        ...(options.full ? ["--full"] : []),
+        ...baseArgs(),
+      ];
+      try {
+        // Larger timeout: a delta walk can hit many files on session resume.
+        await execFile(binary, args, { cwd, timeout: mutateTimeout * 3 });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log("warn", `ingest failed: ${msg}`);
       }
     },
 

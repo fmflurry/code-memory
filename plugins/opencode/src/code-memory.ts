@@ -34,6 +34,9 @@ const execFile = promisify(execFileCb);
 
 const PACK_TTL_MS = 5 * 60 * 1000; // 5 min
 const DEDUP_WINDOW_MS = 60 * 1000; // 60 s
+// After the *last* write in a burst, wait this long before re-running the
+// resolver. Keeps high-frequency edit storms from spawning N resolver runs.
+const RESOLVER_DEBOUNCE_MS = 1500;
 const WRITE_TOOLS: ReadonlySet<string> = new Set(["write", "edit", "patch"]);
 const SERVICE = "code-memory";
 
@@ -186,6 +189,32 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
   }
 
   const stateBySession = new Map<string, SessionMemory>();
+  // Set of sessions that have already kicked off the per-session delta
+  // ingest (run once on the first prompt to catch out-of-band edits).
+  const sessionsBootstrapped = new Set<string>();
+  // Debounce handle for the resolver — coalesces bursts of write tools.
+  let resolverTimer: NodeJS.Timeout | null = null;
+
+  function scheduleResolver(): void {
+    if (resolverTimer) clearTimeout(resolverTimer);
+    resolverTimer = setTimeout(() => {
+      resolverTimer = null;
+      void memory.resolve().catch(() => {
+        // resolve() already logs internally; swallow to keep the hook quiet
+      });
+    }, RESOLVER_DEBOUNCE_MS);
+  }
+
+  function invalidateAllPacks(reason: string): void {
+    for (const s of stateBySession.values()) {
+      if (s.pack) {
+        s.pack = null;
+        s.query = null;
+        s.fetchedAt = 0;
+      }
+    }
+    log("debug", `context pack cache invalidated (${reason})`);
+  }
 
   function getSession(id: string | undefined): SessionMemory | null {
     if (!id) return null;
@@ -217,6 +246,16 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
       const text = extractText(output.parts);
       if (text && !session.firstUserMessage) {
         session.firstUserMessage = text;
+      }
+
+      // Once per session, kick off a delta ingest in the background. Catches
+      // out-of-band edits (vim, IDE, git pull) made between sessions so the
+      // index isn't stale on the very first prompt.
+      if (memory.available && sid && !sessionsBootstrapped.has(sid)) {
+        sessionsBootstrapped.add(sid);
+        void memory.ingest().catch(() => {
+          // ingest() logs internally; never block session start on failure.
+        });
       }
 
       if (!memory.available || !isSubstantiveCodeIntent(text)) return;
@@ -268,8 +307,17 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
       const path = pickToolPath(output.args) ?? pickToolPath(output.metadata);
       if (!path) return;
 
-      // Fire-and-forget so the agent's turn isn't blocked on indexing.
+      // 1. Re-ingest the single file (fast, background).
       void memory.reingest(path);
+
+      // 2. The file's symbols just changed — any cached Context Pack now
+      //    reflects pre-write state. Drop it so the next prompt re-fetches.
+      invalidateAllPacks(`${tool}(${path})`);
+
+      // 3. Schedule the cross-file resolver. Debounced so a burst of edits
+      //    (e.g. multi-file refactor) collapses to one resolver run after
+      //    the dust settles.
+      scheduleResolver();
     },
 
     event: async ({ event }: { event: EventEnvelope }) => {

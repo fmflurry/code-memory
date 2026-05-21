@@ -273,6 +273,38 @@ def reset(
 
 
 @app.command()
+def resolve(
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """Re-run the symbol resolver against the current graph.
+
+    Use after writes that mutated cross-file call relationships (rename,
+    move, delete). Cheaper than a full re-ingest because it skips
+    tree-sitter and embedding — it only re-points placeholder CALLS
+    edges to real Symbol nodes.
+    """
+    from .orchestrator.resolver import resolve_graph
+
+    pipe = Pipeline(project=project)
+    r = resolve_graph(pipe.graph)
+    _emit(
+        {
+            "project": pipe.slug,
+            "placeholders": r.placeholders,
+            "edges_total": r.edges_total,
+            "resolved_same_file": r.edges_resolved_same_file,
+            "resolved_imported": r.edges_resolved_imported,
+            "resolved_unique": r.edges_resolved_unique,
+            "ambiguous": r.edges_left_ambiguous,
+            "external": r.edges_left_external,
+            "placeholders_deleted": r.placeholders_deleted,
+        },
+        as_json=as_json,
+    )
+
+
+@app.command()
 def callers(
     symbol: str = typer.Argument(..., help="Symbol name to look up callers for."),
     depth: int = typer.Option(1, "--depth", help="Traversal depth (1-3)."),
