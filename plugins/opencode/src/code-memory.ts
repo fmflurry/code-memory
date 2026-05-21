@@ -114,14 +114,30 @@ function formatPack(pack: ContextPack): string {
     }
   }
 
-  if (pack.graph.length > 0) {
-    lines.push("", "### Graph neighbors");
-    for (const n of pack.graph.slice(0, 12)) {
-      lines.push(`- ${String(n.labels)} ${String(n.key)}`);
-    }
-  }
-
   lines.push(
+    "",
+    "### Next-step tools (call these autonomously when applicable)",
+    "",
+    "The Code hits above are **orientation only** — they do not answer topology",
+    "questions. Before reading files, decide if a graph query would give you a",
+    "precise answer in one call:",
+    "",
+    "- `codememory_callers(symbol)` — who calls this symbol? Use before rename/",
+    "  refactor, or when asked 'what depends on X'.",
+    "- `codememory_callees(symbol)` — what does the file defining this symbol",
+    "  call? Use to map outgoing dependencies of a service/class.",
+    "- `codememory_importers(target)` — which files import this module or path?",
+    "  Use for 'who uses @scope/lib' or barrel-file impact analysis.",
+    "- `codememory_dependencies(file)` — what does this file import? Use to",
+    "  understand a file's external surface before reading it line-by-line.",
+    "- `codememory_definitions(symbol)` — every file+line that defines a name.",
+    "  Use first when a symbol name is ambiguous across the project.",
+    "",
+    "Default to one targeted graph call over a wide grep. Read source files",
+    "only after the graph tells you exactly which lines to open.",
+    "",
+    "After completing a non-trivial task, call `codememory_record(prompt, plan,",
+    "patch, verdict)` so future sessions can recall what worked.",
     "",
     "_Source: local code-memory index. Use as orientation; verify before acting._",
   );
@@ -238,9 +254,7 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
       if (Date.now() - session.fetchedAt > PACK_TTL_MS) return;
 
       const isEmpty =
-        session.pack.code.length === 0 &&
-        session.pack.episodes.length === 0 &&
-        session.pack.graph.length === 0;
+        session.pack.code.length === 0 && session.pack.episodes.length === 0;
       if (isEmpty) return;
 
       output.system.push(formatPack(session.pack));

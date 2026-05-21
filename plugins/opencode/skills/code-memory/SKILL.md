@@ -1,23 +1,23 @@
 ---
 name: code-memory
-description: Local-first memory layer (structural graph + semantic vectors + episodes) wired in via MCP and the OpenCode plugin. Use when you want to recall how a feature is wired, find prior work on a topic, or refresh the index after a write.
+description: Local-first memory layer (semantic vectors + call/import graph + episodes) wired in via MCP and the OpenCode plugin. Use to orient on unfamiliar code, answer topology questions (who calls X, who imports Y), recall prior work, and refresh the index after writes.
 ---
 
 # code-memory
 
-The `code-memory` plugin gives every session a small, query-relevant
-**Context Pack** drawn from a local index of the codebase:
+`code-memory` exposes a local index of the project as **two complementary
+surfaces**:
 
-- **Code hits** — symbol-level snippets ranked by semantic similarity.
-- **Prior episodes** — past task prompts and outcomes that may apply.
-- **Graph neighbors** — files / symbols structurally adjacent to the hits.
+1. **Orientation** — a `Context Pack` (semantic code hits + relevant past
+   episodes) injected automatically into the system prompt when the user
+   asks something substantive. Tells you *roughly where to look*.
+2. **Topology** — five explicit MCP tools that answer precise
+   call-graph / import-graph questions. Tells you *exactly what depends on
+   what*.
 
-The plugin tries to make memory ambient: it retrieves automatically when
-the user message looks like a substantive code question, and it indexes
-files automatically when they're written or edited. Manual calls are still
-available through the MCP tools.
+Use both. Vectors orient; the graph answers structural questions.
 
-## When the plugin acts on its own
+## Auto-injected Context Pack
 
 | Trigger                         | Action                                           |
 | ------------------------------- | ------------------------------------------------ |
@@ -27,40 +27,113 @@ available through the MCP tools.
 
 Trivial follow-ups ("yes", "continue", "thanks") do not trigger retrieval.
 
-## When **you** should call the MCP tools manually
+The pack contains:
+- **Code hits** — symbol-level snippets ranked by semantic similarity.
+  Treat as candidates, not answers.
+- **Prior episodes** — past task prompts + verdicts that may apply.
 
-The plugin is conservative; you should still call these when appropriate:
+If the pack is empty or low-signal, fall back to graph tools first (cheap,
+exact) and then `read` / `grep` only as a last resort.
+
+## Topology tools — call these autonomously
+
+Before reading multiple files, ask whether a single graph query would
+answer the question precisely.
+
+### `codememory_callers(symbol, depth?=1)`
+
+Who calls this symbol? Reverse `CALLS` traversal.
+
+**Call when:**
+- Asked "what depends on X" / "what uses X" / "impact of renaming X".
+- About to refactor or rename a function/method/class.
+- Need to estimate blast radius before a change.
+
+**Example:** `codememory_callers("getBearerToken")` → list of files +
+the definition's location.
+
+### `codememory_callees(symbol, depth?=1)`
+
+What does the file defining this symbol call? Forward `CALLS` traversal.
+
+**Call when:**
+- Mapping the outgoing dependencies of a service or class.
+- Want to know which collaborators a unit reaches.
+
+### `codememory_importers(target)`
+
+Which files import this module or relative path? Reverse `IMPORTS`.
+
+**Call when:**
+- Asked "who uses `@scope/lib`" or any package.
+- Auditing impact of removing or replacing a barrel/module.
+- Checking which files depend on a shared utility.
+
+**Example:** `codememory_importers("@internal-ng/security")`.
+
+### `codememory_dependencies(file, depth?=1)`
+
+What modules does this file import? Forward `IMPORTS`.
+
+**Call when:**
+- Triaging an unfamiliar file — start with its external surface.
+- Looking for hidden coupling before changing a file.
+
+### `codememory_definitions(symbol)`
+
+Every file+line that defines a symbol with this name.
+
+**Call first** when a name is ambiguous, before passing it to
+`callers` / `callees`. Tells you whether the symbol is unique or
+duplicated across modules.
+
+## Manual orientation + write tools
 
 - `codememory_retrieve(query, k?, eps?)`
-  - Before deep refactors that span symbols you haven't touched.
-  - When the user mentions a feature or bug "we worked on before".
-  - When debugging — pull prior episodes with similar symptoms.
+  - Force orientation for a tricky query (e.g. conceptual question with
+    no obvious keyword).
 - `codememory_record(prompt, plan?, patch?, verdict?)`
-  - At the end of a non-trivial task. Pass the patch (`git diff`) and a
-    verdict (`success` / `reverted` / `partial`). Future sessions will
-    surface this episode for similar prompts.
+  - **Call at the end of any non-trivial task.** Pass the patch (`git
+    diff`) and a verdict (`success` / `reverted` / `partial`). Future
+    sessions will surface this episode for similar prompts.
 - `codememory_reingest(path)`
   - After multi-file rewrites or anything the editor hook may have missed.
 
+## Decision flow
+
+```
+1. User asks question
+   │
+   ├─ Context Pack already injected? → skim Code hits + Episodes
+   │
+   ├─ Topology question detected ("who calls", "what imports", "impact")?
+   │   → call codememory_callers / importers / definitions FIRST
+   │   → only then open files at the lines the graph returned
+   │
+   ├─ Need conceptual orientation in unfamiliar area?
+   │   → codememory_retrieve(query)
+   │
+   └─ After completing the task → codememory_record(...)
+```
+
 ## How to read a Context Pack
 
-The pack arrives as a system-prompt block. Treat it as **orientation**, not
-ground truth:
+Treat it as **orientation**, not ground truth:
 
 1. Skim **Code hits** for files / symbols you didn't already know about.
 2. Open the highest-scoring hits and verify they're still relevant.
-3. Check **Prior episodes** — if a past episode matches your task, read
-   its plan / patch before reinventing it.
-4. **Graph neighbors** point at callers / callees / imports of the hits.
-   Useful for blast-radius questions ("who else calls this?").
-
-If the pack is empty or low-signal, fall back to `read` / `grep` and call
-`codememory_record` at the end so the next session has more to work with.
+3. Check **Prior episodes** — if a past `verdict=success` episode matches
+   your task, read its plan / patch before reinventing it.
+4. For "who calls / imports / defines" follow-ups, **use the topology
+   tools** — never grep when one Cypher hop suffices.
 
 ## Failure modes
 
 - If FalkorDB, Qdrant, or Ollama is down, the CLI errors and the plugin
-  silently no-ops. Manual calls return an error payload; surface it to
-  the user and continue without memory.
-- If the index is stale, run `code-memory ingest <repo>` in a terminal —
-  the git-aware delta makes this cheap.
+  silently no-ops. Manual tool calls return an error payload; surface it
+  to the user and continue without memory.
+- If the index is stale, run `code-memory ingest <repo>` — the git-aware
+  delta makes this cheap.
+- If a topology tool returns `[]`, the symbol may be ambiguous,
+  external, or simply not yet resolved. Try `codememory_definitions`
+  first to disambiguate before falling back to grep.

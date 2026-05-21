@@ -47,7 +47,6 @@ export interface ContextPack {
   readonly query: string;
   readonly code: readonly CodeHit[];
   readonly episodes: readonly EpisodeHit[];
-  readonly graph: ReadonlyArray<{ labels: unknown; key: unknown }>;
 }
 
 export interface MemoryClient {
