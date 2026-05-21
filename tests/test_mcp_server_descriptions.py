@@ -17,12 +17,12 @@ def test_every_tool_project_field_mentions_resolved_default() -> None:
         if "project" not in props:
             continue
         desc = props["project"].get("description", "")
-        assert "currently:" in desc.lower(), (
-            f"tool {tool.name!r} project field missing concrete default hint"
+        assert "required" in desc.lower(), (
+            f"tool {tool.name!r} project description must call out REQUIRED"
         )
         # the actual resolved slug should be embedded (backticked)
-        assert "`" in desc, (
-            f"tool {tool.name!r} project description not formatted with slug"
+        assert f"`{mcp_server._DEFAULT_SLUG}`" in desc, (
+            f"tool {tool.name!r} project description must embed the slug"
         )
 
 
@@ -32,3 +32,13 @@ def test_project_schema_helper_uses_module_default() -> None:
     schema = mcp_server._project_schema()
     assert mcp_server._DEFAULT_SLUG in schema["description"]
     assert schema["type"] == "string"
+
+
+def test_every_tool_lists_project_as_required() -> None:
+    from code_memory import mcp_server
+
+    for tool in mcp_server._TOOLS:
+        required = tool.inputSchema.get("required", [])
+        assert "project" in required, (
+            f"tool {tool.name!r} must mark `project` as required"
+        )

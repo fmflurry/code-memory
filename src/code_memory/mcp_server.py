@@ -49,14 +49,20 @@ _DEFAULT_SLUG = _resolved_default_slug()
 
 
 def _project_schema() -> dict[str, Any]:
-    """Shared schema fragment for the ``project`` field."""
+    """Shared schema fragment for the ``project`` field.
+
+    The field is mandatory on every tool — silent cwd-fallback was hiding
+    namespace bugs (see commit `6ff8a27`). The description hands the model
+    the *exact* slug to pass for the current working directory so it
+    doesn't have to guess.
+    """
     return {
         "type": "string",
         "description": (
-            f"Project slug for namespaced storage. Omit to use the server's "
-            f"auto-detected default (currently: `{_DEFAULT_SLUG}`). Pass an "
-            f"explicit slug ONLY when querying a different project than the "
-            f"one this server was launched in."
+            f"REQUIRED. Project slug for namespaced storage. For this server, "
+            f"pass exactly `{_DEFAULT_SLUG}` to query the current project. "
+            f"Pass a different slug only when you intentionally want another "
+            f"project. Sentinel values like 'auto' or 'default' are rejected."
         ),
     }
 
@@ -81,7 +87,7 @@ _TOOLS: list[Tool] = [
                 },
                 "project": _project_schema(),
             },
-            "required": ["query"],
+            "required": ["query", "project"],
         },
     ),
     Tool(
@@ -99,7 +105,7 @@ _TOOLS: list[Tool] = [
                 "verdict": {"type": "string", "description": "e.g. 'success', 'reverted'."},
                 "project": _project_schema(),
             },
-            "required": ["prompt"],
+            "required": ["prompt", "project"],
         },
     ),
     Tool(
@@ -114,7 +120,7 @@ _TOOLS: list[Tool] = [
                 "path": {"type": "string", "description": "Absolute or cwd-relative file path."},
                 "project": _project_schema(),
             },
-            "required": ["path"],
+            "required": ["path", "project"],
         },
     ),
     Tool(
@@ -130,7 +136,7 @@ _TOOLS: list[Tool] = [
                 "depth": {"type": "integer", "default": 1, "description": "Traversal depth, 1-3."},
                 "project": _project_schema(),
             },
-            "required": ["symbol"],
+            "required": ["symbol", "project"],
         },
     ),
     Tool(
@@ -146,7 +152,7 @@ _TOOLS: list[Tool] = [
                 "depth": {"type": "integer", "default": 1, "description": "Traversal depth, 1-3."},
                 "project": _project_schema(),
             },
-            "required": ["symbol"],
+            "required": ["symbol", "project"],
         },
     ),
     Tool(
@@ -162,7 +168,7 @@ _TOOLS: list[Tool] = [
                 "target": {"type": "string", "description": "Module / package / path to look up."},
                 "project": _project_schema(),
             },
-            "required": ["target"],
+            "required": ["target", "project"],
         },
     ),
     Tool(
@@ -178,7 +184,7 @@ _TOOLS: list[Tool] = [
                 "depth": {"type": "integer", "default": 1, "description": "Traversal depth, 1-3."},
                 "project": _project_schema(),
             },
-            "required": ["file"],
+            "required": ["file", "project"],
         },
     ),
     Tool(
@@ -193,17 +199,51 @@ _TOOLS: list[Tool] = [
                 "symbol": {"type": "string"},
                 "project": _project_schema(),
             },
-            "required": ["symbol"],
+            "required": ["symbol", "project"],
         },
     ),
 ]
 
 
-def _graph_for(project: str | None) -> tuple[FalkorStore, str]:
-    """Return (graph, resolved_slug) so callers can echo the slug in output."""
-    slug = project or detect_project_slug()
-    cfg = CONFIG.for_project(slug)
-    return FalkorStore(graph_name=cfg.falkor_graph), slug
+class MissingProjectError(ValueError):
+    """Raised when an MCP tool call omits the required `project` parameter.
+
+    We surface a *helpful* error rather than silently falling back to
+    cwd-detection: that fallback was hiding bugs where models invented
+    project names or omitted the field entirely, and downstream queries
+    were quietly hitting the wrong namespace. See commit `6ff8a27`.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            f"`project` parameter is required. Pass the slug of the project "
+            f"you're querying. The server's cwd-detected default is "
+            f"`{_DEFAULT_SLUG}` — pass that exact value to use it, or pass "
+            f"a different slug to query another project. Use the "
+            f"`code-memory projects` CLI to list available slugs."
+        )
+
+
+def _require_project(args: dict[str, Any]) -> str:
+    """Return the caller-supplied project slug or raise.
+
+    Sentinel values (``auto``, ``default``, blank) are rejected — those are
+    not real slugs and accepting them would re-introduce the silent
+    namespace bug we just fixed.
+    """
+    raw = args.get("project")
+    if not isinstance(raw, str):
+        raise MissingProjectError()
+    slug = raw.strip()
+    if not slug or slug.lower() in {"auto", "default"}:
+        raise MissingProjectError()
+    return slug
+
+
+def _graph_for(project: str) -> tuple[FalkorStore, str]:
+    """Return (graph, resolved_slug). ``project`` must already be validated."""
+    cfg = CONFIG.for_project(project)
+    return FalkorStore(graph_name=cfg.falkor_graph), project
 
 
 def _text(payload: Any) -> list[TextContent]:
@@ -213,10 +253,10 @@ def _text(payload: Any) -> list[TextContent]:
 
 
 def _retrieve(args: dict[str, Any]) -> list[TextContent]:
+    project = _require_project(args)
     query = args["query"]
     k = int(args.get("k", 8))
     eps = int(args.get("eps", 5))
-    project = args.get("project")
     include_idle = bool(args.get("include_idle_episodes", False))
     retriever = Retriever(project=project)
     pack = retriever.retrieve(
@@ -229,7 +269,7 @@ def _retrieve(args: dict[str, Any]) -> list[TextContent]:
 
 
 def _record(args: dict[str, Any]) -> list[TextContent]:
-    project = args.get("project")
+    project = _require_project(args)
     pipe = Pipeline(project=project)
     ep = Episode(
         prompt=args["prompt"],
@@ -242,10 +282,10 @@ def _record(args: dict[str, Any]) -> list[TextContent]:
 
 
 def _reingest(args: dict[str, Any]) -> list[TextContent]:
+    project = _require_project(args)
     path = Path(args["path"])
     if not path.exists() or not path.is_file():
         return _text({"error": f"not a file: {path}"})
-    project = args.get("project")
     pipe = Pipeline(project=project)
     ex = pipe.reingest_file(path)
     if ex is None:
@@ -261,31 +301,31 @@ def _reingest(args: dict[str, Any]) -> list[TextContent]:
 
 
 def _callers(args: dict[str, Any]) -> list[TextContent]:
-    g, slug = _graph_for(args.get("project"))
+    g, slug = _graph_for(_require_project(args))
     rows = g.callers(args["symbol"], depth=int(args.get("depth", 1)))
     return _text({"project": slug, "symbol": args["symbol"], "callers": rows})
 
 
 def _callees(args: dict[str, Any]) -> list[TextContent]:
-    g, slug = _graph_for(args.get("project"))
+    g, slug = _graph_for(_require_project(args))
     rows = g.callees(args["symbol"], depth=int(args.get("depth", 1)))
     return _text({"project": slug, "symbol": args["symbol"], "callees": rows})
 
 
 def _importers(args: dict[str, Any]) -> list[TextContent]:
-    g, slug = _graph_for(args.get("project"))
+    g, slug = _graph_for(_require_project(args))
     rows = g.importers(args["target"])
     return _text({"project": slug, "target": args["target"], "importers": rows})
 
 
 def _dependencies(args: dict[str, Any]) -> list[TextContent]:
-    g, slug = _graph_for(args.get("project"))
+    g, slug = _graph_for(_require_project(args))
     rows = g.dependencies(args["file"], depth=int(args.get("depth", 1)))
     return _text({"project": slug, "file": args["file"], "dependencies": rows})
 
 
 def _definitions(args: dict[str, Any]) -> list[TextContent]:
-    g, slug = _graph_for(args.get("project"))
+    g, slug = _graph_for(_require_project(args))
     rows = g.definitions(args["symbol"])
     return _text({"project": slug, "symbol": args["symbol"], "definitions": rows})
 

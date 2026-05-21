@@ -17,6 +17,49 @@ surfaces**:
 
 Use both. Vectors orient; the graph answers structural questions.
 
+## Parameter contract — read this first
+
+**Every `codememory_*` MCP tool requires a `project` parameter.** This is
+non-negotiable; the server rejects calls that omit it. The error message
+returned in that case tells you which slug to pass.
+
+### How to find the right slug
+
+1. Look at the **previous tool response** — every successful call echoes
+   `"project": "<slug>"`. Reuse that exact value.
+2. If you haven't called any tool yet, look at the `project` field
+   description in any tool's inputSchema — the server embeds the current
+   project's slug there as `currently: \`<slug>\``.
+3. As a last resort, list known slugs from the shell: `code-memory projects`.
+
+### Forbidden values
+
+These are sentinel strings the server explicitly rejects:
+
+- `"auto"` — not a slug. Falls back to nothing.
+- `"default"` — same.
+- `""` / `null` / whitespace-only — same.
+
+If you don't know the slug, **don't invent one**. Re-read this skill or
+inspect a prior tool response.
+
+### Full parameter reference
+
+| Tool                       | Required                                       | Optional                                    |
+| -------------------------- | ---------------------------------------------- | ------------------------------------------- |
+| `codememory_retrieve`      | `query`, `project`                             | `k` (default 8), `eps` (5), `include_idle_episodes` (false) |
+| `codememory_record`        | `prompt`, `project`                            | `plan`, `patch`, `verdict`                  |
+| `codememory_reingest`      | `path`, `project`                              | —                                           |
+| `codememory_callers`       | `symbol`, `project`                            | `depth` (1–3, default 1)                    |
+| `codememory_callees`       | `symbol`, `project`                            | `depth` (1–3, default 1)                    |
+| `codememory_importers`     | `target`, `project`                            | —                                           |
+| `codememory_dependencies`  | `file`, `project`                              | `depth` (1–3, default 1)                    |
+| `codememory_definitions`   | `symbol`, `project`                            | —                                           |
+
+`symbol` is a bare identifier (`getBearerToken`), not a dotted expression.
+`target` for `importers` is the literal module key (`@scope/pkg`, `rxjs`,
+or `./relative-path`). `path` / `file` are absolute filesystem paths.
+
 ## Auto-injected Context Pack
 
 | Trigger                         | Action                                           |
@@ -40,7 +83,7 @@ exact) and then `read` / `grep` only as a last resort.
 Before reading multiple files, ask whether a single graph query would
 answer the question precisely.
 
-### `codememory_callers(symbol, depth?=1)`
+### `codememory_callers(symbol, project, depth?=1)`
 
 Who calls this symbol? Reverse `CALLS` traversal.
 
@@ -49,10 +92,10 @@ Who calls this symbol? Reverse `CALLS` traversal.
 - About to refactor or rename a function/method/class.
 - Need to estimate blast radius before a change.
 
-**Example:** `codememory_callers("getBearerToken")` → list of files +
-the definition's location.
+**Example:** `codememory_callers(symbol="getBearerToken", project="gc-webapp")`
+→ list of files + the definition's location.
 
-### `codememory_callees(symbol, depth?=1)`
+### `codememory_callees(symbol, project, depth?=1)`
 
 What does the file defining this symbol call? Forward `CALLS` traversal.
 
@@ -60,7 +103,7 @@ What does the file defining this symbol call? Forward `CALLS` traversal.
 - Mapping the outgoing dependencies of a service or class.
 - Want to know which collaborators a unit reaches.
 
-### `codememory_importers(target)`
+### `codememory_importers(target, project)`
 
 Which files import this module or relative path? Reverse `IMPORTS`.
 
@@ -69,9 +112,9 @@ Which files import this module or relative path? Reverse `IMPORTS`.
 - Auditing impact of removing or replacing a barrel/module.
 - Checking which files depend on a shared utility.
 
-**Example:** `codememory_importers("@internal-ng/security")`.
+**Example:** `codememory_importers(target="@internal-ng/security", project="gc-webapp")`.
 
-### `codememory_dependencies(file, depth?=1)`
+### `codememory_dependencies(file, project, depth?=1)`
 
 What modules does this file import? Forward `IMPORTS`.
 
@@ -79,7 +122,7 @@ What modules does this file import? Forward `IMPORTS`.
 - Triaging an unfamiliar file — start with its external surface.
 - Looking for hidden coupling before changing a file.
 
-### `codememory_definitions(symbol)`
+### `codememory_definitions(symbol, project)`
 
 Every file+line that defines a symbol with this name.
 
@@ -89,14 +132,14 @@ duplicated across modules.
 
 ## Manual orientation + write tools
 
-- `codememory_retrieve(query, k?, eps?)`
+- `codememory_retrieve(query, project, k?, eps?, include_idle_episodes?)`
   - Force orientation for a tricky query (e.g. conceptual question with
     no obvious keyword).
-- `codememory_record(prompt, plan?, patch?, verdict?)`
+- `codememory_record(prompt, project, plan?, patch?, verdict?)`
   - **Call at the end of any non-trivial task.** Pass the patch (`git
     diff`) and a verdict (`success` / `reverted` / `partial`). Future
     sessions will surface this episode for similar prompts.
-- `codememory_reingest(path)`
+- `codememory_reingest(path, project)`
   - After multi-file rewrites or anything the editor hook may have missed.
 
 ## Decision flow
@@ -129,6 +172,9 @@ Treat it as **orientation**, not ground truth:
 
 ## Failure modes
 
+- **`project` missing or invalid** → server raises `MissingProjectError`
+  with the cwd-detected slug embedded. Read the error, re-issue the call
+  with that exact `project` value. Do not invent a slug or pass `"auto"`.
 - If FalkorDB, Qdrant, or Ollama is down, the CLI errors and the plugin
   silently no-ops. Manual tool calls return an error payload; surface it
   to the user and continue without memory.
