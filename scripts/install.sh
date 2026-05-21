@@ -209,12 +209,13 @@ else
   warn "non-interactive shell and no --plugins=... given; skipping plugin step"
 fi
 
-plugin_flag=()
-[ "$PLUGINS_SCOPE" = "project" ] && plugin_flag=(--project)
+plugin_flag=""
+[ "$PLUGINS_SCOPE" = "project" ] && plugin_flag="--project"
 
 if [ "$INSTALL_OPENCODE" -eq 1 ]; then
   if [ -x "$PROJECT_ROOT/plugins/opencode/install.sh" ]; then
-    "$PROJECT_ROOT/plugins/opencode/install.sh" "${plugin_flag[@]}"
+    # shellcheck disable=SC2086 # intentional word-splitting on a single flag
+    "$PROJECT_ROOT/plugins/opencode/install.sh" $plugin_flag
     ok "OpenCode plugin installed ($PLUGINS_SCOPE)"
   else
     warn "plugins/opencode/install.sh not executable; skipping"
@@ -223,7 +224,8 @@ fi
 
 if [ "$INSTALL_CLAUDECODE" -eq 1 ]; then
   if [ -x "$PROJECT_ROOT/plugins/claude-code/install.sh" ]; then
-    "$PROJECT_ROOT/plugins/claude-code/install.sh" "${plugin_flag[@]}"
+    # shellcheck disable=SC2086 # intentional word-splitting on a single flag
+    "$PROJECT_ROOT/plugins/claude-code/install.sh" $plugin_flag
     ok "Claude Code plugin installed ($PLUGINS_SCOPE)"
   else
     warn "plugins/claude-code/install.sh not executable; skipping"
