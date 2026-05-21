@@ -23,6 +23,11 @@ Structural symbol graph &nbsp;·&nbsp; semantic vector recall &nbsp;·&nbsp; epi
 
 ---
 
+> [!NOTE]
+> **Using this with a coding agent?** My personal Claude Code / OpenCode harness — hooks, agents, MCP wiring, and the `code-memory` integration — lives at **[fmflurry/settings-opencode](https://github.com/fmflurry/settings-opencode)**. Drop-in reference for plugging this memory layer into a real agent setup.
+
+---
+
 ## What is this?
 
 `code-memory` gives a coding agent (Claude Code, OpenCode, Cursor, your own harness) a memory it can actually use:
