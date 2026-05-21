@@ -93,3 +93,7 @@ class FalkorStore:
             "MATCH (f:File {key: $key}) DETACH DELETE f",
             {"key": path},
         )
+
+    def clear_graph(self) -> None:
+        """Remove every node + edge in this project's graph."""
+        self.graph.query("MATCH (n) DETACH DELETE n")

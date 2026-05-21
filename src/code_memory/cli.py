@@ -11,7 +11,7 @@ from rich import print as rprint
 
 from .config import detect_project_slug
 from .episodic import Episode
-from .orchestrator import Pipeline, Retriever
+from .orchestrator import Pipeline, Retriever, list_projects, reset_all, reset_project
 from .orchestrator import git_delta as _git_delta
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="code-memory CLI")
@@ -185,6 +185,74 @@ def project(
 ) -> None:
     """Print the resolved project slug for ROOT (or cwd)."""
     _emit({"slug": detect_project_slug(root)}, as_json=as_json)
+
+
+@app.command()
+def projects(as_json: bool = JsonOpt) -> None:
+    """List every project slug known to the storage backends."""
+    _emit({"projects": list_projects()}, as_json=as_json)
+
+
+@app.command()
+def reset(
+    root: Path | None = typer.Argument(
+        None,
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        help="Path used to auto-detect the project slug. Ignored with --all.",
+    ),
+    project: str | None = ProjectOpt,
+    all_: bool = typer.Option(
+        False, "--all", help="Wipe every project (use with care)."
+    ),
+    include_episodes: bool = typer.Option(
+        False,
+        "--include-episodes",
+        help="Also drop episodic memory (conversation history). Destructive.",
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip confirmation prompt."
+    ),
+    as_json: bool = JsonOpt,
+) -> None:
+    """Erase code-index data for a project (or every project).
+
+    Default scope: Qdrant code collection + FalkorDB graph + ingest_state.
+    Episodes (conversation memory) are preserved unless --include-episodes.
+    """
+    if all_:
+        targets = list_projects()
+        scope_desc = f"all {len(targets)} projects"
+    else:
+        slug = project or detect_project_slug(root)
+        targets = [slug]
+        scope_desc = f"project '{slug}'"
+
+    if not targets:
+        _emit({"reset": [], "note": "nothing to reset"}, as_json=as_json)
+        return
+
+    if not yes:
+        extra = " + episodes" if include_episodes else ""
+        confirm = typer.confirm(
+            f"Reset {scope_desc}{extra}? This drops vectors + graph + ingest_state.",
+            default=False,
+        )
+        if not confirm:
+            raise typer.Exit(code=1)
+
+    if all_:
+        results = reset_all(include_episodes=include_episodes)
+    else:
+        results = [
+            reset_project(s, include_episodes=include_episodes) for s in targets
+        ]
+
+    _emit(
+        {"reset": [asdict(r) for r in results]},
+        as_json=as_json,
+    )
 
 
 if __name__ == "__main__":

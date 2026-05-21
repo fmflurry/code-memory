@@ -42,6 +42,18 @@ class QdrantStore:
             vectors_config=qm.VectorParams(size=self.dim, distance=qm.Distance.COSINE),
         )
 
+    def recreate_collection(self, name: str) -> None:
+        """Drop and re-create a collection. Wipes all stored vectors."""
+        try:
+            self.client.delete_collection(collection_name=name)
+        except Exception:
+            # collection may not exist yet — fine, ensure_collection covers it
+            pass
+        self.client.create_collection(
+            collection_name=name,
+            vectors_config=qm.VectorParams(size=self.dim, distance=qm.Distance.COSINE),
+        )
+
     def upsert(self, collection: str, records: Iterable[VectorRecord]) -> None:
         points = [
             qm.PointStruct(id=r.id, vector=r.vector, payload=r.payload)

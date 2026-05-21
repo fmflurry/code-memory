@@ -74,7 +74,8 @@ class Pipeline:
         mode:
           - "auto": git-incremental if prior state exists and base is reachable,
                    else full walk
-          - "full": always walk every file (clears stored ingest_state on success)
+          - "full": purge this project's vectors+graph+ingest_state, then
+                    walk every file. Use to rebuild from scratch.
           - "incremental": require git + base; raise if not available
         since: explicit base ref (branch/tag/sha). Overrides stored state when set.
         dry_run: compute plan and return stats with notes; don't touch storage.
@@ -144,6 +145,8 @@ class Pipeline:
     def _ingest_full(self, root: Path, *, dry_run: bool) -> IngestStats:
         extractor = Extractor()
         stats = IngestStats(mode="full")
+        if not dry_run:
+            self._purge_project_index(root)
         for ex in extractor.walk(root):
             stats.files += 1
             stats.symbols += len(ex.symbols)
@@ -154,6 +157,17 @@ class Pipeline:
                 continue
             self.ingest_file(ex)
         return stats
+
+    def _purge_project_index(self, root: Path) -> None:
+        """Wipe code vectors + graph + ingest_state for this project.
+
+        Episodes are independent (conversation memory) and preserved.
+        Called before a full re-ingest so stale entries (e.g. paths now
+        excluded by .gitignore or ignore_dirs) don't linger in retrieval.
+        """
+        self.vector.recreate_collection(self.cfg.qdrant_code)
+        self.graph.clear_graph()
+        self.state.clear(root)
 
     def _ingest_delta(
         self,
