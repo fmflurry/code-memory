@@ -204,6 +204,15 @@ Both scripts will:
 5. Start FalkorDB and Qdrant via Docker Compose.
 6. Pull the `bge-m3` embedding model into Ollama.
 7. Run the smoke test suite.
+8. Optionally install the **OpenCode** and/or **Claude Code** harness plugins (see [Harness plugins](#harness-plugins)). Interactive by default; pass `--plugins=all|opencode|claudecode|none` to bypass the prompt.
+
+```bash
+# install everything plus both plugins (non-interactive)
+./scripts/install.sh --plugins=all
+
+# only the Claude Code plugin, project-local
+./scripts/install.sh --plugins=claudecode --plugins-scope=project
+```
 
 ---
 
@@ -402,6 +411,50 @@ pipx install git+https://github.com/fmflurry/code-memory
 uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
 # speaks JSON-RPC on stdio; useful with `npx @modelcontextprotocol/inspector`
 ```
+
+### Harness plugins
+
+The MCP server above exposes manual tools. The **harness plugins** make
+the same backend **ambient** — auto-retrieving a Context Pack on every
+substantive user prompt, auto-reingesting on every `Write` / `Edit`, and
+recording sessions as episodes when the agent stops. The plugins are
+optional and live alongside the MCP server; install both for the best
+experience.
+
+| Plugin                                          | Hook model                                                                    |
+| ----------------------------------------------- | ----------------------------------------------------------------------------- |
+| [`plugins/opencode`](plugins/opencode/README.md)    | Bun-loaded TypeScript module; uses `chat.message`, `experimental.chat.system.transform`, `tool.execute.after`, `session.idle`. |
+| [`plugins/claude-code`](plugins/claude-code/README.md) | Plain Node scripts wired via `hooks.json`; uses `SessionStart`, `UserPromptSubmit`, `PostToolUse` (`Write`/`Edit`/`MultiEdit`), `Stop`. |
+
+Both plugins:
+
+- Detect substantive code intent (trivial follow-ups skip retrieval).
+- Dedup the same query within 60 s.
+- Debounce the cross-file resolver (~1.5 s after the last write) so a
+  20-file refactor collapses to exactly one resolver run.
+- Run a one-shot git-delta ingest at session start to catch
+  out-of-band edits (vim, IDE, `git pull`).
+- Record the session as an episode on idle / stop with the first user
+  message + `git diff` as the patch.
+
+Install via the top-level installer:
+
+```bash
+./scripts/install.sh --plugins=all                       # both, global
+./scripts/install.sh --plugins=claudecode                # Claude Code only
+./scripts/install.sh --plugins=opencode,claudecode       # both, csv form
+./scripts/install.sh --plugins=all --plugins-scope=project   # ./.opencode and ./.claude
+```
+
+Or install a single plugin directly without re-running the backend
+installer:
+
+```bash
+./plugins/opencode/install.sh        # ~/.config/opencode/plugins/
+./plugins/claude-code/install.sh     # ~/.claude/plugins/code-memory/
+```
+
+Restart your agent after install.
 
 ### Inspect the stores
 

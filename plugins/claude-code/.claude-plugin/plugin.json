@@ -1,0 +1,10 @@
+{
+  "name": "code-memory",
+  "version": "0.1.0",
+  "description": "Auto-injects a code-memory Context Pack on each user prompt, re-indexes files after Write/Edit, runs a debounced cross-file resolver, and records sessions as episodes. Mirrors the OpenCode plugin's behavior for Claude Code.",
+  "author": {
+    "name": "fmflurry"
+  },
+  "homepage": "https://github.com/fmflurry/code-memory",
+  "license": "MIT"
+}

@@ -3,10 +3,17 @@
 # code-memory installer (macOS / Linux)
 #
 # Usage:
-#   ./scripts/install.sh                 # full install
+#   ./scripts/install.sh                 # full install (interactive plugin prompt)
 #   ./scripts/install.sh --no-docker     # skip docker compose
 #   ./scripts/install.sh --no-ollama     # skip ollama pull
 #   ./scripts/install.sh --no-tests      # skip smoke tests
+#   ./scripts/install.sh --plugins=opencode,claudecode
+#                                        # install named harness plugins (non-interactive)
+#   ./scripts/install.sh --plugins=all   # install both
+#   ./scripts/install.sh --plugins=none  # skip plugin step entirely
+#   ./scripts/install.sh --plugins-scope=project
+#                                        # install plugins project-local (./.opencode/ or ./.claude/)
+#                                        # default scope is global (~/.config/opencode or ~/.claude)
 #
 set -euo pipefail
 
@@ -33,16 +40,25 @@ cd "$PROJECT_ROOT"
 SKIP_DOCKER=0
 SKIP_OLLAMA=0
 SKIP_TESTS=0
+PLUGINS_ARG=""       # empty = interactive; explicit value bypasses prompt
+PLUGINS_SCOPE="global"  # global | project
 for arg in "$@"; do
   case "$arg" in
     --no-docker) SKIP_DOCKER=1 ;;
     --no-ollama) SKIP_OLLAMA=1 ;;
     --no-tests)  SKIP_TESTS=1 ;;
+    --plugins=*)        PLUGINS_ARG="${arg#--plugins=}" ;;
+    --plugins-scope=*)  PLUGINS_SCOPE="${arg#--plugins-scope=}" ;;
     -h|--help)
-      sed -n '1,12p' "$0"; exit 0 ;;
+      sed -n '1,18p' "$0"; exit 0 ;;
     *) die "unknown flag: $arg" ;;
   esac
 done
+
+case "$PLUGINS_SCOPE" in
+  global|project) ;;
+  *) die "invalid --plugins-scope=$PLUGINS_SCOPE (expected global|project)" ;;
+esac
 
 # ---------- 1. prereqs ----------
 step "Checking prerequisites"
@@ -133,6 +149,89 @@ if [ "$SKIP_TESTS" -eq 0 ]; then
   ok "Tests passed"
 else
   warn "Tests skipped"
+fi
+
+# ---------- 8. harness plugins ----------
+step "Agent harness plugins"
+
+# Resolve which plugins to install.
+#   PLUGINS_ARG="" → interactive (only if stdin is a TTY)
+#   PLUGINS_ARG="none" → skip
+#   PLUGINS_ARG="all" → both
+#   PLUGINS_ARG="opencode,claudecode" → comma-separated whitelist
+INSTALL_OPENCODE=0
+INSTALL_CLAUDECODE=0
+
+resolve_plugin_selection() {
+  local raw="$1"
+  if [ "$raw" = "none" ]; then return 0; fi
+  if [ "$raw" = "all" ]; then
+    INSTALL_OPENCODE=1
+    INSTALL_CLAUDECODE=1
+    return 0
+  fi
+  IFS=',' read -r -a parts <<< "$raw"
+  for p in "${parts[@]}"; do
+    case "$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in
+      opencode)   INSTALL_OPENCODE=1 ;;
+      claudecode|claude|claude-code) INSTALL_CLAUDECODE=1 ;;
+      "" ) ;;
+      *) warn "unknown plugin '$p' (expected: opencode, claudecode, all, none)" ;;
+    esac
+  done
+}
+
+prompt_yes_no() {
+  # $1 = prompt text, $2 = default (y|n)
+  local prompt="$1" default="$2" ans
+  local hint="[y/N]"
+  [ "$default" = "y" ] && hint="[Y/n]"
+  read -r -p "  $prompt $hint " ans </dev/tty || ans=""
+  ans="$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')"
+  [ -z "$ans" ] && ans="$default"
+  [ "$ans" = "y" ] || [ "$ans" = "yes" ]
+}
+
+if [ -n "$PLUGINS_ARG" ]; then
+  resolve_plugin_selection "$PLUGINS_ARG"
+elif [ -t 0 ] && [ -t 1 ]; then
+  echo "  Optional: install the code-memory agent-harness plugins."
+  echo "  They make the backend ambient (auto-retrieve / auto-reingest / record)."
+  echo
+  if prompt_yes_no "Install OpenCode plugin?" "y"; then INSTALL_OPENCODE=1; fi
+  if prompt_yes_no "Install Claude Code plugin?" "y"; then INSTALL_CLAUDECODE=1; fi
+  if [ "$INSTALL_OPENCODE" -eq 1 ] || [ "$INSTALL_CLAUDECODE" -eq 1 ]; then
+    if prompt_yes_no "Install project-local (./.opencode and ./.claude) instead of global?" "n"; then
+      PLUGINS_SCOPE="project"
+    fi
+  fi
+else
+  warn "non-interactive shell and no --plugins=... given; skipping plugin step"
+fi
+
+plugin_flag=()
+[ "$PLUGINS_SCOPE" = "project" ] && plugin_flag=(--project)
+
+if [ "$INSTALL_OPENCODE" -eq 1 ]; then
+  if [ -x "$PROJECT_ROOT/plugins/opencode/install.sh" ]; then
+    "$PROJECT_ROOT/plugins/opencode/install.sh" "${plugin_flag[@]}"
+    ok "OpenCode plugin installed ($PLUGINS_SCOPE)"
+  else
+    warn "plugins/opencode/install.sh not executable; skipping"
+  fi
+fi
+
+if [ "$INSTALL_CLAUDECODE" -eq 1 ]; then
+  if [ -x "$PROJECT_ROOT/plugins/claude-code/install.sh" ]; then
+    "$PROJECT_ROOT/plugins/claude-code/install.sh" "${plugin_flag[@]}"
+    ok "Claude Code plugin installed ($PLUGINS_SCOPE)"
+  else
+    warn "plugins/claude-code/install.sh not executable; skipping"
+  fi
+fi
+
+if [ "$INSTALL_OPENCODE" -eq 0 ] && [ "$INSTALL_CLAUDECODE" -eq 0 ]; then
+  warn "no harness plugin installed; re-run with --plugins=all (or =opencode/=claudecode) later"
 fi
 
 # ---------- done ----------
