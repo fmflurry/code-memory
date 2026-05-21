@@ -145,12 +145,22 @@ def retrieve(
     query: str = typer.Argument(...),
     k: int = typer.Option(8, "--k", help="top-k code"),
     eps: int = typer.Option(5, "--eps", help="top-k episodes"),
+    include_idle_episodes: bool = typer.Option(
+        False,
+        "--include-idle-episodes",
+        help="Include episodes with verdict='idle' (suppressed by default).",
+    ),
     project: str | None = ProjectOpt,
     as_json: bool = JsonOpt,
 ) -> None:
     """Retrieve context pack for a natural-language query."""
     r = Retriever(project=project)
-    pack = r.retrieve(query, top_k_code=k, top_k_eps=eps)
+    pack = r.retrieve(
+        query,
+        top_k_code=k,
+        top_k_eps=eps,
+        include_idle_episodes=include_idle_episodes,
+    )
     if as_json:
         _emit(pack.to_dict(), as_json=True)
     else:

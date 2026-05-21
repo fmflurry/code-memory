@@ -271,7 +271,11 @@ class Pipeline:
         return ep_id
 
     def _upsert_graph(self, ex: ExtractedFile) -> None:
-        file_node = GraphNode(label="File", key=ex.path, props={"lang": ex.lang})
+        file_node = GraphNode(
+            label="File",
+            key=ex.path,
+            props={"lang": ex.lang, "generated": ex.generated},
+        )
         nodes: list[GraphNode] = [file_node]
         edges: list[GraphEdge] = []
 
@@ -356,6 +360,7 @@ class Pipeline:
                         "name": c.name,
                         "start": c.start,
                         "end": c.end,
+                        "generated": ex.generated,
                     },
                 )
                 for c, v in zip(batch, vectors, strict=True)

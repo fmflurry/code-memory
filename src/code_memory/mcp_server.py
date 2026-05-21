@@ -37,6 +37,11 @@ _TOOLS: list[Tool] = [
                 "query": {"type": "string", "description": "Natural-language query."},
                 "k": {"type": "integer", "default": 8, "description": "Top-k code chunks."},
                 "eps": {"type": "integer", "default": 5, "description": "Top-k episodes."},
+                "include_idle_episodes": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Include episodes with verdict='idle' (off by default).",
+                },
                 "project": {
                     "type": "string",
                     "description": "Project slug. Auto-detected from cwd if omitted.",
@@ -92,7 +97,13 @@ def _retrieve(args: dict[str, Any]) -> list[TextContent]:
     k = int(args.get("k", 8))
     eps = int(args.get("eps", 5))
     project = args.get("project")
-    pack = Retriever(project=project).retrieve(query, top_k_code=k, top_k_eps=eps)
+    include_idle = bool(args.get("include_idle_episodes", False))
+    pack = Retriever(project=project).retrieve(
+        query,
+        top_k_code=k,
+        top_k_eps=eps,
+        include_idle_episodes=include_idle,
+    )
     return _text(pack.render())
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from ..config import CONFIG, Config, detect_project_slug
@@ -8,6 +10,41 @@ from ..embed import OllamaEmbedder
 from ..episodic import Episode, EpisodicStore
 from ..graph import FalkorStore
 from ..vector import QdrantStore, VectorHit
+
+# Per-hit score adjustments applied after Qdrant's cosine ranking.
+GENERATED_PENALTY = 0.15  # subtract from generated code hits
+ENTRYPOINT_BOOST = 0.05  # add to framework entrypoint files
+
+# Path patterns that match Angular / Node framework entrypoints worth surfacing
+# even when symbol-level similarity is lower than other hits.
+_ENTRYPOINT_BASENAMES = frozenset(
+    {
+        "app.config.ts",
+        "app.routes.ts",
+        "app-routing.module.ts",
+        "main.ts",
+        "main.server.ts",
+        "app.module.ts",
+        "app.component.ts",
+        "index.ts",
+        "providers.ts",
+    }
+)
+_ENTRYPOINT_SUFFIXES = (".module.ts", ".routing.ts", ".routes.ts", ".config.ts")
+
+
+def _is_entrypoint(path: str | None) -> bool:
+    if not path:
+        return False
+    name = Path(path).name.lower()
+    if name in _ENTRYPOINT_BASENAMES:
+        return True
+    return any(name.endswith(suf) for suf in _ENTRYPOINT_SUFFIXES)
+
+
+def _normalize_prompt(text: str) -> str:
+    """Lowercase + collapse whitespace for cheap near-duplicate detection."""
+    return re.sub(r"\s+", " ", text.strip().lower())[:160]
 
 
 @dataclass
@@ -96,11 +133,27 @@ class Retriever:
         top_k_code: int = 8,
         top_k_eps: int = 5,
         graph_depth: int = 1,
+        include_idle_episodes: bool = False,
     ) -> ContextPack:
         qvec = self.embedder.embed_one(query)
-        code_hits = self.vector.search(self.cfg.qdrant_code, qvec, top_k=top_k_code)
-        ep_hits = self.vector.search(self.cfg.qdrant_episodes, qvec, top_k=top_k_eps)
-        episodes = self.episodic.by_ids([h.id for h in ep_hits])
+        # Fetch 2x candidates so re-rank has room to lift entrypoints and
+        # demote generated code without losing depth.
+        raw_code = self.vector.search(
+            self.cfg.qdrant_code, qvec, top_k=top_k_code * 2
+        )
+        code_hits = _rerank_code(raw_code)[:top_k_code]
+
+        raw_eps = self.vector.search(
+            self.cfg.qdrant_episodes, qvec, top_k=top_k_eps * 3
+        )
+        episodes = self.episodic.by_ids([h.id for h in raw_eps])
+        ep_hits, episodes = _filter_episodes(
+            query,
+            raw_eps,
+            episodes,
+            limit=top_k_eps,
+            include_idle=include_idle_episodes,
+        )
 
         graph_expansion: list[dict[str, Any]] = []
         seen = set()
@@ -118,3 +171,59 @@ class Retriever:
             episodes=episodes,
             graph_expansion=graph_expansion,
         )
+
+
+def _rerank_code(hits: list[VectorHit]) -> list[VectorHit]:
+    """Apply generated-code penalty + entrypoint boost; resort by score.
+
+    Returns new ``VectorHit`` instances so caller doesn't see mutated cosine
+    scores from Qdrant.
+    """
+    adjusted: list[VectorHit] = []
+    for h in hits:
+        score = h.score
+        path = h.payload.get("path")
+        if h.payload.get("generated"):
+            score -= GENERATED_PENALTY
+        if _is_entrypoint(path):
+            score += ENTRYPOINT_BOOST
+        adjusted.append(VectorHit(id=h.id, score=score, payload=h.payload))
+    adjusted.sort(key=lambda h: h.score, reverse=True)
+    return adjusted
+
+
+def _filter_episodes(
+    query: str,
+    hits: list[VectorHit],
+    episodes: list[Episode],
+    *,
+    limit: int,
+    include_idle: bool,
+) -> tuple[list[VectorHit], list[Episode]]:
+    """Drop idle verdicts (opt-in) and dedupe near-identical prompts.
+
+    Episodes whose normalized prompt prefix matches the current query or
+    another already-kept episode are suppressed. This eliminates the
+    "10 copies of my own prior question" noise without needing a second
+    embedding round-trip.
+    """
+    by_id = {ep.id: ep for ep in episodes}
+    query_key = _normalize_prompt(query)
+    kept_hits: list[VectorHit] = []
+    kept_eps: list[Episode] = []
+    seen_keys: set[str] = {query_key}
+    for h in hits:
+        ep = by_id.get(h.id)
+        if ep is None:
+            continue
+        if not include_idle and (ep.verdict or "").lower() == "idle":
+            continue
+        key = _normalize_prompt(ep.prompt or "")
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        kept_hits.append(h)
+        kept_eps.append(ep)
+        if len(kept_hits) >= limit:
+            break
+    return kept_hits, kept_eps
