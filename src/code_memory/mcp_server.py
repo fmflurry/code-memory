@@ -1,9 +1,14 @@
 """MCP server exposing code-memory as native tools for coding agents.
 
 Tools:
-  - codememory_retrieve(query, k?, eps?, project?)
+  - codememory_retrieve(query, k?, eps?, project?)         — orientation
   - codememory_record(prompt, plan?, patch?, verdict?, project?)
   - codememory_reingest(path, project?)
+  - codememory_callers(symbol, depth?, project?)           — topology
+  - codememory_callees(symbol, depth?, project?)
+  - codememory_importers(target, project?)
+  - codememory_dependencies(file, depth?, project?)
+  - codememory_definitions(symbol, project?)
 
 Transport: stdio. Register via `code-memory-mcp` script entrypoint.
 """
@@ -19,7 +24,9 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from .config import CONFIG, detect_project_slug
 from .episodic import Episode
+from .graph import FalkorStore
 from .orchestrator import Pipeline, Retriever
 
 SERVER_NAME = "code-memory"
@@ -83,7 +90,92 @@ _TOOLS: list[Tool] = [
             "required": ["path"],
         },
     ),
+    Tool(
+        name="codememory_callers",
+        description=(
+            "Files that call a symbol. Use for impact analysis ('what breaks "
+            "if I rename X?') and to navigate from a definition to its uses."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "Symbol name (e.g. 'getBearerToken')."},
+                "depth": {"type": "integer", "default": 1, "description": "Traversal depth, 1-3."},
+                "project": {"type": "string"},
+            },
+            "required": ["symbol"],
+        },
+    ),
+    Tool(
+        name="codememory_callees",
+        description=(
+            "Symbols called from the file that defines a given symbol. "
+            "Use to map outgoing dependencies of a service or class."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "depth": {"type": "integer", "default": 1, "description": "Traversal depth, 1-3."},
+                "project": {"type": "string"},
+            },
+            "required": ["symbol"],
+        },
+    ),
+    Tool(
+        name="codememory_importers",
+        description=(
+            "Files that import a module or package. Pass a package name "
+            "('@internal-ng/security', 'rxjs') or a relative path that was "
+            "preserved during ingest ('./bar')."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "Module / package / path to look up."},
+                "project": {"type": "string"},
+            },
+            "required": ["target"],
+        },
+    ),
+    Tool(
+        name="codememory_dependencies",
+        description=(
+            "Modules imported by a file (forward import graph). Use to "
+            "answer 'what does this file depend on?'."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "file": {"type": "string", "description": "Absolute file path."},
+                "depth": {"type": "integer", "default": 1, "description": "Traversal depth, 1-3."},
+                "project": {"type": "string"},
+            },
+            "required": ["file"],
+        },
+    ),
+    Tool(
+        name="codememory_definitions",
+        description=(
+            "All files+line ranges that define a given symbol name. Use to "
+            "disambiguate before calling callers/callees."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "project": {"type": "string"},
+            },
+            "required": ["symbol"],
+        },
+    ),
 ]
+
+
+def _graph_for(project: str | None) -> FalkorStore:
+    slug = project or detect_project_slug()
+    cfg = CONFIG.for_project(slug)
+    return FalkorStore(graph_name=cfg.falkor_graph)
 
 
 def _text(payload: Any) -> list[TextContent]:
@@ -139,10 +231,45 @@ def _reingest(args: dict[str, Any]) -> list[TextContent]:
     )
 
 
+def _callers(args: dict[str, Any]) -> list[TextContent]:
+    g = _graph_for(args.get("project"))
+    rows = g.callers(args["symbol"], depth=int(args.get("depth", 1)))
+    return _text({"symbol": args["symbol"], "callers": rows})
+
+
+def _callees(args: dict[str, Any]) -> list[TextContent]:
+    g = _graph_for(args.get("project"))
+    rows = g.callees(args["symbol"], depth=int(args.get("depth", 1)))
+    return _text({"symbol": args["symbol"], "callees": rows})
+
+
+def _importers(args: dict[str, Any]) -> list[TextContent]:
+    g = _graph_for(args.get("project"))
+    rows = g.importers(args["target"])
+    return _text({"target": args["target"], "importers": rows})
+
+
+def _dependencies(args: dict[str, Any]) -> list[TextContent]:
+    g = _graph_for(args.get("project"))
+    rows = g.dependencies(args["file"], depth=int(args.get("depth", 1)))
+    return _text({"file": args["file"], "dependencies": rows})
+
+
+def _definitions(args: dict[str, Any]) -> list[TextContent]:
+    g = _graph_for(args.get("project"))
+    rows = g.definitions(args["symbol"])
+    return _text({"symbol": args["symbol"], "definitions": rows})
+
+
 _HANDLERS = {
     "codememory_retrieve": _retrieve,
     "codememory_record": _record,
     "codememory_reingest": _reingest,
+    "codememory_callers": _callers,
+    "codememory_callees": _callees,
+    "codememory_importers": _importers,
+    "codememory_dependencies": _dependencies,
+    "codememory_definitions": _definitions,
 }
 
 

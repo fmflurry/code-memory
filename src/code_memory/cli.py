@@ -9,10 +9,17 @@ from typing import Any
 import typer
 from rich import print as rprint
 
-from .config import detect_project_slug
+from .config import CONFIG, detect_project_slug
 from .episodic import Episode
+from .graph import FalkorStore
 from .orchestrator import Pipeline, Retriever, list_projects, reset_all, reset_project
 from .orchestrator import git_delta as _git_delta
+
+
+def _graph_for(project: str | None) -> FalkorStore:
+    slug = project or detect_project_slug()
+    cfg = CONFIG.for_project(slug)
+    return FalkorStore(graph_name=cfg.falkor_graph)
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="code-memory CLI")
 
@@ -263,6 +270,64 @@ def reset(
         {"reset": [asdict(r) for r in results]},
         as_json=as_json,
     )
+
+
+@app.command()
+def callers(
+    symbol: str = typer.Argument(..., help="Symbol name to look up callers for."),
+    depth: int = typer.Option(1, "--depth", help="Traversal depth (1-3)."),
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """List files that call a symbol (reverse CALLS edges)."""
+    rows = _graph_for(project).callers(symbol, depth=depth)
+    _emit({"symbol": symbol, "callers": rows}, as_json=as_json)
+
+
+@app.command()
+def callees(
+    symbol: str = typer.Argument(..., help="Symbol name to look up callees for."),
+    depth: int = typer.Option(1, "--depth", help="Traversal depth (1-3)."),
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """List symbols called from the file that defines ``symbol``."""
+    rows = _graph_for(project).callees(symbol, depth=depth)
+    _emit({"symbol": symbol, "callees": rows}, as_json=as_json)
+
+
+@app.command()
+def importers(
+    target: str = typer.Argument(..., help="Module / package / path."),
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """List files that import a module or package."""
+    rows = _graph_for(project).importers(target)
+    _emit({"target": target, "importers": rows}, as_json=as_json)
+
+
+@app.command()
+def dependencies(
+    file: str = typer.Argument(..., help="Absolute file path."),
+    depth: int = typer.Option(1, "--depth", help="Traversal depth (1-3)."),
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """List modules imported by a file (forward IMPORTS edges)."""
+    rows = _graph_for(project).dependencies(file, depth=depth)
+    _emit({"file": file, "dependencies": rows}, as_json=as_json)
+
+
+@app.command()
+def definitions(
+    symbol: str = typer.Argument(..., help="Symbol name to locate."),
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """List all files+line ranges that define ``symbol``."""
+    rows = _graph_for(project).definitions(symbol)
+    _emit({"symbol": symbol, "definitions": rows}, as_json=as_json)
 
 
 if __name__ == "__main__":

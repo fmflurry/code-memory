@@ -8,7 +8,6 @@ from typing import Any
 from ..config import CONFIG, Config, detect_project_slug
 from ..embed import OllamaEmbedder
 from ..episodic import Episode, EpisodicStore
-from ..graph import FalkorStore
 from ..vector import QdrantStore, VectorHit
 
 # Per-hit score adjustments applied after Qdrant's cosine ranking.
@@ -49,11 +48,18 @@ def _normalize_prompt(text: str) -> str:
 
 @dataclass
 class ContextPack:
+    """Orientation payload for a natural-language query.
+
+    Topology questions (who calls X, who imports Y, …) deliberately do
+    **not** live here — they have dedicated MCP tools so the agent can
+    issue precise graph queries instead of skimming a noisy neighbor
+    dump.
+    """
+
     query: str
     code_hits: list[VectorHit] = field(default_factory=list)
     episode_hits: list[VectorHit] = field(default_factory=list)
     episodes: list[Episode] = field(default_factory=list)
-    graph_expansion: list[dict[str, Any]] = field(default_factory=list)
 
     def render(self) -> str:
         lines = [f"# Query\n{self.query}\n"]
@@ -71,10 +77,10 @@ class ContextPack:
                 lines.append(
                     f"- {ep.id} verdict={ep.verdict} :: {ep.prompt[:120]}"
                 )
-        if self.graph_expansion:
-            lines.append("\n## Graph neighbors")
-            for n in self.graph_expansion[:25]:
-                lines.append(f"- {n['labels']} {n['key']}")
+        lines.append(
+            "\n_For topology (callers/callees/importers/dependencies/definitions) "
+            "use the dedicated codememory_* tools._"
+        )
         return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
@@ -104,27 +110,23 @@ class ContextPack:
                 }
                 for ep in self.episodes
             ],
-            "graph": [
-                {"labels": n.get("labels"), "key": n.get("key")}
-                for n in self.graph_expansion[:25]
-            ],
         }
 
 
 class Retriever:
+    """Vector + episode retrieval. Topology lives in dedicated MCP tools."""
+
     def __init__(
         self,
         project: str | None = None,
         embedder: OllamaEmbedder | None = None,
         vector: QdrantStore | None = None,
-        graph: FalkorStore | None = None,
         episodic: EpisodicStore | None = None,
     ) -> None:
         self.slug = project or detect_project_slug()
         self.cfg: Config = CONFIG.for_project(self.slug)
         self.embedder = embedder or OllamaEmbedder()
         self.vector = vector or QdrantStore()
-        self.graph = graph or FalkorStore(graph_name=self.cfg.falkor_graph)
         self.episodic = episodic or EpisodicStore(path=self.cfg.episodic_db)
 
     def retrieve(
@@ -132,7 +134,6 @@ class Retriever:
         query: str,
         top_k_code: int = 8,
         top_k_eps: int = 5,
-        graph_depth: int = 1,
         include_idle_episodes: bool = False,
     ) -> ContextPack:
         qvec = self.embedder.embed_one(query)
@@ -155,21 +156,11 @@ class Retriever:
             include_idle=include_idle_episodes,
         )
 
-        graph_expansion: list[dict[str, Any]] = []
-        seen = set()
-        for h in code_hits:
-            path = h.payload.get("path")
-            if not path or path in seen:
-                continue
-            seen.add(path)
-            graph_expansion.extend(self.graph.neighbors("File", path, depth=graph_depth))
-
         return ContextPack(
             query=query,
             code_hits=code_hits,
             episode_hits=ep_hits,
             episodes=episodes,
-            graph_expansion=graph_expansion,
         )
 
 

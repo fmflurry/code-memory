@@ -1,0 +1,232 @@
+"""Tests for the post-ingest symbol resolver.
+
+These tests don't need a live FalkorDB. They stub the ``graph.query``
+interface with a minimal fixture that returns canned result sets and
+records writes for assertion.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from code_memory.extractor.treesitter import CALLEE_STOPLIST, _last_identifier
+from code_memory.orchestrator.resolver import (
+    PLACEHOLDER_PREFIX,
+    _resolve_relative_import,
+    resolve_graph,
+)
+
+
+# ---------------------------------------------------------------- helpers
+
+
+@dataclass
+class _QueryResult:
+    result_set: list[list[Any]]
+    nodes_deleted: int = 0
+
+
+class _FakeGraph:
+    """In-memory stand-in for FalkorDB's Graph object."""
+
+    def __init__(
+        self,
+        defines: list[tuple[str, str, str]],  # (file, sym_name, sym_key)
+        imports: list[tuple[str, str]],  # (file, module_key)
+        placeholders: list[tuple[str, str]],  # (placeholder_key, sym_name)
+        calls: list[tuple[str, str]],  # (file, placeholder_key)
+    ) -> None:
+        self.defines = list(defines)
+        self.imports = list(imports)
+        self.placeholders = list(placeholders)
+        self.calls = list(calls)
+        self.writes: list[tuple[str, dict[str, Any]]] = []
+
+    def query(self, q: str, params: dict[str, Any] | None = None) -> _QueryResult:
+        params = params or {}
+        # Read paths — match by structural keywords.
+        if "MATCH (f:File)-[:DEFINES]->(s:Symbol)" in q and "RETURN f.key, s.name, s.key" in q:
+            return _QueryResult([list(r) for r in self.defines])
+        if "MATCH (f:File)-[:IMPORTS]->(m:Module)" in q:
+            return _QueryResult([list(r) for r in self.imports])
+        if "STARTS WITH $p RETURN s.key, s.name" in q:
+            return _QueryResult([list(r) for r in self.placeholders])
+        if "(f:File)-[:CALLS]->(s:Symbol)" in q and "STARTS WITH $p" in q and "RETURN f.key, s.key" in q:
+            return _QueryResult([list(r) for r in self.calls])
+
+        # Write paths — apply the rewrite to the in-memory tables.
+        if "UNWIND $rows" in q and "MERGE (f)-[r:CALLS]->(t)" in q:
+            for row in params["rows"]:
+                self.writes.append(("rewrite", row))
+                self.calls = [
+                    e for e in self.calls
+                    if not (e[0] == row["file"] and e[1] == row["placeholder"])
+                ]
+            return _QueryResult([])
+        if "NOT ( ()-[:CALLS]->(s) )" in q:
+            referenced = {e[1] for e in self.calls}
+            deleted = 0
+            new_placeholders = []
+            for key, name in self.placeholders:
+                if key not in referenced:
+                    deleted += 1
+                    self.writes.append(("delete", {"key": key}))
+                else:
+                    new_placeholders.append((key, name))
+            self.placeholders = new_placeholders
+            return _QueryResult([], nodes_deleted=deleted)
+
+        raise AssertionError(f"unexpected query: {q[:80]}")
+
+
+class _FakeStore:
+    def __init__(self, fake: _FakeGraph) -> None:
+        self.graph = fake
+
+
+# ---------------------------------------------------------------- callee normalization
+
+
+def test_last_identifier_handles_member_expression() -> None:
+    assert _last_identifier("this.svc.getBearerToken") == "getBearerToken"
+    assert _last_identifier("MyClass.staticFn") == "staticFn"
+    assert _last_identifier("foo") == "foo"
+
+
+def test_last_identifier_rejects_computed_and_calls() -> None:
+    assert _last_identifier("arr[i]") is None
+    assert _last_identifier("foo()") is None
+
+
+def test_callee_stoplist_blocks_framework_noise() -> None:
+    for noisy in ("inject", "Injectable", "console", "JSON", "map", "pipe", "subscribe"):
+        assert noisy in CALLEE_STOPLIST
+
+
+# ---------------------------------------------------------------- relative import resolution
+
+
+def test_resolve_relative_import_extension_probe(tmp_path) -> None:
+    project = {str(tmp_path / "a" / "bar.ts")}
+    out = _resolve_relative_import(tmp_path / "a", "./bar", project)
+    assert out == str(tmp_path / "a" / "bar.ts")
+
+
+def test_resolve_relative_import_directory_index(tmp_path) -> None:
+    project = {str(tmp_path / "a" / "bar" / "index.ts")}
+    out = _resolve_relative_import(tmp_path / "a", "./bar", project)
+    assert out == str(tmp_path / "a" / "bar" / "index.ts")
+
+
+def test_resolve_relative_import_unknown_returns_none(tmp_path) -> None:
+    out = _resolve_relative_import(tmp_path, "./missing", set())
+    assert out is None
+
+
+# ---------------------------------------------------------------- resolver tiers
+
+
+def test_resolver_links_same_file_call() -> None:
+    fake = _FakeGraph(
+        defines=[("/a/svc.ts", "foo", "/a/svc.ts::foo#10")],
+        imports=[],
+        placeholders=[(f"{PLACEHOLDER_PREFIX}foo", "foo")],
+        calls=[("/a/svc.ts", f"{PLACEHOLDER_PREFIX}foo")],
+    )
+    stats = resolve_graph(_FakeStore(fake))
+    assert stats.edges_resolved_same_file == 1
+    assert fake.writes[0][0] == "rewrite"
+    assert fake.writes[0][1]["target"] == "/a/svc.ts::foo#10"
+    assert fake.writes[0][1]["conf"] == "high"
+
+
+def test_resolver_links_imported_symbol(tmp_path) -> None:
+    bar = str(tmp_path / "bar.ts")
+    caller = str(tmp_path / "caller.ts")
+    fake = _FakeGraph(
+        defines=[(bar, "helper", f"{bar}::helper#5")],
+        imports=[(caller, "./bar")],
+        placeholders=[(f"{PLACEHOLDER_PREFIX}helper", "helper")],
+        calls=[(caller, f"{PLACEHOLDER_PREFIX}helper")],
+    )
+    # Make resolver believe ``bar`` is on disk by including it in defines map
+    # (project_files derives from defines).
+    stats = resolve_graph(_FakeStore(fake))
+    assert stats.edges_resolved_imported == 1
+    assert fake.writes[0][1]["target"] == f"{bar}::helper#5"
+    assert fake.writes[0][1]["conf"] == "high"
+
+
+def test_resolver_falls_back_to_project_unique() -> None:
+    fake = _FakeGraph(
+        defines=[("/a/util.ts", "uniqueFn", "/a/util.ts::uniqueFn#3")],
+        imports=[],  # no import edge from caller
+        placeholders=[(f"{PLACEHOLDER_PREFIX}uniqueFn", "uniqueFn")],
+        calls=[("/b/caller.ts", f"{PLACEHOLDER_PREFIX}uniqueFn")],
+    )
+    stats = resolve_graph(_FakeStore(fake))
+    assert stats.edges_resolved_unique == 1
+    assert fake.writes[0][1]["conf"] == "medium"
+
+
+def test_resolver_leaves_ambiguous_unresolved() -> None:
+    fake = _FakeGraph(
+        defines=[
+            ("/a/x.ts", "handle", "/a/x.ts::handle#1"),
+            ("/b/y.ts", "handle", "/b/y.ts::handle#1"),
+        ],
+        imports=[],
+        placeholders=[(f"{PLACEHOLDER_PREFIX}handle", "handle")],
+        calls=[("/c/caller.ts", f"{PLACEHOLDER_PREFIX}handle")],
+    )
+    stats = resolve_graph(_FakeStore(fake))
+    assert stats.edges_left_ambiguous == 1
+    assert stats.edges_resolved_unique == 0
+    # No rewrite should have happened
+    assert not any(w[0] == "rewrite" for w in fake.writes)
+
+
+def test_resolver_leaves_external_unresolved() -> None:
+    fake = _FakeGraph(
+        defines=[("/a/x.ts", "local", "/a/x.ts::local#1")],
+        imports=[("/a/x.ts", "rxjs")],  # bare module, not relative
+        placeholders=[(f"{PLACEHOLDER_PREFIX}from_lib", "from_lib")],
+        calls=[("/a/x.ts", f"{PLACEHOLDER_PREFIX}from_lib")],
+    )
+    stats = resolve_graph(_FakeStore(fake))
+    assert stats.edges_left_external == 1
+
+
+def test_resolver_cleans_up_orphan_placeholders() -> None:
+    fake = _FakeGraph(
+        defines=[("/a/svc.ts", "foo", "/a/svc.ts::foo#10")],
+        imports=[],
+        placeholders=[
+            (f"{PLACEHOLDER_PREFIX}foo", "foo"),
+            (f"{PLACEHOLDER_PREFIX}bar", "bar"),  # never called by anyone
+        ],
+        calls=[("/a/svc.ts", f"{PLACEHOLDER_PREFIX}foo")],
+    )
+    stats = resolve_graph(_FakeStore(fake))
+    # foo placeholder loses its CALLS edge after rewrite -> orphan -> deleted
+    # bar placeholder has no edges to start -> orphan -> deleted
+    assert stats.placeholders_deleted >= 1
+    deletes = [w for w in fake.writes if w[0] == "delete"]
+    deleted_keys = {w[1]["key"] for w in deletes}
+    assert f"{PLACEHOLDER_PREFIX}bar" in deleted_keys
+
+
+def test_resolver_records_full_stats() -> None:
+    fake = _FakeGraph(
+        defines=[("/a/x.ts", "foo", "/a/x.ts::foo#1")],
+        imports=[],
+        placeholders=[(f"{PLACEHOLDER_PREFIX}foo", "foo")],
+        calls=[("/a/x.ts", f"{PLACEHOLDER_PREFIX}foo")],
+    )
+    stats = resolve_graph(_FakeStore(fake))
+    assert stats.placeholders == 1
+    assert stats.edges_total == 1
+    assert stats.edges_resolved_same_file == 1
+    assert stats.edges_resolved_imported == 0
+    assert stats.edges_resolved_unique == 0

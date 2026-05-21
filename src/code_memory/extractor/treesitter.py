@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -202,13 +203,76 @@ def _import_module(node: Node, source: str) -> str | None:
     return None
 
 
+# Callees that are stdlib / framework / RxJS / Angular DI built-ins.
+# Filtered at extract time so they never enter the graph as CALLS edges;
+# they pollute "who calls X" queries with high-frequency noise.
+CALLEE_STOPLIST: frozenset[str] = frozenset(
+    {
+        # JS builtins
+        "console", "JSON", "Math", "Object", "Array", "Promise", "Number",
+        "String", "Boolean", "Date", "RegExp", "Symbol", "Map", "Set",
+        "parseInt", "parseFloat", "isNaN", "isFinite",
+        "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+        "fetch", "structuredClone", "queueMicrotask",
+        # Angular DI / lifecycle
+        "inject", "Injectable", "Component", "Directive", "Pipe", "NgModule",
+        "Input", "Output", "ViewChild", "ContentChild", "HostListener",
+        "HostBinding",
+        # RxJS operators commonly chained via .pipe()
+        "pipe", "subscribe", "map", "filter", "tap", "switchMap", "mergeMap",
+        "concatMap", "exhaustMap", "catchError", "take", "takeUntil", "first",
+        "of", "from", "EMPTY", "throwError", "combineLatest", "forkJoin",
+        "BehaviorSubject", "Subject", "ReplaySubject",
+        # Generic test helpers
+        "describe", "it", "test", "expect", "beforeEach", "afterEach",
+        "beforeAll", "afterAll", "jest", "vi", "spyOn",
+    }
+)
+
+
 def _callee_name(node: Node, source: str) -> str | None:
+    """Return the last identifier of a call expression's callee.
+
+    For ``foo()`` → ``foo``. For ``this.svc.method()`` → ``method``.
+    For ``a.b.c()`` → ``c``. Computed (``a[b]()``) and chained
+    (``f()()``) callees collapse to ``None`` — too ambiguous to resolve.
+
+    Returns ``None`` for callees in :data:`CALLEE_STOPLIST` so they don't
+    enter the graph as noise.
+    """
     fn = node.child_by_field_name("function") or node.child_by_field_name("callee")
     if fn is None and node.children:
         fn = node.children[0]
     if fn is None:
         return None
-    return _slice(source, fn).split("(")[0].strip()
+    raw = _slice(source, fn).split("(")[0].strip()
+    name = _last_identifier(raw)
+    if name is None or name in CALLEE_STOPLIST:
+        return None
+    return name
+
+
+_IDENT_RE = re.compile(r"[A-Za-z_$][\w$]*")
+
+
+def _last_identifier(expr: str) -> str | None:
+    """Extract the trailing identifier from a (possibly chained) expression.
+
+    ``this.foo.bar``     → ``bar``
+    ``MyClass.staticFn`` → ``staticFn``
+    ``foo``              → ``foo``
+    ``arr[i]``           → ``None`` (computed)
+    ``f()``              → ``None`` (chained call; shouldn't normally hit)
+    """
+    # Reject anything with brackets or calls in the trailing position.
+    if expr.endswith("]") or expr.endswith(")"):
+        return None
+    parts = expr.split(".")
+    last = parts[-1].strip()
+    if not last:
+        return None
+    m = _IDENT_RE.fullmatch(last)
+    return m.group(0) if m else None
 
 
 DEFAULT_IGNORE_DIRS: tuple[str, ...] = (

@@ -15,6 +15,7 @@ from ..graph import FalkorStore, GraphEdge, GraphNode
 from ..vector import QdrantStore, VectorRecord
 from . import git_delta
 from .ingest_state import IngestStateStore
+from .resolver import resolve_graph
 
 IngestMode = Literal["auto", "full", "incremental"]
 
@@ -36,6 +37,7 @@ class IngestStats:
     mode: str = "full"
     base_sha: str | None = None
     head_sha: str | None = None
+    resolver: dict[str, int] | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -85,6 +87,8 @@ class Pipeline:
 
         if mode == "full" or (mode == "auto" and not is_git):
             stats = self._ingest_full(root_path, dry_run=dry_run)
+            if not dry_run:
+                self._run_resolver(stats)
             if is_git and not dry_run:
                 self._record_state(root_path, stats)
             return stats
@@ -103,6 +107,7 @@ class Pipeline:
             stats.head_sha = head
             stats.notes.append("no prior ingest state; performed full walk")
             if not dry_run:
+                self._run_resolver(stats)
                 self._record_state(root_path, stats, head=head, branch=branch)
             return stats
 
@@ -113,6 +118,11 @@ class Pipeline:
         )
         stats.mode = "incremental"
         if not dry_run:
+            if stats.files > 0:
+                # Only run resolver if something actually changed; the
+                # resolver scans the whole graph so it's a fixed cost
+                # we'd rather skip on no-op delta runs.
+                self._run_resolver(stats)
             self._record_state(root_path, stats, head=head, branch=branch)
         return stats
 
@@ -157,6 +167,29 @@ class Pipeline:
                 continue
             self.ingest_file(ex)
         return stats
+
+    def _run_resolver(self, stats: IngestStats) -> None:
+        """Resolve placeholder ``name::X`` Symbol nodes to real symbols.
+
+        Records resolver stats on the ingest stats object so callers can
+        see how much of the call graph is now grounded vs. ambiguous.
+        Failures are non-fatal — ingest data is already persisted.
+        """
+        try:
+            r = resolve_graph(self.graph)
+        except Exception as e:
+            stats.notes.append(f"resolver skipped: {e}")
+            return
+        stats.resolver = {
+            "placeholders": r.placeholders,
+            "edges_total": r.edges_total,
+            "resolved_same_file": r.edges_resolved_same_file,
+            "resolved_imported": r.edges_resolved_imported,
+            "resolved_unique": r.edges_resolved_unique,
+            "ambiguous": r.edges_left_ambiguous,
+            "external": r.edges_left_external,
+            "placeholders_deleted": r.placeholders_deleted,
+        }
 
     def _purge_project_index(self, root: Path) -> None:
         """Wipe code vectors + graph + ingest_state for this project.
