@@ -13,6 +13,11 @@ def _env(key: str, default: str) -> str:
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
+# Sentinel values for ``CODE_MEMORY_PROJECT`` that mean "infer from cwd"
+# rather than "use a project literally named this". Recognising these
+# avoids the silent footgun of indexing into a namespace called ``auto``.
+_AUTO_SENTINELS = frozenset({"", "auto", "default"})
+
 
 def slugify(name: str) -> str:
     s = _SLUG_RE.sub("-", name.lower()).strip("-")
@@ -49,8 +54,8 @@ def detect_project_slug(root: str | Path | None = None) -> str:
         top = _git_toplevel(p if p.is_dir() else p.parent)
         return slugify((top or p).name)
 
-    env = os.environ.get("CODE_MEMORY_PROJECT")
-    if env:
+    env = os.environ.get("CODE_MEMORY_PROJECT", "").strip()
+    if env and env.lower() not in _AUTO_SENTINELS:
         return slugify(env)
 
     cwd = Path.cwd()

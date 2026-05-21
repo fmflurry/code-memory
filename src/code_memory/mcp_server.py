@@ -31,6 +31,36 @@ from .orchestrator import Pipeline, Retriever
 
 SERVER_NAME = "code-memory"
 
+
+def _resolved_default_slug() -> str:
+    """Best-effort project slug at server startup.
+
+    Surfaced in every tool's ``project`` field description so smaller /
+    open-weight models — which often omit optional parameters or invent
+    wrong ones — see the *concrete* default and don't need to guess.
+    """
+    try:
+        return detect_project_slug()
+    except Exception:
+        return "<auto-detect failed>"
+
+
+_DEFAULT_SLUG = _resolved_default_slug()
+
+
+def _project_schema() -> dict[str, Any]:
+    """Shared schema fragment for the ``project`` field."""
+    return {
+        "type": "string",
+        "description": (
+            f"Project slug for namespaced storage. Omit to use the server's "
+            f"auto-detected default (currently: `{_DEFAULT_SLUG}`). Pass an "
+            f"explicit slug ONLY when querying a different project than the "
+            f"one this server was launched in."
+        ),
+    }
+
+
 _TOOLS: list[Tool] = [
     Tool(
         name="codememory_retrieve",
@@ -49,10 +79,7 @@ _TOOLS: list[Tool] = [
                     "default": False,
                     "description": "Include episodes with verdict='idle' (off by default).",
                 },
-                "project": {
-                    "type": "string",
-                    "description": "Project slug. Auto-detected from cwd if omitted.",
-                },
+                "project": _project_schema(),
             },
             "required": ["query"],
         },
@@ -70,7 +97,7 @@ _TOOLS: list[Tool] = [
                 "plan": {"type": "string"},
                 "patch": {"type": "string"},
                 "verdict": {"type": "string", "description": "e.g. 'success', 'reverted'."},
-                "project": {"type": "string"},
+                "project": _project_schema(),
             },
             "required": ["prompt"],
         },
@@ -85,7 +112,7 @@ _TOOLS: list[Tool] = [
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Absolute or cwd-relative file path."},
-                "project": {"type": "string"},
+                "project": _project_schema(),
             },
             "required": ["path"],
         },
@@ -101,7 +128,7 @@ _TOOLS: list[Tool] = [
             "properties": {
                 "symbol": {"type": "string", "description": "Symbol name (e.g. 'getBearerToken')."},
                 "depth": {"type": "integer", "default": 1, "description": "Traversal depth, 1-3."},
-                "project": {"type": "string"},
+                "project": _project_schema(),
             },
             "required": ["symbol"],
         },
@@ -117,7 +144,7 @@ _TOOLS: list[Tool] = [
             "properties": {
                 "symbol": {"type": "string"},
                 "depth": {"type": "integer", "default": 1, "description": "Traversal depth, 1-3."},
-                "project": {"type": "string"},
+                "project": _project_schema(),
             },
             "required": ["symbol"],
         },
@@ -133,7 +160,7 @@ _TOOLS: list[Tool] = [
             "type": "object",
             "properties": {
                 "target": {"type": "string", "description": "Module / package / path to look up."},
-                "project": {"type": "string"},
+                "project": _project_schema(),
             },
             "required": ["target"],
         },
@@ -149,7 +176,7 @@ _TOOLS: list[Tool] = [
             "properties": {
                 "file": {"type": "string", "description": "Absolute file path."},
                 "depth": {"type": "integer", "default": 1, "description": "Traversal depth, 1-3."},
-                "project": {"type": "string"},
+                "project": _project_schema(),
             },
             "required": ["file"],
         },
@@ -164,7 +191,7 @@ _TOOLS: list[Tool] = [
             "type": "object",
             "properties": {
                 "symbol": {"type": "string"},
-                "project": {"type": "string"},
+                "project": _project_schema(),
             },
             "required": ["symbol"],
         },
@@ -172,10 +199,11 @@ _TOOLS: list[Tool] = [
 ]
 
 
-def _graph_for(project: str | None) -> FalkorStore:
+def _graph_for(project: str | None) -> tuple[FalkorStore, str]:
+    """Return (graph, resolved_slug) so callers can echo the slug in output."""
     slug = project or detect_project_slug()
     cfg = CONFIG.for_project(slug)
-    return FalkorStore(graph_name=cfg.falkor_graph)
+    return FalkorStore(graph_name=cfg.falkor_graph), slug
 
 
 def _text(payload: Any) -> list[TextContent]:
@@ -190,13 +218,14 @@ def _retrieve(args: dict[str, Any]) -> list[TextContent]:
     eps = int(args.get("eps", 5))
     project = args.get("project")
     include_idle = bool(args.get("include_idle_episodes", False))
-    pack = Retriever(project=project).retrieve(
+    retriever = Retriever(project=project)
+    pack = retriever.retrieve(
         query,
         top_k_code=k,
         top_k_eps=eps,
         include_idle_episodes=include_idle,
     )
-    return _text(pack.render())
+    return _text(f"_Project: `{retriever.slug}`_\n\n{pack.render()}")
 
 
 def _record(args: dict[str, Any]) -> list[TextContent]:
@@ -232,33 +261,33 @@ def _reingest(args: dict[str, Any]) -> list[TextContent]:
 
 
 def _callers(args: dict[str, Any]) -> list[TextContent]:
-    g = _graph_for(args.get("project"))
+    g, slug = _graph_for(args.get("project"))
     rows = g.callers(args["symbol"], depth=int(args.get("depth", 1)))
-    return _text({"symbol": args["symbol"], "callers": rows})
+    return _text({"project": slug, "symbol": args["symbol"], "callers": rows})
 
 
 def _callees(args: dict[str, Any]) -> list[TextContent]:
-    g = _graph_for(args.get("project"))
+    g, slug = _graph_for(args.get("project"))
     rows = g.callees(args["symbol"], depth=int(args.get("depth", 1)))
-    return _text({"symbol": args["symbol"], "callees": rows})
+    return _text({"project": slug, "symbol": args["symbol"], "callees": rows})
 
 
 def _importers(args: dict[str, Any]) -> list[TextContent]:
-    g = _graph_for(args.get("project"))
+    g, slug = _graph_for(args.get("project"))
     rows = g.importers(args["target"])
-    return _text({"target": args["target"], "importers": rows})
+    return _text({"project": slug, "target": args["target"], "importers": rows})
 
 
 def _dependencies(args: dict[str, Any]) -> list[TextContent]:
-    g = _graph_for(args.get("project"))
+    g, slug = _graph_for(args.get("project"))
     rows = g.dependencies(args["file"], depth=int(args.get("depth", 1)))
-    return _text({"file": args["file"], "dependencies": rows})
+    return _text({"project": slug, "file": args["file"], "dependencies": rows})
 
 
 def _definitions(args: dict[str, Any]) -> list[TextContent]:
-    g = _graph_for(args.get("project"))
+    g, slug = _graph_for(args.get("project"))
     rows = g.definitions(args["symbol"])
-    return _text({"symbol": args["symbol"], "definitions": rows})
+    return _text({"project": slug, "symbol": args["symbol"], "definitions": rows})
 
 
 _HANDLERS = {
