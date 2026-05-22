@@ -40,6 +40,7 @@ cd "$PROJECT_ROOT"
 SKIP_DOCKER=0
 SKIP_OLLAMA=0
 SKIP_TESTS=0
+SKIP_MCP=0
 PLUGINS_ARG=""       # empty = interactive; explicit value bypasses prompt
 PLUGINS_SCOPE="global"  # global | project
 for arg in "$@"; do
@@ -47,6 +48,7 @@ for arg in "$@"; do
     --no-docker) SKIP_DOCKER=1 ;;
     --no-ollama) SKIP_OLLAMA=1 ;;
     --no-tests)  SKIP_TESTS=1 ;;
+    --no-mcp)    SKIP_MCP=1 ;;
     --plugins=*)        PLUGINS_ARG="${arg#--plugins=}" ;;
     --plugins-scope=*)  PLUGINS_SCOPE="${arg#--plugins-scope=}" ;;
     -h|--help)
@@ -89,6 +91,31 @@ if [ "$SKIP_OLLAMA" -eq 0 ]; then
     SKIP_OLLAMA=1
   else
     ok "Ollama $(ollama --version 2>/dev/null | head -1 | awk '{print $NF}')"
+  fi
+fi
+
+# uvx (from astral `uv`) — needed by the MCP server registration step.
+# Plugin installers will retry the install themselves; we surface it here
+# so the user can fix PATH issues *before* running the long parts.
+if [ "$SKIP_MCP" -eq 0 ]; then
+  if have uvx; then
+    ok "uvx $(uvx --version 2>/dev/null | head -1)"
+  else
+    warn "uvx not found on PATH (provides the MCP server entrypoint)."
+    INSTALLER_FOUND=0
+    have pipx  && { printf "${DIM}  found pipx  — can run: pipx install uv${RST}\n"; INSTALLER_FOUND=1; }
+    have brew  && { printf "${DIM}  found brew  — can run: brew install uv${RST}\n"; INSTALLER_FOUND=1; }
+    have curl  && { printf "${DIM}  found curl  — can run: curl -LsSf https://astral.sh/uv/install.sh | sh${RST}\n"; INSTALLER_FOUND=1; }
+    if [ "$INSTALLER_FOUND" -eq 0 ]; then
+      warn "no installer for uv available (pipx / brew / curl all missing)."
+      warn "MCP registration will be skipped. Install one of:"
+      warn "  brew install pipx     (then: pipx install uv)"
+      warn "  brew install uv"
+      warn "  install curl, then:   curl -LsSf https://astral.sh/uv/install.sh | sh"
+      SKIP_MCP=1
+    else
+      printf "${DIM}  plugin installer will attempt to install uv automatically.${RST}\n"
+    fi
   fi
 fi
 
@@ -209,13 +236,16 @@ else
   warn "non-interactive shell and no --plugins=... given; skipping plugin step"
 fi
 
-plugin_flag=""
-[ "$PLUGINS_SCOPE" = "project" ] && plugin_flag="--project"
+# Build a flat string of flags rather than an array — bash 3.2 + `set -u`
+# barfs on "${arr[@]}" when arr is empty.
+plugin_flags=""
+[ "$PLUGINS_SCOPE" = "project" ] && plugin_flags="$plugin_flags --project"
+[ "$SKIP_MCP" -eq 1 ] && plugin_flags="$plugin_flags --no-mcp"
 
 if [ "$INSTALL_OPENCODE" -eq 1 ]; then
   if [ -x "$PROJECT_ROOT/plugins/opencode/install.sh" ]; then
-    # shellcheck disable=SC2086 # intentional word-splitting on a single flag
-    "$PROJECT_ROOT/plugins/opencode/install.sh" $plugin_flag
+    # shellcheck disable=SC2086 # intentional word-splitting on flag string
+    "$PROJECT_ROOT/plugins/opencode/install.sh" $plugin_flags
     ok "OpenCode plugin installed ($PLUGINS_SCOPE)"
   else
     warn "plugins/opencode/install.sh not executable; skipping"
@@ -224,8 +254,8 @@ fi
 
 if [ "$INSTALL_CLAUDECODE" -eq 1 ]; then
   if [ -x "$PROJECT_ROOT/plugins/claude-code/install.sh" ]; then
-    # shellcheck disable=SC2086 # intentional word-splitting on a single flag
-    "$PROJECT_ROOT/plugins/claude-code/install.sh" $plugin_flag
+    # shellcheck disable=SC2086 # intentional word-splitting on flag string
+    "$PROJECT_ROOT/plugins/claude-code/install.sh" $plugin_flags
     ok "Claude Code plugin installed ($PLUGINS_SCOPE)"
   else
     warn "plugins/claude-code/install.sh not executable; skipping"

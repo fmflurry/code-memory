@@ -26,18 +26,21 @@ PLUGIN_DIR="$REPO_ROOT/plugins/claude-code"
 
 MODE="global"
 TARGET=""
+SKIP_MCP=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --project) MODE="project"; shift ;;
     --target)  TARGET="$2"; MODE="custom"; shift 2 ;;
+    --no-mcp)  SKIP_MCP=1; shift ;;
     -h|--help)
       cat <<EOF
-Usage: $0 [--project | --target DIR]
+Usage: $0 [--project | --target DIR] [--no-mcp]
 
   (default)        install globally at ~/.claude/plugins/code-memory
   --project        install project-local at \$PWD/.claude/plugins/code-memory
   --target DIR     install into DIR/code-memory
+  --no-mcp         skip registering the code-memory MCP server with Claude Code
 EOF
       exit 0
       ;;
@@ -83,26 +86,84 @@ else
 EOF
 fi
 
-cat <<'EOF'
-
-────────────────────────────────────────────────────────────────────────
-Plugin installed.
-
-If you also want the MCP tools available (recommended — the plugin
-covers automatic paths, the MCP server exposes manual calls), add this
-to ~/.claude.json under "mcpServers" (project scope works too):
-
-  "code-memory": {
-    "type": "stdio",
-    "command": "uvx",
-    "args": [
-      "--from",
-      "git+https://github.com/fmflurry/code-memory",
-      "code-memory-mcp"
-    ],
-    "env": { "CODE_MEMORY_PROJECT": "auto" }
-  }
-
-Restart Claude Code after editing.
-────────────────────────────────────────────────────────────────────────
+# ---------- ensure uvx is available ----------
+ensure_uvx() {
+  if command -v uvx >/dev/null 2>&1; then
+    echo "✓ uvx on PATH: $(command -v uvx)"
+    return 0
+  fi
+  echo "⚠  uvx not on PATH; attempting to install \`uv\` (provides uvx)..."
+  if command -v pipx >/dev/null 2>&1; then
+    pipx install uv >/dev/null 2>&1 && echo "  installed via pipx" && return 0
+  fi
+  if command -v brew >/dev/null 2>&1; then
+    brew install uv >/dev/null 2>&1 && echo "  installed via brew" && return 0
+  fi
+  # last resort: `pip install --user uv` if a usable pip is around
+  if command -v pip3 >/dev/null 2>&1; then
+    pip3 install --user uv >/dev/null 2>&1 && echo "  installed via pip3 --user" && return 0
+  elif command -v pip >/dev/null 2>&1; then
+    pip install --user uv >/dev/null 2>&1 && echo "  installed via pip --user" && return 0
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 \
+      && echo "  installed via astral.sh/uv (open a new shell so PATH picks up ~/.local/bin)" \
+      && return 0
+  fi
+  cat >&2 <<EOF
+✗ Could not auto-install uv/uvx. Install one of:
+    pipx install uv
+    brew install uv
+    pip3 install --user uv
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  then re-run this installer (or pass --no-mcp to skip the MCP step).
 EOF
+  return 1
+}
+
+# ---------- register MCP server with Claude Code ----------
+register_mcp() {
+  local scope="$1"
+  if ! command -v claude >/dev/null 2>&1; then
+    cat <<EOF
+⚠  \`claude\` CLI not found; cannot auto-register the MCP server.
+   Install Claude Code from https://claude.com/claude-code, then run:
+
+     claude mcp add code-memory --scope $scope -e CODE_MEMORY_PROJECT=auto \\
+       -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
+EOF
+    return 0
+  fi
+  if claude mcp list 2>/dev/null | grep -qE '^[[:space:]]*code-memory[[:space:]]'; then
+    echo "✓ MCP server \`code-memory\` already registered with Claude Code"
+    return 0
+  fi
+  echo "Registering code-memory MCP (scope=$scope)..."
+  if claude mcp add code-memory \
+      --scope "$scope" \
+      -e CODE_MEMORY_PROJECT=auto \
+      -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp; then
+    echo "✓ MCP registered. Restart Claude Code (or reload the VS Code window) to pick it up."
+    if [[ "$scope" == "project" ]]; then
+      echo "  (a .mcp.json was written to the project root — commit it so teammates get it too)"
+    fi
+  else
+    echo "✗ \`claude mcp add\` failed; you can add the MCP block manually (see README §MCP server)." >&2
+  fi
+}
+
+if [[ "$SKIP_MCP" -eq 1 ]]; then
+  echo
+  echo "Skipping MCP registration (--no-mcp). To enable later, see README §MCP server."
+else
+  echo
+  case "$MODE" in
+    project) MCP_SCOPE="project" ;;
+    *)       MCP_SCOPE="user" ;;
+  esac
+  if ensure_uvx; then
+    register_mcp "$MCP_SCOPE"
+  else
+    echo "Skipping MCP registration because uvx is missing." >&2
+  fi
+fi
