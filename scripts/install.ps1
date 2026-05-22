@@ -70,8 +70,22 @@ if (-not $NoDocker) {
 
 if (-not $NoOllama) {
   if (-not (Test-Cmd 'ollama')) {
-    Warn "Ollama not found. Install from https://ollama.com/download (or re-run with -NoOllama)."
-    $NoOllama = $true
+    Warn "Ollama not found — attempting auto-install..."
+    if (Test-Cmd 'winget') {
+      & winget install --id Ollama.Ollama -e --silent --accept-source-agreements --accept-package-agreements
+      if ($LASTEXITCODE -eq 0) { Ok "Ollama installed via winget" }
+    } elseif (Test-Cmd 'choco') {
+      & choco install ollama -y
+      if ($LASTEXITCODE -eq 0) { Ok "Ollama installed via choco" }
+    } else {
+      Warn "Neither winget nor choco available. Download Ollama from https://ollama.com/download/windows"
+    }
+    if (-not (Test-Cmd 'ollama')) {
+      Warn "Ollama still not on PATH after install attempt — skipping model pull."
+      $NoOllama = $true
+    } else {
+      Ok "Ollama present"
+    }
   } else {
     Ok "Ollama present"
   }
@@ -119,12 +133,39 @@ if (-not $NoDocker) {
 # ---------- 6. ollama model ----------
 if (-not $NoOllama) {
   Step "Pulling embedding model (bge-m3)"
-  $models = & ollama list 2>$null
-  if ($models -match '^bge-m3') {
-    Ok "bge-m3 already present"
+
+  # Make sure the daemon is reachable.
+  $daemonReady = $false
+  & ollama list *> $null
+  if ($LASTEXITCODE -eq 0) { $daemonReady = $true }
+
+  if (-not $daemonReady) {
+    # Try to launch the Ollama service. The Windows installer registers a
+    # background process; just kick it via Start-Process if it isn't running.
+    try {
+      Start-Process -FilePath 'ollama' -ArgumentList 'serve' -WindowStyle Hidden -ErrorAction Stop
+    } catch {
+      Warn "Failed to start Ollama service: $($_.Exception.Message)"
+    }
+
+    for ($i = 0; $i -lt 30; $i++) {
+      Start-Sleep -Seconds 1
+      & ollama list *> $null
+      if ($LASTEXITCODE -eq 0) { $daemonReady = $true; break }
+    }
+  }
+
+  if ($daemonReady) {
+    $models = & ollama list 2>$null
+    if ($models -match '^bge-m3') {
+      Ok "bge-m3 already present"
+    } else {
+      & ollama pull bge-m3
+      Ok "bge-m3 pulled"
+    }
   } else {
-    & ollama pull bge-m3
-    Ok "bge-m3 pulled"
+    Warn "Ollama daemon did not become reachable within 30s — skipping model pull."
+    Warn "  Start Ollama, then run: ollama pull bge-m3"
   }
 } else {
   Warn "Ollama step skipped (remember to pull a model before ingesting)"

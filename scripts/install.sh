@@ -87,8 +87,40 @@ fi
 
 if [ "$SKIP_OLLAMA" -eq 0 ]; then
   if ! have ollama; then
-    warn "Ollama not found. Install from https://ollama.com/download, then re-run with --no-ollama or rerun this script."
-    SKIP_OLLAMA=1
+    warn "Ollama not found — attempting auto-install..."
+    OS_KERNEL="$(uname -s)"
+    case "$OS_KERNEL" in
+      Darwin)
+        if have brew; then
+          # cask installs the menu-bar app + CLI shim and auto-starts the daemon
+          brew install --cask ollama \
+            && ok "Ollama installed via brew (cask)" \
+            || warn "brew install --cask ollama failed"
+        else
+          warn "Homebrew not found on macOS. Install brew from https://brew.sh, or download Ollama directly:"
+          warn "  https://ollama.com/download/mac"
+        fi
+        ;;
+      Linux)
+        if have curl; then
+          curl -fsSL https://ollama.com/install.sh | sh \
+            && ok "Ollama installed via official script (systemd unit set up)" \
+            || warn "Ollama install script failed"
+        else
+          warn "curl not found. Install curl, then re-run, or download from https://ollama.com/download/linux"
+        fi
+        ;;
+      *)
+        warn "Unsupported OS ($OS_KERNEL); install Ollama manually from https://ollama.com/download"
+        ;;
+    esac
+
+    if ! have ollama; then
+      warn "Ollama still not on PATH after install attempt — skipping model pull."
+      SKIP_OLLAMA=1
+    else
+      ok "Ollama $(ollama --version 2>/dev/null | head -1 | awk '{print $NF}')"
+    fi
   else
     ok "Ollama $(ollama --version 2>/dev/null | head -1 | awk '{print $NF}')"
   fi
@@ -159,11 +191,49 @@ fi
 # ---------- 6. ollama model ----------
 if [ "$SKIP_OLLAMA" -eq 0 ]; then
   step "Pulling embedding model (bge-m3)"
-  if ollama list 2>/dev/null | awk '{print $1}' | grep -q '^bge-m3'; then
-    ok "bge-m3 already present"
+
+  # Make sure the Ollama daemon is reachable before pulling.
+  ensure_ollama_daemon() {
+    # Fast path: API responds.
+    if ollama list >/dev/null 2>&1; then return 0; fi
+
+    OS_KERNEL="$(uname -s)"
+    if [ "$OS_KERNEL" = "Darwin" ]; then
+      # Cask install registers an .app — open it (no-op if already running).
+      if [ -d "/Applications/Ollama.app" ]; then
+        open -a Ollama >/dev/null 2>&1 || true
+      else
+        # Fall back to launching the CLI server in the background.
+        nohup ollama serve >/tmp/ollama-serve.log 2>&1 &
+      fi
+    else
+      # Linux install script sets up systemd; nudge it if available, else background.
+      if have systemctl && systemctl list-unit-files 2>/dev/null | grep -q '^ollama\.service'; then
+        sudo systemctl start ollama >/dev/null 2>&1 || true
+      else
+        nohup ollama serve >/tmp/ollama-serve.log 2>&1 &
+      fi
+    fi
+
+    # Wait up to ~30s for the daemon to accept requests.
+    for _ in $(seq 1 30); do
+      if ollama list >/dev/null 2>&1; then return 0; fi
+      sleep 1
+    done
+    return 1
+  }
+
+  if ensure_ollama_daemon; then
+    if ollama list 2>/dev/null | awk '{print $1}' | grep -q '^bge-m3'; then
+      ok "bge-m3 already present"
+    else
+      ollama pull bge-m3
+      ok "bge-m3 pulled"
+    fi
   else
-    ollama pull bge-m3
-    ok "bge-m3 pulled"
+    warn "Ollama daemon did not become reachable within 30s — skipping model pull."
+    warn "  Start Ollama manually (open the app on macOS, or 'sudo systemctl start ollama' on Linux),"
+    warn "  then run: ollama pull bge-m3"
   fi
 else
   warn "Ollama step skipped (remember to pull a model before ingesting)"
