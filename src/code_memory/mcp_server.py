@@ -4,6 +4,7 @@ Tools:
   - codememory_retrieve(query, k?, eps?, project?)         — orientation
   - codememory_record(prompt, plan?, patch?, verdict?, project?)
   - codememory_reingest(path, project?)
+  - codememory_ingest(root, project, full?, since?, dry_run?, confirmed?)
   - codememory_callers(symbol, depth?, project?)           — topology
   - codememory_callees(symbol, depth?, project?)
   - codememory_importers(target, project?)
@@ -24,10 +25,13 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from dataclasses import asdict
+
 from .config import CONFIG, detect_project_slug
 from .episodic import Episode
 from .graph import FalkorStore
 from .orchestrator import Pipeline, Retriever
+from .orchestrator.pipeline import IngestMode
 
 SERVER_NAME = "code-memory"
 
@@ -121,6 +125,59 @@ _TOOLS: list[Tool] = [
                 "project": _project_schema(),
             },
             "required": ["path", "project"],
+        },
+    ),
+    Tool(
+        name="codememory_ingest",
+        description=(
+            "LONG-RUNNING / BLOCKING. Ingest an entire repository. "
+            "DO NOT call without first asking the user for confirmation — full "
+            "ingests can take minutes to hours on large repos and block the "
+            "MCP transport while running. Default mode is git-incremental "
+            "(diff prior state to HEAD); pass `full=true` to purge this "
+            "project's vectors+graph+ingest_state and re-walk every file. "
+            "Once the user has explicitly confirmed, call again with "
+            "`confirmed=true` to actually run. Without `confirmed=true` the "
+            "server returns a dry advisory payload describing what would run."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "root": {
+                    "type": "string",
+                    "description": "Absolute path to the repo root to ingest.",
+                },
+                "project": _project_schema(),
+                "full": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "If true, purge this project's storage and walk every "
+                        "file. Equivalent to CLI `ingest --full`."
+                    ),
+                },
+                "since": {
+                    "type": "string",
+                    "description": (
+                        "Optional base ref (branch/tag/sha) to diff against "
+                        "HEAD. Overrides stored ingest state when set."
+                    ),
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Compute plan only; do not write to storage.",
+                },
+                "confirmed": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Must be true to actually run. Set only after the "
+                        "user explicitly authorized this ingest in chat."
+                    ),
+                },
+            },
+            "required": ["root", "project"],
         },
     ),
     Tool(
@@ -300,6 +357,51 @@ def _reingest(args: dict[str, Any]) -> list[TextContent]:
     )
 
 
+def _ingest(args: dict[str, Any]) -> list[TextContent]:
+    project = _require_project(args)
+    raw_root = args.get("root")
+    if not isinstance(raw_root, str) or not raw_root.strip():
+        return _text({"error": "`root` is required (absolute repo path)."})
+    root = Path(raw_root).expanduser()
+    if not root.exists() or not root.is_dir():
+        return _text({"error": f"not a directory: {root}"})
+
+    full = bool(args.get("full", False))
+    since = args.get("since") or None
+    dry_run = bool(args.get("dry_run", False))
+    confirmed = bool(args.get("confirmed", False))
+    mode: IngestMode = "full" if full else "auto"
+
+    if not confirmed:
+        return _text(
+            {
+                "status": "confirmation_required",
+                "project": project,
+                "root": str(root.resolve()),
+                "mode": mode,
+                "since": since,
+                "dry_run": dry_run,
+                "warning": (
+                    "LONG-RUNNING / BLOCKING operation. Ask the user to "
+                    "confirm before re-invoking with `confirmed=true`. "
+                    "Full ingests can take minutes to hours."
+                ),
+            }
+        )
+
+    pipe = Pipeline(project=project)
+    stats = pipe.ingest_repo(root, mode=mode, since=since, dry_run=dry_run)
+    return _text(
+        {
+            "project": pipe.slug,
+            "root": str(root.resolve()),
+            "mode": mode,
+            "dry_run": dry_run,
+            "ingested": asdict(stats),
+        }
+    )
+
+
 def _callers(args: dict[str, Any]) -> list[TextContent]:
     g, slug = _graph_for(_require_project(args))
     rows = g.callers(args["symbol"], depth=int(args.get("depth", 1)))
@@ -334,6 +436,7 @@ _HANDLERS = {
     "codememory_retrieve": _retrieve,
     "codememory_record": _record,
     "codememory_reingest": _reingest,
+    "codememory_ingest": _ingest,
     "codememory_callers": _callers,
     "codememory_callees": _callees,
     "codememory_importers": _importers,
