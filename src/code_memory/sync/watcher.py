@@ -27,20 +27,58 @@ DEFAULT_POLL_INTERVAL = 5.0
 ExcludeFn = Callable[[Path], bool]
 
 
+EXCLUDED_ROOT_DIRS: tuple[str, ...] = (
+    # VCS / project state
+    ".git",
+    "data",
+    # Virtualenvs / package roots
+    ".venv",
+    "node_modules",
+    # Build outputs
+    "dist",
+    "out-tsc",
+    "build",
+    "target",
+    "coverage",
+    # Framework / bundler caches
+    ".angular",
+    ".next",
+    ".nuxt",
+    ".svelte-kit",
+    ".turbo",
+    ".parcel-cache",
+    ".cache",
+    # Python caches
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    # Editor metadata
+    ".idea",
+    ".vscode",
+    # Agentic tool caches (high write churn, no source value)
+    ".opencode",
+    ".serena",
+    ".claude",
+    ".cursor",
+    ".windsurf",
+    ".clavix",
+)
+
+
 def _default_exclude(repo: Path) -> ExcludeFn:
-    git_dir = (repo / ".git").resolve()
-    data_dir = (repo / "data").resolve()
-    venv_dir = (repo / ".venv").resolve()
-    node_dir = (repo / "node_modules").resolve()
+    repo_root = repo.resolve()
+    blocked = tuple((repo_root / name).resolve() for name in EXCLUDED_ROOT_DIRS)
 
     def exclude(p: Path) -> bool:
         try:
             r = p.resolve()
         except OSError:
             return True
-        for blocked in (git_dir, data_dir, venv_dir, node_dir):
+        for b in blocked:
             try:
-                r.relative_to(blocked)
+                r.relative_to(b)
                 return True
             except ValueError:
                 continue
@@ -151,9 +189,7 @@ class Watcher:
                 if event.is_directory:
                     return
                 path = Path(getattr(event, "dest_path", None) or event.src_path)
-                if watcher.exclude(path):
-                    return
-                watcher._debouncer.bump()
+                watcher._handle_path(path)
 
         observer = Observer()
         observer.schedule(_Handler(), str(self.repo), recursive=True)
@@ -207,6 +243,34 @@ class Watcher:
             return git_delta.head_sha(self.repo) if git_delta.is_git_repo(self.repo) else None
         except Exception:  # noqa: BLE001
             return None
+
+    # ------------------------------------------------------------------
+    # Event routing
+    # ------------------------------------------------------------------
+
+    def _is_ref_event(self, path: Path) -> bool:
+        """True when ``path`` is a git ref whose change should re-sync."""
+        try:
+            rel = path.resolve().relative_to(self.repo)
+        except (OSError, ValueError):
+            return False
+        parts = rel.parts
+        if not parts or parts[0] != ".git":
+            return False
+        if parts == (".git", "HEAD"):
+            return True
+        if len(parts) >= 4 and parts[1:3] == ("refs", "heads"):
+            return True
+        return False
+
+    def _handle_path(self, path: Path) -> None:
+        """Decide whether ``path`` should trigger a debounced sync."""
+        if self._is_ref_event(path):
+            self._debouncer.bump()
+            return
+        if self.exclude(path):
+            return
+        self._debouncer.bump()
 
     # ------------------------------------------------------------------
     # Sync

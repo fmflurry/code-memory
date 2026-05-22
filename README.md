@@ -764,7 +764,7 @@ src/code_memory/
 - [x] File-watcher daemon for live re-ingest (cross-platform via `watchdog`)
 - [x] Team-shared snapshots (orphan branch, content-addressed, model-aware verify)
 - [x] OS autostart adapters (launchd / systemd / schtasks) — zero manual install
-- [ ] Branch-aware index (auto re-walk on branch change)
+- [x] Branch-aware index (auto re-walk on branch change)
 - [ ] Cross-encoder rerank step
 - [ ] More languages (Rust, Go, Java, C#)
 - [ ] Cursor hook recipe
