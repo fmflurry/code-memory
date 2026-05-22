@@ -516,6 +516,208 @@ Restart your agent after install.
 
 ---
 
+## Team sync — share memory across developers
+
+A single dev's full ingest is expensive. The team-sync layer makes that work shareable
+so dev B inherits dev A's index without re-running ingest, then keeps the index in
+lockstep with the code as branches move.
+
+### How it works
+
+```
+┌─────────────────────────────┐
+│  main branch (your code)    │
+├─────────────────────────────┤
+│  feat/x, feat/y, ...        │
+├─────────────────────────────┤
+│  codemem-snapshots (orphan) │ ← per-commit snapshots, content-addressed
+│   ├─ snapshots/<sha>.cmsnap │
+│   ├─ manifests/<sha>.json   │
+│   └─ index.json             │
+└─────────────────────────────┘
+```
+
+A **snapshot** is a tar.gz containing the full vectors + graph + state for a single
+git SHA, plus a manifest with `embed_model`, `embed_dim`, and a `sha256` content
+digest. Snapshots live on an **orphan git branch** named `codemem-snapshots` —
+no external storage, no CI, just `git push`/`git fetch`.
+
+Snapshots are **content-addressed** by the SHA they represent. Two devs publishing
+for the same SHA produce identical bytes (deterministic dump + canonical sort) so
+concurrent publishes converge instead of conflicting.
+
+### Trust guarantees
+
+| Property            | Mechanism                                                    |
+| ------------------- | ------------------------------------------------------------ |
+| Reproducible        | snapshot keyed by `git SHA` + `embed_model`                  |
+| Tamper-evident      | `manifest.content_sha256` recomputed on every load           |
+| Model-drift safe    | `verify_snapshot()` rejects mismatched `embed_model` / `dim` |
+| Disaster recovery   | any dev can re-publish; no single point of failure           |
+| Offline-safe        | local incremental works without `git fetch`                  |
+
+### Concrete workflow
+
+#### Dev A merges to main, publishes a snapshot
+
+```bash
+# after merging PR
+git checkout main && git pull
+code-memory sync . --publish
+# -> ingests latest main, then pushes <sha>.cmsnap to codemem-snapshots
+```
+
+Or one-shot:
+
+```bash
+code-memory snapshot publish .
+```
+
+#### Dev B clones fresh — instant memory, no ingest
+
+```bash
+git clone <repo> && cd <repo>
+code-memory hooks install        # one-time setup; installs hooks + autostart
+code-memory sync                 # pulls snapshot for HEAD, applies it
+```
+
+Output:
+
+```json
+{ "action": "pull_snapshot", "head_sha": "abc123...", "snapshot_sha": "abc123..." }
+```
+
+No tree-sitter walk. No embedding calls. Index ready in seconds.
+
+#### Dev B pulls main with new commits
+
+When git hooks are installed, `git pull` automatically triggers `code-memory sync`:
+
+```
+$ git pull
+...
+[sync] HEAD = ghi789
+[sync] snapshot ghi789 found in codemem-snapshots
+[sync] action=pull_snapshot
+```
+
+If no snapshot exists for that exact SHA, the syncer walks back via `rev-list
+--first-parent` to find the nearest ancestor snapshot and applies it, then runs
+an incremental ingest for the commits in between.
+
+#### Dev B on a feature branch
+
+```bash
+git checkout -b feat/y         # post-checkout hook fires
+# -> action=pull_then_incremental (snapshot=abc123, base=abc123)
+# edits files...
+# watcher (auto-running) detects edits, debounces 2s, runs incremental
+```
+
+Feature branches never publish (only commits on `--canonical-branch main`).
+
+### Automated sync — four layers of resilience
+
+```
+┌──────────────────────────┐
+│ 1. Git hooks             │ ← post-checkout, post-merge, post-rewrite,
+│                          │   post-commit, post-applypatch
+│                          │   (run code-memory sync in background)
+├──────────────────────────┤
+│ 2. Filesystem watcher    │ ← watchdog (FSEvents/inotify/ReadDirChangesW),
+│                          │   debounce 2s, catches saves between commits
+├──────────────────────────┤
+│ 3. MCP pre-query guard   │ ← every codememory_retrieve checks HEAD drift,
+│                          │   syncs if stale (cheap noop when clean)
+├──────────────────────────┤
+│ 4. OS autostart service  │ ← runs watcher independent of MCP host;
+│                          │   launchd / systemd --user / schtasks
+└──────────────────────────┘
+```
+
+Each layer is a safety net for the others. Hooks bypassed? Watcher catches it.
+Watcher crashes? Autostart restarts. Autostart blocked? MCP guard catches drift
+on the next query.
+
+### Cross-platform autostart
+
+The OS service runs `code-memory watch <repo>` at every user logon. Zero admin
+required, fully user-level:
+
+| OS      | Mechanism             | Unit location                                              |
+| ------- | --------------------- | ---------------------------------------------------------- |
+| macOS   | launchd LaunchAgent   | `~/Library/LaunchAgents/com.codememory.watch.<slug>.plist` |
+| Linux   | systemd --user        | `~/.config/systemd/user/codememory-watch-<slug>.service`   |
+| Windows | Task Scheduler (logon)| `\CodeMemory\Watch\<slug>` (task name)                     |
+
+Bootstrap is **automatic** — the MCP server registers and starts the service the
+first time it's invoked in a repo. No manual install step. The `Watcher` class
+also runs in-process inside the MCP server as a belt-and-suspenders fallback for
+sessions where OS autostart is unavailable (corporate-locked machines, CI containers).
+
+### CLI surface
+
+```bash
+code-memory sync [ROOT]              # smart reconcile: pull / incremental / full
+code-memory status [ROOT]            # unified view: autostart, hooks, snapshot, drift
+code-memory watch [ROOT]             # foreground watcher (for tmux / screen)
+code-memory hooks install            # git hooks + autostart (idempotent)
+code-memory hooks uninstall          # clean removal
+code-memory snapshot publish [ROOT]  # build snapshot for HEAD, push to branch
+code-memory snapshot list            # list snapshots on the snapshot branch
+code-memory snapshot gc --keep 20    # prune all but recent N snapshots
+code-memory autostart status         # OS service health
+```
+
+### Decision tree (what `sync` actually does)
+
+| State                                            | Action                  |
+| ------------------------------------------------ | ----------------------- |
+| HEAD == state.sha, worktree clean                | `noop`                  |
+| HEAD == state.sha, worktree dirty                | `dirty_only` (reingest dirty files) |
+| No local state, snapshot exists for HEAD         | `pull_snapshot`         |
+| No local state, snapshot exists for ancestor     | `pull_then_incremental` |
+| No local state, no snapshot                      | `full_ingest`           |
+| HEAD moved, snapshot exists for HEAD             | `pull_snapshot`         |
+| HEAD moved, snapshot for ancestor                | `pull_then_incremental` |
+| HEAD moved, state.sha reachable                  | `incremental`           |
+| HEAD moved, state.sha rewritten                  | `full_ingest`           |
+
+### Environment variables
+
+| Var                              | Effect                                                          |
+| -------------------------------- | --------------------------------------------------------------- |
+| `CODE_MEMORY_REPO`               | Override repo root for MCP bootstrap (default: cwd / git top)   |
+| `CODE_MEMORY_NO_AUTOSTART`       | Skip OS autostart registration on MCP boot                      |
+| `CODE_MEMORY_NO_BOOT_SYNC`       | Skip initial sync on MCP boot                                   |
+| `CODE_MEMORY_NO_INPROC_WATCHER`  | Skip in-process watcher (use OS service only)                   |
+| `CODE_MEMORY_NO_GUARD`           | Skip pre-query freshness guard                                  |
+| `CODE_MEMORY_LOG_LEVEL`          | `DEBUG` / `INFO` / `WARNING` (default `INFO`)                   |
+
+### Failure modes & recovery
+
+| Symptom                              | Resolution                                            |
+| ------------------------------------ | ----------------------------------------------------- |
+| `embed_model mismatch` on apply      | Re-run `code-memory ingest --full` and re-publish     |
+| `content digest mismatch`            | Snapshot corrupt; `code-memory sync` falls back to incremental |
+| Watcher not picking up changes       | `code-memory status` → check `running: true`; reinstall via `code-memory hooks install` |
+| Snapshot branch grew too large       | `code-memory snapshot gc --keep 20`                   |
+| Hook never fires after `git pull`    | Repo has `core.hooksPath` set elsewhere; the installer follows that path — verify with `git config core.hooksPath` |
+
+### What is *not* shared
+
+| Stored locally only                       | Why                                              |
+| ----------------------------------------- | ------------------------------------------------ |
+| Episodic memory (`episodic.db`)           | Personal: your task history, plans, verdicts     |
+| Per-repo `ingest_state` SQLite row        | Records the dev's local checkpoint               |
+| Working-tree-dirty incremental updates    | Uncommitted code shouldn't pollute team snapshot |
+
+Snapshots only carry **vectors + graph + state for committed code**, scoped to a
+project slug. Two projects in the same Qdrant/Falkor instance can publish
+independently without colliding.
+
+---
+
 ## Project layout
 
 ```
@@ -533,6 +735,16 @@ src/code_memory/
 │   ├── reset.py          # wipe vectors + graph + ingest_state per project
 │   ├── ingest_state.py   # per-repo last_sha checkpoint (SQLite)
 │   └── git_delta.py      # git diff -> changed / deleted / dirty
+├── sync/             # team-shared memory (snapshots, watcher, autostart)
+│   ├── snapshot.py       # tar.gz blob: build / verify / apply
+│   ├── store.py          # orphan-branch git-backed snapshot storage
+│   ├── sync.py           # decision tree: pull / incremental / full
+│   ├── watcher.py        # cross-platform filesystem watcher (watchdog)
+│   ├── hooks.py          # git hooks installer (idempotent marker blocks)
+│   └── autostart/        # OS service adapters
+│       ├── launchd.py        # macOS LaunchAgent
+│       ├── systemd.py        # Linux systemd --user
+│       └── schtasks.py       # Windows Task Scheduler
 ├── mcp_server.py     # stdio MCP server (`code-memory-mcp`)
 └── cli.py            # typer-based CLI entrypoint
 ```
@@ -549,7 +761,9 @@ src/code_memory/
 - [x] Lightweight rerank (entrypoint / generated boost, idle-episode filter)
 - [x] Harness plugins for OpenCode and Claude Code (auto-retrieve + auto-learn)
 - [x] `code-memory reset` CLI + auto-purge on `ingest --full`
-- [ ] File-watcher daemon for live re-ingest (current: hook-driven)
+- [x] File-watcher daemon for live re-ingest (cross-platform via `watchdog`)
+- [x] Team-shared snapshots (orphan branch, content-addressed, model-aware verify)
+- [x] OS autostart adapters (launchd / systemd / schtasks) — zero manual install
 - [ ] Branch-aware index (auto re-walk on branch change)
 - [ ] Cross-encoder rerank step
 - [ ] More languages (Rust, Go, Java, C#)

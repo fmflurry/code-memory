@@ -17,6 +17,8 @@ Transport: stdio. Register via `code-memory-mcp` script entrypoint.
 from __future__ import annotations
 
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,8 @@ from .episodic import Episode
 from .graph import FalkorStore
 from .orchestrator import Pipeline, Retriever
 from .orchestrator.pipeline import IngestMode
+
+log = logging.getLogger("codememory.mcp")
 
 SERVER_NAME = "code-memory"
 
@@ -309,8 +313,28 @@ def _text(payload: Any) -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps(payload, default=str, indent=2))]
 
 
+def _ensure_fresh(project: str) -> None:
+    """Pre-query guard: sync the active repo if HEAD has drifted.
+
+    Cheap no-op when state already matches HEAD and the worktree is
+    clean. Skipped entirely when ``CODE_MEMORY_NO_GUARD`` is set.
+    """
+    if os.environ.get("CODE_MEMORY_NO_GUARD"):
+        return
+    repo = Path(os.environ.get("CODE_MEMORY_REPO") or os.getcwd()).resolve()
+    if not (repo / ".git").exists():
+        return
+    try:
+        from .sync import sync_repo
+
+        sync_repo(repo, project=project, trigger="pre-query", fetch=False)
+    except Exception:  # noqa: BLE001
+        log.exception("pre-query guard sync failed")
+
+
 def _retrieve(args: dict[str, Any]) -> list[TextContent]:
     project = _require_project(args)
+    _ensure_fresh(project)
     query = args["query"]
     k = int(args.get("k", 8))
     eps = int(args.get("eps", 5))
@@ -465,7 +489,88 @@ def build_server() -> Server:
     return server
 
 
+def _bootstrap_repo() -> Path | None:
+    """Locate the active repo and ensure autostart + in-process watcher.
+
+    Best-effort: any failure (no git, no write permission, missing
+    watchdog dep) logs and continues. The MCP server still serves
+    queries even if these side-channels can't be set up.
+    """
+    candidate = os.environ.get("CODE_MEMORY_REPO") or os.getcwd()
+    repo = Path(candidate).resolve()
+    if not (repo / ".git").exists():
+        # try git toplevel
+        from .orchestrator import git_delta
+
+        if git_delta.is_git_repo(repo):
+            try:
+                import subprocess
+
+                top = subprocess.run(
+                    ["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=2,
+                ).stdout.strip()
+                if top:
+                    repo = Path(top)
+            except Exception:  # noqa: BLE001
+                pass
+    if not (repo / ".git").exists():
+        log.info("mcp bootstrap: not a git repo (%s); skipping autostart", repo)
+        return None
+
+    # 1. autostart registration (idempotent)
+    if not os.environ.get("CODE_MEMORY_NO_AUTOSTART"):
+        try:
+            from .sync.autostart import ensure_autostart
+
+            st = ensure_autostart(repo)
+            log.info(
+                "mcp bootstrap: autostart installed=%s running=%s label=%s",
+                st.installed,
+                st.running,
+                st.label,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("mcp bootstrap: autostart registration failed")
+
+    # 2. one-shot sync to catch up to HEAD
+    if not os.environ.get("CODE_MEMORY_NO_BOOT_SYNC"):
+        try:
+            from .sync import sync_repo
+
+            result = sync_repo(repo, trigger="mcp-boot")
+            log.info(
+                "mcp bootstrap: sync action=%s head=%s",
+                result.action,
+                (result.head_sha or "")[:12],
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("mcp bootstrap: initial sync failed")
+
+    # 3. in-process watcher as belt-and-suspenders (won't double-start
+    #    because OS autostart runs in its own process)
+    if not os.environ.get("CODE_MEMORY_NO_INPROC_WATCHER"):
+        try:
+            from .sync.watcher import Watcher
+
+            w = Watcher(repo)
+            w.start()
+            log.info("mcp bootstrap: in-process watcher started")
+            _BOOTSTRAP_REFS["watcher"] = w
+        except Exception:  # noqa: BLE001
+            log.exception("mcp bootstrap: in-process watcher failed to start")
+
+    return repo
+
+
+_BOOTSTRAP_REFS: dict[str, Any] = {}
+
+
 async def _run() -> None:
+    _bootstrap_repo()
     server = build_server()
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
@@ -476,6 +581,10 @@ async def _run() -> None:
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=os.environ.get("CODE_MEMORY_LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     anyio.run(_run)
 
 

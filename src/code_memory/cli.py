@@ -9,6 +9,8 @@ from typing import Any
 import typer
 from rich import print as rprint
 
+from dataclasses import asdict as _asdict
+
 from .config import CONFIG, detect_project_slug
 from .episodic import Episode
 from .graph import FalkorStore
@@ -360,6 +362,354 @@ def definitions(
     """List all files+line ranges that define ``symbol``."""
     rows = _graph_for(project).definitions(symbol)
     _emit({"symbol": symbol, "definitions": rows}, as_json=as_json)
+
+
+# ---------------------------------------------------------------------------
+# Team sync (snapshot + watcher + autostart + hooks)
+# ---------------------------------------------------------------------------
+
+
+snapshot_app = typer.Typer(help="Snapshot management (publish, list, gc).")
+hooks_app = typer.Typer(help="Git hooks installer.")
+autostart_app = typer.Typer(help="Cross-platform autostart service.")
+app.add_typer(snapshot_app, name="snapshot")
+app.add_typer(hooks_app, name="hooks")
+app.add_typer(autostart_app, name="autostart")
+
+
+@app.command()
+def sync(
+    root: Path = typer.Argument(
+        Path("."), exists=True, file_okay=False, dir_okay=True, help="Repo root."
+    ),
+    project: str | None = ProjectOpt,
+    publish: bool = typer.Option(
+        False,
+        "--publish",
+        help="If on the canonical branch, publish a fresh snapshot after sync.",
+    ),
+    canonical_branch: str = typer.Option(
+        "main", "--canonical-branch", help="Branch whose tip publishes snapshots."
+    ),
+    trigger: str = typer.Option(
+        "manual", "--trigger", help="Free-form tag (e.g. post-merge, watcher)."
+    ),
+    no_fetch: bool = typer.Option(
+        False, "--no-fetch", help="Skip `git fetch` of the snapshot branch."
+    ),
+    as_json: bool = JsonOpt,
+) -> None:
+    """Reconcile local code-memory state with git HEAD.
+
+    Pulls a snapshot if one exists for HEAD or a recent ancestor,
+    otherwise runs an incremental ingest. Idempotent: cheap on
+    quiet repos, fast on small diffs, falls back to a full ingest
+    only when nothing else is available.
+    """
+    from .sync import sync_repo
+
+    result = sync_repo(
+        root,
+        project=project,
+        publish=publish,
+        canonical_branch=canonical_branch,
+        trigger=trigger,
+        fetch=not no_fetch,
+    )
+    _emit(_asdict(result), as_json=as_json)
+
+
+@app.command()
+def watch(
+    root: Path = typer.Argument(
+        Path("."), exists=True, file_okay=False, dir_okay=True, help="Repo root."
+    ),
+    project: str | None = ProjectOpt,
+) -> None:
+    """Run the filesystem watcher in the foreground until interrupted."""
+    from .sync.watcher import run_foreground
+
+    run_foreground(root, project=project)
+
+
+@app.command()
+def status(
+    root: Path = typer.Argument(
+        Path("."), exists=True, file_okay=False, dir_okay=True, help="Repo root."
+    ),
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """Show a unified sync status (autostart, hooks, snapshot, drift)."""
+    from .sync.autostart import ensure_autostart  # noqa: F401 - imported for side-types
+    from .sync.autostart.base import get_adapter
+    from .sync.hooks import hook_status
+    from .sync.store import SnapshotStore
+
+    slug = project or detect_project_slug(root)
+    payload: dict[str, object] = {"project": slug, "root": str(Path(root).resolve())}
+
+    # autostart
+    try:
+        adapter = get_adapter()
+        st = adapter.status(Path(root).resolve())
+        payload["autostart"] = {
+            "installed": st.installed,
+            "running": st.running,
+            "label": st.label,
+            "unit_path": st.unit_path,
+            "note": st.note,
+        }
+    except Exception as e:  # noqa: BLE001
+        payload["autostart"] = {"error": str(e)}
+
+    # hooks
+    payload["hooks"] = hook_status(Path(root).resolve())
+
+    # snapshot drift
+    try:
+        if _git_delta.is_git_repo(root):
+            head = _git_delta.head_sha(root)
+            store = SnapshotStore(Path(root).resolve())
+            store.fetch()
+            payload["head_sha"] = head
+            payload["snapshot_for_head"] = store.has(head)
+            payload["local_snapshots"] = len(store.list_local())
+            payload["remote_snapshots"] = len(store.list_remote())
+    except Exception as e:  # noqa: BLE001
+        payload["snapshot_error"] = str(e)
+
+    # ingest state
+    try:
+        cfg = CONFIG.for_project(slug)
+        from .orchestrator.ingest_state import IngestStateStore
+
+        prior = IngestStateStore(cfg.episodic_db).get(root)
+        payload["ingest_state"] = (
+            None
+            if prior is None
+            else {"last_sha": prior.last_sha, "branch": prior.branch, "last_ts": prior.last_ts}
+        )
+    except Exception as e:  # noqa: BLE001
+        payload["ingest_state_error"] = str(e)
+
+    _emit(payload, as_json=as_json)
+
+
+# ---- snapshot subcommands -------------------------------------------------
+
+
+@snapshot_app.command("publish")
+def snapshot_publish(
+    root: Path = typer.Argument(
+        Path("."), exists=True, file_okay=False, dir_okay=True
+    ),
+    project: str | None = ProjectOpt,
+    push: bool = typer.Option(True, "--push/--no-push", help="Push the snapshot branch."),
+    as_json: bool = JsonOpt,
+) -> None:
+    """Build a snapshot for HEAD and push it to the snapshot branch."""
+    from .sync.snapshot import build_snapshot
+    from .sync.store import SnapshotStore
+
+    if not _git_delta.is_git_repo(root):
+        _emit({"error": "not a git repo"}, as_json=as_json)
+        raise typer.Exit(code=1)
+    slug = project or detect_project_slug(root)
+    head = _git_delta.head_sha(root)
+    branch = _git_delta.current_branch(root)
+    snap = build_snapshot(
+        project=slug,
+        head_sha=head,
+        branch=branch,
+        state={"last_sha": head, "branch": branch},
+    )
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".cmsnap", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        snap.write(tmp_path)
+        data = tmp_path.read_bytes()
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    store = SnapshotStore(Path(root).resolve())
+    manifest: dict[str, object] = {
+        "head_sha": head,
+        "branch": branch,
+        "size": len(data),
+        "embed_model": snap.manifest.embed_model,
+        "embed_dim": snap.manifest.embed_dim,
+        "counts": snap.manifest.counts,
+        "content_sha256": snap.manifest.content_sha256,
+    }
+    created = store.write(head, data, manifest=manifest, push=push)
+    _emit(
+        {
+            "project": slug,
+            "head": head,
+            "created": created,
+            "size": len(data),
+            "counts": snap.manifest.counts,
+        },
+        as_json=as_json,
+    )
+
+
+@snapshot_app.command("list")
+def snapshot_list(
+    root: Path = typer.Argument(
+        Path("."), exists=True, file_okay=False, dir_okay=True
+    ),
+    remote_only: bool = typer.Option(False, "--remote", help="Only list remote entries."),
+    as_json: bool = JsonOpt,
+) -> None:
+    """List snapshots present on the snapshot branch."""
+    from .sync.store import SnapshotStore
+
+    store = SnapshotStore(Path(root).resolve())
+    store.fetch()
+    rows = store.list_remote() if remote_only else store.list_local()
+    _emit({"snapshots": [_asdict(r) for r in rows]}, as_json=as_json)
+
+
+@snapshot_app.command("gc")
+def snapshot_gc(
+    root: Path = typer.Argument(
+        Path("."), exists=True, file_okay=False, dir_okay=True
+    ),
+    keep: int = typer.Option(20, "--keep", help="Number of recent snapshots to keep."),
+    push: bool = typer.Option(True, "--push/--no-push"),
+    as_json: bool = JsonOpt,
+) -> None:
+    """Prune all but the most recent ``--keep`` snapshots."""
+    from .sync.store import SnapshotStore
+
+    store = SnapshotStore(Path(root).resolve())
+    removed = store.gc(keep, push=push)
+    _emit({"removed": removed, "kept": keep}, as_json=as_json)
+
+
+# ---- hooks subcommands ----------------------------------------------------
+
+
+@hooks_app.command("install")
+def hooks_install(
+    root: Path = typer.Argument(Path("."), exists=True, file_okay=False, dir_okay=True),
+    with_autostart: bool = typer.Option(
+        True, "--autostart/--no-autostart", help="Also register OS autostart."
+    ),
+    as_json: bool = JsonOpt,
+) -> None:
+    """Install git hooks (and OS autostart) for this repo."""
+    from .sync.hooks import install_hooks
+
+    result = install_hooks(Path(root).resolve())
+    payload: dict[str, object] = {
+        "hooks_dir": result.hooks_dir,
+        "installed": result.installed,
+        "skipped": result.skipped,
+    }
+    if with_autostart:
+        try:
+            from .sync.autostart import ensure_autostart
+
+            st = ensure_autostart(Path(root).resolve())
+            payload["autostart"] = {
+                "installed": st.installed,
+                "running": st.running,
+                "label": st.label,
+                "unit_path": st.unit_path,
+                "note": st.note,
+            }
+        except Exception as e:  # noqa: BLE001
+            payload["autostart_error"] = str(e)
+    _emit(payload, as_json=as_json)
+
+
+@hooks_app.command("uninstall")
+def hooks_uninstall(
+    root: Path = typer.Argument(Path("."), exists=True, file_okay=False, dir_okay=True),
+    with_autostart: bool = typer.Option(True, "--autostart/--no-autostart"),
+    as_json: bool = JsonOpt,
+) -> None:
+    """Remove code-memory git hooks (and OS autostart)."""
+    from .sync.hooks import uninstall_hooks
+
+    result = uninstall_hooks(Path(root).resolve())
+    payload: dict[str, object] = {
+        "removed": result.installed,
+        "skipped": result.skipped,
+    }
+    if with_autostart:
+        try:
+            from .sync.autostart.base import get_adapter
+
+            st = get_adapter().uninstall(Path(root).resolve())
+            payload["autostart"] = {
+                "installed": st.installed,
+                "label": st.label,
+            }
+        except Exception as e:  # noqa: BLE001
+            payload["autostart_error"] = str(e)
+    _emit(payload, as_json=as_json)
+
+
+# ---- autostart subcommands ------------------------------------------------
+
+
+@autostart_app.command("install")
+def autostart_install(
+    root: Path = typer.Argument(Path("."), exists=True, file_okay=False, dir_okay=True),
+    as_json: bool = JsonOpt,
+) -> None:
+    """Register the OS-level autostart service."""
+    from .sync.autostart import ensure_autostart
+
+    st = ensure_autostart(Path(root).resolve())
+    _emit(
+        {
+            "installed": st.installed,
+            "running": st.running,
+            "label": st.label,
+            "unit_path": st.unit_path,
+            "note": st.note,
+        },
+        as_json=as_json,
+    )
+
+
+@autostart_app.command("uninstall")
+def autostart_uninstall(
+    root: Path = typer.Argument(Path("."), exists=True, file_okay=False, dir_okay=True),
+    as_json: bool = JsonOpt,
+) -> None:
+    """Remove the OS-level autostart service."""
+    from .sync.autostart.base import get_adapter
+
+    st = get_adapter().uninstall(Path(root).resolve())
+    _emit({"installed": st.installed, "label": st.label}, as_json=as_json)
+
+
+@autostart_app.command("status")
+def autostart_status(
+    root: Path = typer.Argument(Path("."), exists=True, file_okay=False, dir_okay=True),
+    as_json: bool = JsonOpt,
+) -> None:
+    """Show OS autostart status for this repo."""
+    from .sync.autostart.base import get_adapter
+
+    st = get_adapter().status(Path(root).resolve())
+    _emit(
+        {
+            "installed": st.installed,
+            "running": st.running,
+            "label": st.label,
+            "unit_path": st.unit_path,
+            "note": st.note,
+        },
+        as_json=as_json,
+    )
 
 
 if __name__ == "__main__":
