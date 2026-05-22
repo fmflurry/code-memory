@@ -260,6 +260,12 @@ code-memory ingest /path/to/repo --dry-run       # show the plan, write nothing
 
 This walks the repo, extracts symbols / imports / calls with tree-sitter, writes them to the FalkorDB graph, and indexes each symbol snippet into Qdrant via `bge-m3`.
 
+The walker honors the repo's `.gitignore` (including nested ones) and skips
+obvious generated junk — minified bundles (`*.min.js`, `*.min.css`),
+sourcemaps, lockfiles, `node_modules`, build outputs — so embeddings aren't
+burned on noise. Override the defaults via the project config if you need
+to index something the walker normally drops.
+
 #### Git-aware incremental ingest
 
 After the first run, `code-memory` remembers the HEAD commit it last ingested
@@ -322,6 +328,39 @@ code-memory record \
   --verdict pass
 ```
 
+### Navigate the call / import graph
+
+The graph store backs five topology commands. Each prints JSON (`--json`) or
+a human table:
+
+```bash
+code-memory callers getBearerToken              # who calls this symbol?
+code-memory callees UserService --depth 2       # what does UserService reach?
+code-memory definitions UserService             # all defining files + lines
+code-memory dependencies src/auth.ts            # what does this file import?
+code-memory importers '@internal-ng/security'     # who imports this package?
+code-memory resolve                             # rebuild call/import edges
+```
+
+These same five surfaces are exposed as MCP tools (`codememory_callers`,
+`codememory_callees`, `codememory_definitions`, `codememory_dependencies`,
+`codememory_importers`) so the agent can do impact analysis without shelling
+out.
+
+### Reset a project's index
+
+```bash
+code-memory reset                          # wipe current project (with confirm)
+code-memory reset --yes                    # skip confirmation
+code-memory reset --include-episodes       # also drop conversation history
+code-memory reset --all                    # every known project
+```
+
+Default scope drops Qdrant vectors + FalkorDB graph + ingest_state for the
+project; episodic memory is preserved unless `--include-episodes` is passed.
+`code-memory ingest --full` triggers the same reset implicitly before
+re-walking.
+
 ### MCP server
 
 `code-memory` ships an MCP (Model Context Protocol) server that exposes the
@@ -330,11 +369,22 @@ tool-selection loop — no shell parsing, no slash command.
 
 Tools advertised:
 
-| Tool                  | Purpose                                                      |
-| --------------------- | ------------------------------------------------------------ |
-| `codememory_retrieve` | Semantic + graph + episodic recall (returns a Context Pack). |
-| `codememory_record`   | Log a finished task (prompt / plan / patch / verdict).       |
-| `codememory_reingest` | Re-index a single file after edits.                          |
+| Tool                      | Purpose                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------ |
+| `codememory_retrieve`     | Semantic + graph + episodic recall (returns a Context Pack).                                     |
+| `codememory_record`       | Log a finished task (prompt / plan / patch / verdict).                                           |
+| `codememory_reingest`     | Re-index a single file after edits.                                                              |
+| `codememory_ingest`       | Full / incremental repo ingest (long-running; requires explicit `confirmed=true`).               |
+| `codememory_callers`      | Files that call a symbol (impact analysis: "what breaks if I rename X?").                        |
+| `codememory_callees`      | Symbols called from the file that defines a given symbol (outgoing dependencies).                |
+| `codememory_definitions`  | All files + line ranges that define a given symbol name (disambiguate before callers/callees).   |
+| `codememory_dependencies` | Modules imported by a file (forward import graph).                                               |
+| `codememory_importers`    | Files that import a module / package / path (reverse import graph).                              |
+
+Every tool requires an explicit `project` argument — the silent cwd-fallback
+was hiding namespace bugs (see commit `3663772`). Pass the slug printed by
+`code-memory project` (or `code-memory projects` to list all known slugs).
+Sentinel values like `auto` / `default` are rejected.
 
 Transport: stdio. Script entrypoint: `code-memory-mcp`.
 
@@ -348,7 +398,6 @@ Requires [`uv`](https://docs.astral.sh/uv/) (`brew install uv` / `pipx install u
 ```bash
 claude mcp add code-memory \
   --scope user \
-  --env CODE_MEMORY_PROJECT=auto \
   -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
 ```
 
@@ -365,8 +414,7 @@ claude mcp add code-memory \
         "git+https://github.com/fmflurry/code-memory",
         "code-memory-mcp"
       ],
-      "enabled": true,
-      "environment": { "CODE_MEMORY_PROJECT": "auto" }
+      "enabled": true
     }
   }
 }
@@ -378,9 +426,11 @@ Pin a version by appending `@<tag-or-sha>` to the git URL, e.g.
 > Once the package is published to PyPI the `--from git+…` part drops:
 > `command: ["uvx", "code-memory-mcp"]`.
 
-The server resolves the project slug from the cwd by default (git toplevel
-basename), so it Just Works across repos. Override per-call with the
-`project` argument or globally via `CODE_MEMORY_PROJECT`.
+Every tool call must include the `project` slug — the server no longer
+falls back to cwd-detection. The startup-detected slug is surfaced in each
+tool's schema description so the agent has the exact value to pass; the
+harness plugins (see [Harness plugins](#harness-plugins)) wire this
+automatically.
 
 #### Alternative: pipx (persistent install on `$PATH`)
 
@@ -472,12 +522,15 @@ Restart your agent after install.
 src/code_memory/
 ├── embed/            # Ollama embeddings wrapper
 ├── vector/           # Qdrant store
-├── graph/            # FalkorDB store
+├── graph/            # FalkorDB store (callers / callees / definitions / imports)
 ├── extractor/        # tree-sitter -> symbols / imports / calls
+│   └── gitignore.py      # .gitignore + minified/generated skip rules
 ├── episodic/         # SQLite task log
 ├── orchestrator/     # ingest pipeline, retrieval, context pack
 │   ├── pipeline.py       # ingest_repo / ingest_file / reingest_file
-│   ├── retrieve.py       # Retriever + ContextPack rendering
+│   ├── retrieve.py       # Retriever + ContextPack rendering (rerank, episode filter)
+│   ├── resolver.py       # bind raw CALLS / IMPORTS to actual Symbol / File nodes
+│   ├── reset.py          # wipe vectors + graph + ingest_state per project
 │   ├── ingest_state.py   # per-repo last_sha checkpoint (SQLite)
 │   └── git_delta.py      # git diff -> changed / deleted / dirty
 ├── mcp_server.py     # stdio MCP server (`code-memory-mcp`)
@@ -489,14 +542,18 @@ src/code_memory/
 ## Roadmap
 
 - [x] Per-project namespacing (separate graphs / collections per repo)
-- [x] MCP server (`codememory_retrieve`, `codememory_record`, `codememory_reingest`)
+- [x] MCP server (retrieve / record / reingest / ingest + 5 graph tools)
 - [x] Git-aware incremental ingest (delta against last ingested commit)
-- [ ] File-watcher daemon for live re-ingest
+- [x] `.gitignore`-aware walker that skips minified bundles + generated junk
+- [x] Resolved call / import edges (bind `CALLS` / `IMPORTS` to real nodes)
+- [x] Lightweight rerank (entrypoint / generated boost, idle-episode filter)
+- [x] Harness plugins for OpenCode and Claude Code (auto-retrieve + auto-learn)
+- [x] `code-memory reset` CLI + auto-purge on `ingest --full`
+- [ ] File-watcher daemon for live re-ingest (current: hook-driven)
 - [ ] Branch-aware index (auto re-walk on branch change)
 - [ ] Cross-encoder rerank step
-- [ ] Resolved call edges (bind `CALLS` targets to actual `Symbol` nodes)
 - [ ] More languages (Rust, Go, Java, C#)
-- [ ] Hook recipes for Claude Code, OpenCode, Cursor
+- [ ] Cursor hook recipe
 - [ ] PyPI release (drops the `--from git+…` from the `uvx` install)
 
 ---
