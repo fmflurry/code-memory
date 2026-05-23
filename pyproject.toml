@@ -28,6 +28,12 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.11",
 ]
+# Optional cross-encoder rerank stage. Activates automatically on
+# Apple Silicon (Metal) and CUDA hosts; CPU stays on heuristics.
+rerank = [
+  "torch>=2.1",
+  "sentence-transformers>=3.0",
+]
 
 [project.scripts]
 code-memory = "code_memory.cli:app"
@@ -43,3 +49,7 @@ target-version = "py311"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*", "sentence_transformers", "sentence_transformers.*"]
+ignore_missing_imports = true

@@ -9,6 +9,7 @@ from ..config import CONFIG, Config, detect_project_slug
 from ..embed import OllamaEmbedder
 from ..episodic import Episode, EpisodicStore
 from ..vector import QdrantStore, VectorHit
+from .rerank import maybe_cross_encode
 
 # Per-hit score adjustments applied after Qdrant's cosine ranking.
 GENERATED_PENALTY = 0.15  # subtract from generated code hits
@@ -142,7 +143,10 @@ class Retriever:
         raw_code = self.vector.search(
             self.cfg.qdrant_code, qvec, top_k=top_k_code * 2
         )
-        code_hits = _rerank_code(raw_code)[:top_k_code]
+        # Cross-encoder rerank when Metal/CUDA is available — no-op
+        # otherwise. Heuristic boosts then apply on top of the new scores.
+        reranked = maybe_cross_encode(query, raw_code)
+        code_hits = _rerank_code(reranked)[:top_k_code]
 
         raw_eps = self.vector.search(
             self.cfg.qdrant_episodes, qvec, top_k=top_k_eps * 3

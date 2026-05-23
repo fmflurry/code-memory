@@ -88,6 +88,70 @@ Net effect: memory grows with the repo; **context stays roughly constant**.
 
 ---
 
+## Two-stage ranking: bi-encoder + cross-encoder
+
+Retrieval quality is the difference between an agent that hits the right file
+on the first try and one that flounders for ten tool calls. `code-memory` uses
+a **two-stage** ranker that combines a fast vector search with an optional
+deeper rescoring pass:
+
+### Stage 1 — bi-encoder (always on, cheap)
+
+Every code chunk is embedded once at ingest time with `bge-m3` (a
+**bi-encoder**: query and document are encoded *independently* into a single
+vector each). At query time the question is embedded the same way, and Qdrant
+returns the top-N chunks by cosine similarity. One forward pass per query +
+an ANN lookup → millisecond latency, scales to millions of chunks. The
+weakness: because query and document never "see" each other, the model can be
+fooled by surface keyword overlap (e.g. a `mocks/file_cors.py` containing the
+word "authentication" can outrank the real auth service).
+
+### Stage 2 — cross-encoder (auto on Metal/CUDA, blended)
+
+The top-N candidates from stage 1 are then rescored by a **cross-encoder**
+(`BAAI/bge-reranker-v2-m3` by default): query and chunk are concatenated and
+fed through a transformer that produces a *joint* relevance score. Because
+the model attends to both sides simultaneously, it picks up semantic
+relationships a bi-encoder cosine sim misses. The tradeoff: one forward pass
+per *pair*, so it only makes sense on the already-narrow candidate set —
+never on the whole index.
+
+The final score is a **blend**, not a replacement:
+
+```
+score = (1 - α) · bi_encoder_score + α · cross_encoder_score
+```
+
+with `α = 0.5` by default. We picked blending after A/B testing replace-mode
+on a real Angular repo: the cross-encoder won on 2/5 queries (promoted the
+actual token-manager service over generic error interceptors; promoted the
+concrete `phone.validator` over a generic spec file), tied on 2/5, and
+*regressed* on 1/5 (promoted a mock CORS file to #1 for "authentication
+login flow"). Blending recovers from the regression while keeping the wins.
+
+### Policy
+
+- **`auto`** (default) — cross-encoder fires only when a Metal (Apple
+  Silicon) or CUDA accelerator is detected. CPU-only hosts stay on bi-encoder
+  alone — the latency hit isn't worth it.
+- **`CODEMEMORY_RERANK=1`** — force on (even CPU).
+- **`CODEMEMORY_RERANK=0`** — force off.
+- **`CODEMEMORY_RERANK_ALPHA=0.7`** — push more weight to the cross-encoder
+  (or `0.0` to fall back to pure bi-encoder without disabling the load).
+- **`CODEMEMORY_RERANK_MODEL`** — swap the cross-encoder (default
+  `BAAI/bge-reranker-v2-m3`).
+
+Install the optional dependency once:
+
+```bash
+uv sync --extra rerank        # or: pip install -e .[rerank]
+```
+
+On a first call the model warms up (~2-5 s, ~1.1 GB from HF cache); after
+that it's a singleton (~50-200 ms per query on MPS).
+
+---
+
 ## Auto-learning and auto-query
 
 Without MCP, the agent has to call `code-memory retrieve` and `code-memory
@@ -693,6 +757,9 @@ code-memory autostart status         # OS service health
 | `CODE_MEMORY_NO_INPROC_WATCHER`  | Skip in-process watcher (use OS service only)                   |
 | `CODE_MEMORY_NO_GUARD`           | Skip pre-query freshness guard                                  |
 | `CODE_MEMORY_LOG_LEVEL`          | `DEBUG` / `INFO` / `WARNING` (default `INFO`)                   |
+| `CODEMEMORY_RERANK`              | `auto` (default — on if Metal/CUDA), `1` (force on), `0` (force off) |
+| `CODEMEMORY_RERANK_MODEL`        | Cross-encoder model id (default `BAAI/bge-reranker-v2-m3`)      |
+| `CODEMEMORY_RERANK_ALPHA`        | Blend weight: `score = (1-α)·bi + α·ce` (default `0.5`)         |
 
 ### Failure modes & recovery
 
@@ -765,7 +832,7 @@ src/code_memory/
 - [x] Team-shared snapshots (orphan branch, content-addressed, model-aware verify)
 - [x] OS autostart adapters (launchd / systemd / schtasks) — zero manual install
 - [x] Branch-aware index (auto re-walk on branch change)
-- [ ] Cross-encoder rerank step
+- [x] Cross-encoder rerank step (auto on Metal/CUDA; opt-in via `pip install code-memory[rerank]`)
 - [ ] More languages (Rust, Go, Java, C#)
 - [ ] Cursor hook recipe
 - [ ] PyPI release (drops the `--from git+…` from the `uvx` install)
