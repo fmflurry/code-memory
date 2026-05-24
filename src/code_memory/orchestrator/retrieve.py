@@ -5,11 +5,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import os
+
 from ..config import CONFIG, Config, detect_project_slug
-from ..embed import OllamaEmbedder
+from ..embed import M3Embedder, get_embedder
 from ..episodic import Episode, EpisodicStore
 from ..vector import QdrantStore, VectorHit
 from .rerank import maybe_cross_encode
+
+# Hybrid (dense + sparse RRF) is opt-in. Benchmarks on the sample-webapp
+# Angular corpus showed dense-only m3 outperforms hybrid on natural
+# language queries (see docs/BENCHMARK.md). Sparse over-promotes spec
+# files and generated API stubs whose identifier vocabulary overlaps
+# heavily with the query. The collection still stores both vectors so
+# users can toggle at query time without re-ingesting.
+ENV_HYBRID = "CODEMEMORY_HYBRID"
+
+
+def _retrieval_mode() -> str:
+    raw = os.environ.get(ENV_HYBRID, "0").strip().lower()
+    return "hybrid" if raw in ("1", "true", "on", "yes") else "dense"
 
 # Per-hit score adjustments applied after Qdrant's cosine ranking.
 GENERATED_PENALTY = 0.15  # subtract from generated code hits
@@ -120,13 +135,13 @@ class Retriever:
     def __init__(
         self,
         project: str | None = None,
-        embedder: OllamaEmbedder | None = None,
+        embedder: M3Embedder | None = None,
         vector: QdrantStore | None = None,
         episodic: EpisodicStore | None = None,
     ) -> None:
         self.slug = project or detect_project_slug()
         self.cfg: Config = CONFIG.for_project(self.slug)
-        self.embedder = embedder or OllamaEmbedder()
+        self.embedder = embedder or get_embedder()
         self.vector = vector or QdrantStore()
         self.episodic = episodic or EpisodicStore(path=self.cfg.episodic_db)
 
@@ -138,10 +153,15 @@ class Retriever:
         include_idle_episodes: bool = False,
     ) -> ContextPack:
         qvec = self.embedder.embed_one(query)
-        # Fetch 2x candidates so re-rank has room to lift entrypoints and
-        # demote generated code without losing depth.
+        # Fetch 2x candidates so re-rank has room to lift entrypoints
+        # and demote generated code without losing depth. Mode is
+        # selected per ``CODEMEMORY_HYBRID``; default ``dense`` reflects
+        # the benchmark winner — see docs/BENCHMARK.md.
         raw_code = self.vector.search(
-            self.cfg.qdrant_code, qvec, top_k=top_k_code * 2
+            self.cfg.qdrant_code,
+            qvec,
+            top_k=top_k_code * 2,
+            mode=_retrieval_mode(),
         )
         # Cross-encoder rerank when Metal/CUDA is available — no-op
         # otherwise. Heuristic boosts then apply on top of the new scores.

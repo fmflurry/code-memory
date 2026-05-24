@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import sys
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 from ..config import CONFIG, Config, detect_project_slug
-from ..embed import OllamaEmbedder
+from ..embed import M3Embedder, get_embedder
 from ..episodic import Episode, EpisodicStore
 from ..episodic.sqlite_store import episode_payload, episode_text
 from ..extractor import ExtractedFile, Extractor, Symbol
@@ -23,6 +26,56 @@ IngestMode = Literal["auto", "full", "incremental"]
 def _id(*parts: str) -> str:
     h = hashlib.sha1("\x00".join(parts).encode()).hexdigest()
     return h[:32]
+
+
+# How often to emit a progress heartbeat during ingest. Heartbeats go to
+# stderr so ``--json`` output on stdout stays clean.
+_PROGRESS_EVERY = int(os.environ.get("CODEMEMORY_PROGRESS_EVERY", "50"))
+_PROGRESS_ENABLED = os.environ.get("CODEMEMORY_PROGRESS", "1") != "0"
+
+
+class _Heartbeat:
+    """Emit periodic ``files=… symbols=…`` lines to stderr during ingest."""
+
+    def __init__(self, label: str, *, total: int | None = None) -> None:
+        self.label = label
+        self.total = total
+        self.start = time.monotonic()
+        self.last = self.start
+
+    def tick(self, stats: IngestStats) -> None:
+        if not _PROGRESS_ENABLED:
+            return
+        if _PROGRESS_EVERY <= 0:
+            return
+        if stats.files % _PROGRESS_EVERY != 0 or stats.files == 0:
+            return
+        now = time.monotonic()
+        elapsed = max(now - self.start, 1e-6)
+        rate = stats.files / elapsed
+        eta = ""
+        if self.total and rate > 0:
+            remaining = max(self.total - stats.files, 0)
+            eta = f" eta={remaining / rate:.0f}s"
+        total_part = f"/{self.total}" if self.total else ""
+        sys.stderr.write(
+            f"[code-memory] {self.label}: files={stats.files}{total_part} "
+            f"symbols={stats.symbols} chunks={stats.chunks} "
+            f"skipped={stats.skipped} rate={rate:.1f}/s{eta}\n"
+        )
+        sys.stderr.flush()
+        self.last = now
+
+    def done(self, stats: IngestStats) -> None:
+        if not _PROGRESS_ENABLED:
+            return
+        elapsed = time.monotonic() - self.start
+        sys.stderr.write(
+            f"[code-memory] {self.label} done: files={stats.files} "
+            f"symbols={stats.symbols} chunks={stats.chunks} "
+            f"skipped={stats.skipped} elapsed={elapsed:.1f}s\n"
+        )
+        sys.stderr.flush()
 
 
 @dataclass
@@ -47,14 +100,14 @@ class Pipeline:
     def __init__(
         self,
         project: str | None = None,
-        embedder: OllamaEmbedder | None = None,
+        embedder: M3Embedder | None = None,
         vector: QdrantStore | None = None,
         graph: FalkorStore | None = None,
         episodic: EpisodicStore | None = None,
     ) -> None:
         self.slug = project or detect_project_slug()
         self.cfg: Config = CONFIG.for_project(self.slug)
-        self.embedder = embedder or OllamaEmbedder()
+        self.embedder = embedder or get_embedder()
         self.vector = vector or QdrantStore()
         self.graph = graph or FalkorStore(graph_name=self.cfg.falkor_graph)
         self.episodic = episodic or EpisodicStore(path=self.cfg.episodic_db)
@@ -157,15 +210,17 @@ class Pipeline:
         stats = IngestStats(mode="full")
         if not dry_run:
             self._purge_project_index(root)
+        hb = _Heartbeat("full ingest" + (" (dry-run)" if dry_run else ""))
         for ex in extractor.walk(root):
             stats.files += 1
             stats.symbols += len(ex.symbols)
             stats.imports += len(ex.imports)
             stats.calls += len(ex.calls)
             stats.chunks += len(ex.symbols) or 1
-            if dry_run:
-                continue
-            self.ingest_file(ex)
+            if not dry_run:
+                self.ingest_file(ex)
+            hb.tick(stats)
+        hb.done(stats)
         return stats
 
     def _run_resolver(self, stats: IngestStats) -> None:
@@ -212,6 +267,11 @@ class Pipeline:
         dry_run: bool,
     ) -> IngestStats:
         stats = IngestStats(mode="incremental", base_sha=base_sha, head_sha=head_sha)
+        reingest = list(delta.reingest_paths())
+        hb = _Heartbeat(
+            "incremental ingest" + (" (dry-run)" if dry_run else ""),
+            total=len(reingest),
+        )
 
         for path in delta.deleted:
             path_str = str(path)
@@ -221,7 +281,7 @@ class Pipeline:
             self.graph.delete_file(path_str)
             self.vector.delete_by_path(self.cfg.qdrant_code, path_str)
 
-        for path in delta.reingest_paths():
+        for path in reingest:
             if not path.is_file():
                 # file deleted between diff and now, or extractor can't see it
                 stats.skipped += 1
@@ -247,7 +307,9 @@ class Pipeline:
             stats.imports += len(ex.imports)
             stats.calls += len(ex.calls)
             stats.chunks += len(ex.symbols) or 1
+            hb.tick(stats)
 
+        hb.done(stats)
         if delta.is_empty:
             stats.notes.append("no changes since last ingest")
         return stats
@@ -296,10 +358,10 @@ class Pipeline:
 
     def record_episode(self, ep: Episode) -> str:
         ep_id = self.episodic.add(ep)
-        vec = self.embedder.embed_one(episode_text(ep))
+        hv = self.embedder.embed_one(episode_text(ep))
         self.vector.upsert(
             self.cfg.qdrant_episodes,
-            [VectorRecord(id=ep_id, vector=vec, payload=episode_payload(ep))],
+            [VectorRecord(id=ep_id, vector=hv, payload=episode_payload(ep))],
         )
         return ep_id
 
@@ -381,11 +443,11 @@ class Pipeline:
             return
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i : i + batch_size]
-            vectors = self.embedder.embed([c.text for c in batch])
+            hvecs = self.embedder.embed([c.text for c in batch])
             records = [
                 VectorRecord(
                     id=_id(ex.path, c.key),
-                    vector=v,
+                    vector=hv,
                     payload={
                         "path": ex.path,
                         "lang": ex.lang,
@@ -396,7 +458,7 @@ class Pipeline:
                         "generated": ex.generated,
                     },
                 )
-                for c, v in zip(batch, vectors, strict=True)
+                for c, hv in zip(batch, hvecs, strict=True)
             ]
             self.vector.upsert(self.cfg.qdrant_code, records)
 
@@ -435,9 +497,36 @@ def _chunks_for(ex: ExtractedFile) -> Iterable[_Chunk]:
         )
 
 
-MAX_SNIPPET_CHARS = 4000
+MAX_SNIPPET_CHARS = 1500
+SIGNATURE_LINES = 3
 
 
 def _symbol_text(s: Symbol, path: str) -> str:
-    snippet = s.snippet[:MAX_SNIPPET_CHARS]
-    return f"FILE {path}\nKIND {s.kind} NAME {s.name}\n{snippet}"
+    """Build chunk text optimised for hybrid (dense + sparse) embedding.
+
+    Layout:
+      1. Header line with file/kind/name/symbol — front-loaded so both
+         dense semantics and sparse identifier weights pick it up.
+      2. Signature lines (first ``SIGNATURE_LINES`` non-empty) — repeated
+         so they survive aggressive tail-trim and dominate the lexical
+         weighting for short queries like ``ngOnInit`` or
+         ``UserService.create``.
+      3. Body, tail-trimmed at ``MAX_SNIPPET_CHARS``. 1500 chars (~ 400
+         tokens) keeps the m3 forward pass tight; longer bodies dilute
+         dense quality without buying much.
+
+    Empty / one-line symbols still produce a usable chunk because the
+    header alone carries the identifier signal.
+    """
+    snippet = s.snippet or ""
+    lines = [line for line in snippet.splitlines() if line.strip()]
+    signature = "\n".join(lines[:SIGNATURE_LINES])
+    body = snippet[:MAX_SNIPPET_CHARS]
+    parts = [
+        f"FILE {path}",
+        f"KIND {s.kind} NAME {s.name}",
+    ]
+    if signature:
+        parts.append(f"SIGNATURE\n{signature}")
+    parts.append(body)
+    return "\n".join(parts)
