@@ -16,6 +16,14 @@ LANG_BY_EXT: dict[str, str] = {
     ".mjs": "javascript",
     ".cjs": "javascript",
     ".py": "python",
+    # .NET ecosystem
+    ".cs": "csharp",
+    ".cshtml": "razor",
+    ".razor": "razor",
+    ".vb": "vb",
+    ".fs": "fsharp",
+    ".fsi": "fsharp",
+    ".fsx": "fsharp",
 }
 
 SYMBOL_NODE_TYPES = {
@@ -26,11 +34,41 @@ SYMBOL_NODE_TYPES = {
     "class_definition",
     "arrow_function",
     "export_statement",
+    # C# / Razor (Razor embeds C#)
+    "method_declaration",
+    "interface_declaration",
+    "struct_declaration",
+    "record_declaration",
+    "enum_declaration",
+    "constructor_declaration",
+    "delegate_declaration",
+    "property_declaration",
+    # VB.NET
+    "class_block",
+    "module_block",
+    "namespace_block",
+    # F#
+    "function_or_value_defn",
+    "type_definition",
+    "method_or_prop_defn",
+    "named_module",
 }
 
-CALL_NODE_TYPES = {"call_expression", "call"}
+CALL_NODE_TYPES = {
+    "call_expression",
+    "call",
+    "invocation_expression",
+    "invocation",  # VB
+}
 
-IMPORT_NODE_TYPES = {"import_statement", "import_from_statement"}
+IMPORT_NODE_TYPES = {
+    "import_statement",
+    "import_from_statement",
+    "using_directive",  # C#
+    "razor_using_directive",  # Razor
+    "imports_statement",  # VB
+    "import_decl",  # F#
+}
 
 
 @dataclass
@@ -140,11 +178,16 @@ def extract_file(path: str | Path) -> ExtractedFile | None:
         return None
     if size > MAX_FILE_BYTES:
         return None
-    source = p.read_text(encoding="utf-8", errors="replace")
+    raw = p.read_bytes()
+    # Strip a UTF-8 BOM if present so tree-sitter's byte offsets line up
+    # with our slicing buffer. Some Windows-authored C# files ship one.
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    source = raw.decode("utf-8", errors="replace")
     if looks_minified(source[:MINIFIED_SNIFF_BYTES]):
         return None  # minified / bundled
     parser = _parser_for(lang)
-    tree = parser.parse(source.encode("utf-8"))
+    tree = parser.parse(raw)
     root = tree.root_node
     ex = ExtractedFile(
         path=str(p.resolve()),
@@ -152,11 +195,11 @@ def extract_file(path: str | Path) -> ExtractedFile | None:
         source=source,
         generated=looks_generated(p, source),
     )
-    _walk(root, source, ex)
+    _walk(root, raw, ex)
     return ex
 
 
-def _walk(node: Node, source: str, ex: ExtractedFile) -> None:
+def _walk(node: Node, source: bytes, ex: ExtractedFile) -> None:
     t = node.type
     if t in SYMBOL_NODE_TYPES:
         name = _symbol_name(node, source)
@@ -182,23 +225,60 @@ def _walk(node: Node, source: str, ex: ExtractedFile) -> None:
         _walk(child, source, ex)
 
 
-def _slice(source: str, node: Node) -> str:
-    return source[node.start_byte : node.end_byte]
+def _slice(source: bytes, node: Node) -> str:
+    """Return UTF-8 text at the node's byte range.
+
+    Tree-sitter reports byte offsets into the parsed buffer, not
+    character offsets. Slicing a Python ``str`` with those offsets
+    silently chops identifiers on files that contain any non-ASCII
+    bytes (e.g. French C# with accents). Slicing ``bytes`` then
+    decoding fixes the off-by-many-bytes drift.
+    """
+    return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
-def _symbol_name(node: Node, source: str) -> str | None:
+_FSHARP_DEEP_NAME_NODES = {
+    "function_or_value_defn",
+    "type_definition",
+}
+
+
+def _first_identifier_deep(node: Node, source: bytes) -> str | None:
+    """BFS for the first identifier-bearing token inside ``node``."""
+    queue: list[Node] = [node]
+    while queue:
+        current = queue.pop(0)
+        for child in current.children:
+            if child.type in {"identifier", "type_identifier"}:
+                return _slice(source, child)
+            queue.append(child)
+    return None
+
+
+def _symbol_name(node: Node, source: bytes) -> str | None:
     name = node.child_by_field_name("name")
     if name is not None:
         return _slice(source, name)
+    if node.type in _FSHARP_DEEP_NAME_NODES:
+        return _first_identifier_deep(node, source)
     for child in node.children:
         if child.type in {"identifier", "type_identifier"}:
             return _slice(source, child)
     return None
 
 
-def _import_module(node: Node, source: str) -> str | None:
+def _import_module(node: Node, source: bytes) -> str | None:
     for child in node.children:
-        if child.type in {"string", "string_fragment", "dotted_name", "module_name"}:
+        if child.type in {
+            "string",
+            "string_fragment",
+            "dotted_name",
+            "module_name",
+            "qualified_name",
+            "namespace_name",  # VB
+            "long_identifier",  # F#
+            "identifier",
+        }:
             return _slice(source, child).strip("'\"")
     return None
 
@@ -230,7 +310,7 @@ CALLEE_STOPLIST: frozenset[str] = frozenset(
 )
 
 
-def _callee_name(node: Node, source: str) -> str | None:
+def _callee_name(node: Node, source: bytes) -> str | None:
     """Return the last identifier of a call expression's callee.
 
     For ``foo()`` → ``foo``. For ``this.svc.method()`` → ``method``.
@@ -302,6 +382,13 @@ DEFAULT_IGNORE_DIRS: tuple[str, ...] = (
     "bower_components",
     "vendor",
     "tmp",
+    # .NET build output / IDE caches
+    "bin",
+    "obj",
+    "packages",
+    "TestResults",
+    ".vs",
+    "artifacts",
 )
 
 
