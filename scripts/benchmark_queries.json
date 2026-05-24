@@ -1,0 +1,126 @@
+{
+  "corpus": "acme/sample-webapp",
+  "notes": "Hand-crafted Angular clean-architecture queries. Each entry lists one or more gold paths (substring match against hit.payload.path). A hit is relevant if its path contains ANY gold substring.",
+  "queries": [
+    {
+      "query": "how does the app fetch the configuration on startup",
+      "gold": ["app-config.service.ts", "configuration-guard.service.ts"]
+    },
+    {
+      "query": "logout flow that clears stored user state",
+      "gold": ["logout-store-clearer.service.ts", "logout-redirect.service.ts"]
+    },
+    {
+      "query": "where is the navigation breadcrumb built",
+      "gold": ["breadcrumb.service.ts", "subheader-builder.service.ts"]
+    },
+    {
+      "query": "service that calls the dunning letter REST API",
+      "gold": ["dunning-letter.service.ts", "dunning.service.ts"]
+    },
+    {
+      "query": "VAT facade exposed to components",
+      "gold": ["vat.facade.ts"]
+    },
+    {
+      "query": "fiscal year repository fetching periods",
+      "gold": ["fiscal-year.service.ts"]
+    },
+    {
+      "query": "warehouse data access service",
+      "gold": ["warehouse.service.ts"]
+    },
+    {
+      "query": "currencies application facade",
+      "gold": ["currencies.facade.ts"]
+    },
+    {
+      "query": "user navigation persistence in local storage",
+      "gold": ["user-local-storage.service.ts", "user-navigation.service.ts"]
+    },
+    {
+      "query": "company domain data access service",
+      "gold": ["company.service.ts"]
+    },
+    {
+      "query": "due date computation service",
+      "gold": ["due-date.service.ts"]
+    },
+    {
+      "query": "user store for the user domain",
+      "gold": ["user-store.service.ts"]
+    },
+    {
+      "query": "dunning letter edit facade",
+      "gold": ["dunning-letter-edit.facade.ts"]
+    },
+    {
+      "query": "monthly treatment accounting service",
+      "gold": ["monthly-treatment.service.ts"]
+    },
+    {
+      "query": "report categories service",
+      "gold": ["report-category.service.ts"]
+    },
+    {
+      "query": "navigation hook that intercepts route changes",
+      "gold": ["navigation-hook.service.ts"]
+    },
+    {
+      "query": "demo mode login listener for auth",
+      "gold": ["demo-mode-login-listener.service.ts"]
+    },
+    {
+      "query": "business review domain form service",
+      "gold": ["business-review-form.service.ts", "business-review.service.ts"]
+    },
+    {
+      "query": "product characteristics data service",
+      "gold": ["product-characteristics.service.ts"]
+    },
+    {
+      "query": "custom report information service",
+      "gold": ["custom-report-information.service.ts", "report-information.service.ts"]
+    },
+    {
+      "query": "BreadcrumbService",
+      "gold": ["breadcrumb.service.ts"]
+    },
+    {
+      "query": "DunningLetterService",
+      "gold": ["dunning-letter.service.ts"]
+    },
+    {
+      "query": "FiscalYearService",
+      "gold": ["fiscal-year.service.ts"]
+    },
+    {
+      "query": "UserStoreService",
+      "gold": ["user-store.service.ts"]
+    },
+    {
+      "query": "AppConfigService",
+      "gold": ["app-config.service.ts"]
+    },
+    {
+      "query": "VatFacade",
+      "gold": ["vat.facade.ts"]
+    },
+    {
+      "query": "CurrenciesFacade",
+      "gold": ["currencies.facade.ts"]
+    },
+    {
+      "query": "LogoutStoreClearerService",
+      "gold": ["logout-store-clearer.service.ts"]
+    },
+    {
+      "query": "NavigationHookService",
+      "gold": ["navigation-hook.service.ts"]
+    },
+    {
+      "query": "DemoModeLoginListenerService",
+      "gold": ["demo-mode-login-listener.service.ts"]
+    }
+  ]
+}

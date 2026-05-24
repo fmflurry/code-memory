@@ -1,0 +1,3350 @@
+{
+  "dense": {
+    "mode": "dense",
+    "recall_at_5": 0.9666666666666667,
+    "recall_at_10": 0.9666666666666667,
+    "mrr": 0.7983333333333333,
+    "ndcg_at_10": 0.8403439542007436,
+    "p50_ms": 36.27345800123294,
+    "p95_ms": 66.90404839682742,
+    "per_query": [
+      {
+        "query": "how does the app fetch the configuration on startup",
+        "gold": [
+          "app-config.service.ts",
+          "configuration-guard.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 36.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts",
+          "/workspace/acme/sample-webapp/src/app/runtime-app-config.provider.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts"
+        ]
+      },
+      {
+        "query": "logout flow that clears stored user state",
+        "gold": [
+          "logout-store-clearer.service.ts",
+          "logout-redirect.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 37.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-cache-clearer.ts"
+        ]
+      },
+      {
+        "query": "where is the navigation breadcrumb built",
+        "gold": [
+          "breadcrumb.service.ts",
+          "subheader-builder.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 56.2,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "service that calls the dunning letter REST API",
+        "gold": [
+          "dunning-letter.service.ts",
+          "dunning.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 64.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/adapters-api/dunning-letter-api.adapter.ts"
+        ]
+      },
+      {
+        "query": "VAT facade exposed to components",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 33.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.ts"
+        ]
+      },
+      {
+        "query": "fiscal year repository fetching periods",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 68.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/models/fixture/fiscal-year.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/utils/periodicity.helper.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/utils/periodicity.helper.ts"
+        ]
+      },
+      {
+        "query": "warehouse data access service",
+        "gold": [
+          "warehouse.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 52.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/data-access/services/business-review.service.ts"
+        ]
+      },
+      {
+        "query": "currencies application facade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 55.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/deb/application/facades/deb.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/deb/application/facades/deb.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/core/sales/commissions/application/facades/commissions.facade.ts"
+        ]
+      },
+      {
+        "query": "user navigation persistence in local storage",
+        "gold": [
+          "user-local-storage.service.ts",
+          "user-navigation.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.2,
+        "ndcg@10": 0.38685280723454163,
+        "ms": 65.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/a11y/run-pa11y-auth.mjs",
+          "/workspace/acme/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts",
+          "/workspace/acme/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts"
+        ]
+      },
+      {
+        "query": "company domain data access service",
+        "gold": [
+          "company.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 35.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.ts"
+        ]
+      },
+      {
+        "query": "due date computation service",
+        "gold": [
+          "due-date.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 61.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.spec.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dueDateApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.ts",
+          "/workspace/acme/sample-webapp/src/domains/due-date/data-access/services/due-date.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/ui/dunning-due-date-list/sort-dunning-due-dates.pipe.ts"
+        ]
+      },
+      {
+        "query": "user store for the user domain",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 55.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/shared/user/application/store/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts"
+        ]
+      },
+      {
+        "query": "dunning letter edit facade",
+        "gold": [
+          "dunning-letter-edit.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 36.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.facade.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.facade.ts"
+        ]
+      },
+      {
+        "query": "monthly treatment accounting service",
+        "gold": [
+          "monthly-treatment.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 28.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/ui/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment/models/monthly-treatment-key.constant.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment/monthly-treatment-store.module.ts"
+        ]
+      },
+      {
+        "query": "report categories service",
+        "gold": [
+          "report-category.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 48.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/report-categories.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/workspace/acme/sample-webapp/src/app/pages/report/reports-list/reports-list.component.ts"
+        ]
+      },
+      {
+        "query": "navigation hook that intercepts route changes",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 35.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "demo mode login listener for auth",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 44.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/services/demo-mode.service.ts"
+        ]
+      },
+      {
+        "query": "business review domain form service",
+        "gold": [
+          "business-review-form.service.ts",
+          "business-review.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 40.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts"
+        ]
+      },
+      {
+        "query": "product characteristics data service",
+        "gold": [
+          "product-characteristics.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 29.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-designation.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/stores/product-characteristics/models/product-characteristic.model.ts"
+        ]
+      },
+      {
+        "query": "custom report information service",
+        "gold": [
+          "custom-report-information.service.ts",
+          "report-information.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 32.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/custom-report-information.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/fixtures/custom-report-information-api-fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/index.ts"
+        ]
+      },
+      {
+        "query": "BreadcrumbService",
+        "gold": [
+          "breadcrumb.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 31.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/index.ts"
+        ]
+      },
+      {
+        "query": "DunningLetterService",
+        "gold": [
+          "dunning-letter.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 33.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterResponseApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.facade.ts"
+        ]
+      },
+      {
+        "query": "FiscalYearService",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 31.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts"
+        ]
+      },
+      {
+        "query": "UserStoreService",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 46.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.spec.ts"
+        ]
+      },
+      {
+        "query": "AppConfigService",
+        "gold": [
+          "app-config.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 30.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/flag.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/flag.service.ts",
+          "/workspace/acme/sample-webapp/src/app/app-config.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts"
+        ]
+      },
+      {
+        "query": "VatFacade",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 28.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/vat/application/vat.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/vat/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vat-situations.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/taxes-form.facade.ts"
+        ]
+      },
+      {
+        "query": "CurrenciesFacade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 32.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/direct-debits/application/facades/direct-debits.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/sales/customers/application/facades/customer-orders.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/sales/customers/application/facades/customer-history.facade.ts"
+        ]
+      },
+      {
+        "query": "LogoutStoreClearerService",
+        "gold": [
+          "logout-store-clearer.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 32.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-cache-clearer.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts"
+        ]
+      },
+      {
+        "query": "NavigationHookService",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 29.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/navigation.service.ts"
+        ]
+      },
+      {
+        "query": "DemoModeLoginListenerService",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 38.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/services/demo-mode.service.ts",
+          "/workspace/acme/sample-webapp/src/app/pages/dunning/dunning-parameters/can-deactivate-dunning-parameters.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.spec.ts"
+        ]
+      }
+    ]
+  },
+  "dense+rerank": {
+    "mode": "dense+rerank",
+    "recall_at_5": 0.9,
+    "recall_at_10": 0.9666666666666667,
+    "mrr": 0.5677777777777778,
+    "ndcg_at_10": 0.6679831490245539,
+    "p50_ms": 8853.448665999167,
+    "p95_ms": 16372.58257309768,
+    "per_query": [
+      {
+        "query": "how does the app fetch the configuration on startup",
+        "gold": [
+          "app-config.service.ts",
+          "configuration-guard.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 11448.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/main.ts",
+          "/workspace/acme/sample-webapp/src/app/sales/customers/presentation/create/professional/setup-mode/index.ts",
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/app/runtime-app-config.provider.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts"
+        ]
+      },
+      {
+        "query": "logout flow that clears stored user state",
+        "gold": [
+          "logout-store-clearer.service.ts",
+          "logout-redirect.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 6528.2,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-cache-clearer.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts"
+        ]
+      },
+      {
+        "query": "where is the navigation breadcrumb built",
+        "gold": [
+          "breadcrumb.service.ts",
+          "subheader-builder.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 8151.2,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/index.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/models/index.ts"
+        ]
+      },
+      {
+        "query": "service that calls the dunning letter REST API",
+        "gold": [
+          "dunning-letter.service.ts",
+          "dunning.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 8985.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning.service.ts"
+        ]
+      },
+      {
+        "query": "VAT facade exposed to components",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 10421.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/application-parameters/application-parameters-form.component.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/taxes-form.facade.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts"
+        ]
+      },
+      {
+        "query": "fiscal year repository fetching periods",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.2,
+        "ndcg@10": 0.38685280723454163,
+        "ms": 15757.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/models/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/utils/periodicity.helper.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/models/fixture/fiscal-year.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts"
+        ]
+      },
+      {
+        "query": "warehouse data access service",
+        "gold": [
+          "warehouse.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 8504.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/due-date/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/adapters/warehouse.adapter.spec.ts"
+        ]
+      },
+      {
+        "query": "currencies application facade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 16842.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/currencies/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/core/sales/commissions/application/facades/commissions.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/deb/application/facades/deb.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/deb/application/facades/deb.facade.ts"
+        ]
+      },
+      {
+        "query": "user navigation persistence in local storage",
+        "gold": [
+          "user-local-storage.service.ts",
+          "user-navigation.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 1.0,
+        "rr": 0.16666666666666666,
+        "ndcg@10": 0.3562071871080222,
+        "ms": 11745.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.spec.ts",
+          "/workspace/acme/sample-webapp/a11y/run-pa11y-auth.mjs",
+          "/workspace/acme/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts"
+        ]
+      },
+      {
+        "query": "company domain data access service",
+        "gold": [
+          "company.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 8414.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/fixtures/company-api.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.ts"
+        ]
+      },
+      {
+        "query": "due date computation service",
+        "gold": [
+          "due-date.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 10225.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/due-date/data-access/services/due-date.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/due-date/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.spec.ts"
+        ]
+      },
+      {
+        "query": "user store for the user domain",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 1.0,
+        "rr": 0.16666666666666666,
+        "ndcg@10": 0.3562071871080222,
+        "ms": 8525.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/models/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts",
+          "/workspace/acme/sample-webapp/src/app/core/shared/user/application/store/index.ts"
+        ]
+      },
+      {
+        "query": "dunning letter edit facade",
+        "gold": [
+          "dunning-letter-edit.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 6407.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.facade.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit-filter/dunning-letter-edit-filter.component.ts"
+        ]
+      },
+      {
+        "query": "monthly treatment accounting service",
+        "gold": [
+          "monthly-treatment.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 7845.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment/effects/monthly-treatment.effects.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.ts"
+        ]
+      },
+      {
+        "query": "report categories service",
+        "gold": [
+          "report-category.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 6818.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/report-categories.fixture.ts",
+          "/workspace/acme/sample-webapp/src/app/pages/report/reports-list/reports-list.component.ts"
+        ]
+      },
+      {
+        "query": "navigation hook that intercepts route changes",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 7687.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "demo mode login listener for auth",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 9522.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts"
+        ]
+      },
+      {
+        "query": "business review domain form service",
+        "gold": [
+          "business-review-form.service.ts",
+          "business-review.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 7520.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/companies-step/companies-step.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/app/pages/business-review/business-review/business-review.component.ts"
+        ]
+      },
+      {
+        "query": "product characteristics data service",
+        "gold": [
+          "product-characteristics.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 9322.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/stores/code-structure/product-characteristic-selection.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/stores/code-structure/product-characteristics-fixed.service.ts"
+        ]
+      },
+      {
+        "query": "custom report information service",
+        "gold": [
+          "custom-report-information.service.ts",
+          "report-information.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 8721.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/custom-report-information.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/store/effects/report.effects.ts"
+        ]
+      },
+      {
+        "query": "BreadcrumbService",
+        "gold": [
+          "breadcrumb.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 7121.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/index.ts"
+        ]
+      },
+      {
+        "query": "DunningLetterService",
+        "gold": [
+          "dunning-letter.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 12767.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit-filter/dunning-letter-edit-filter.component.ts"
+        ]
+      },
+      {
+        "query": "FiscalYearService",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 6866.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/data-access/services/business-review.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/data-access/services/business-review.service.ts"
+        ]
+      },
+      {
+        "query": "UserStoreService",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 7533.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/shared/user/infrastructure/adapter/get-company-adapter.service.ts"
+        ]
+      },
+      {
+        "query": "AppConfigService",
+        "gold": [
+          "app-config.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 10049.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/flag.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/flag.service.ts",
+          "/workspace/acme/sample-webapp/src/app/app-config.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts"
+        ]
+      },
+      {
+        "query": "VatFacade",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 15988.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/vat/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/vat/application/vat.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/taxes-form.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/index.ts"
+        ]
+      },
+      {
+        "query": "CurrenciesFacade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 10456.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/currencies/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/core/sales/commissions/application/facades/commissions.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/store/index.ts",
+          "/workspace/acme/sample-webapp/src/app/direct-debits/application/facades/direct-debits.facade.ts"
+        ]
+      },
+      {
+        "query": "LogoutStoreClearerService",
+        "gold": [
+          "logout-store-clearer.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 7863.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-cache-clearer.ts"
+        ]
+      },
+      {
+        "query": "NavigationHookService",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 9526.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "DemoModeLoginListenerService",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 10948.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/services/demo-mode.service.ts"
+        ]
+      }
+    ]
+  },
+  "hybrid": {
+    "mode": "hybrid",
+    "recall_at_5": 0.9,
+    "recall_at_10": 0.9666666666666667,
+    "mrr": 0.6796296296296296,
+    "ndcg_at_10": 0.7503617045348803,
+    "p50_ms": 33.72231250250479,
+    "p95_ms": 132.55579984979704,
+    "per_query": [
+      {
+        "query": "how does the app fetch the configuration on startup",
+        "gold": [
+          "app-config.service.ts",
+          "configuration-guard.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 83.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts",
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/configuration.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Licenses_V1/configuration.ts"
+        ]
+      },
+      {
+        "query": "logout flow that clears stored user state",
+        "gold": [
+          "logout-store-clearer.service.ts",
+          "logout-redirect.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 68.2,
+        "top": [
+          "/workspace/acme/sample-webapp/mocks/file_cors.py",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/chat/application/use-cases/process-query.use-case.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts"
+        ]
+      },
+      {
+        "query": "where is the navigation breadcrumb built",
+        "gold": [
+          "breadcrumb.service.ts",
+          "subheader-builder.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 63.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "service that calls the dunning letter REST API",
+        "gold": [
+          "dunning-letter.service.ts",
+          "dunning.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 145.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterResponseApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning.service.ts"
+        ]
+      },
+      {
+        "query": "VAT facade exposed to components",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 52.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/vatApi.model.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.spec.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/vatRateApi.model.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.ts"
+        ]
+      },
+      {
+        "query": "fiscal year repository fetching periods",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 122.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/models/fixture/fiscal-year.fixture.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/fiscalYearApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/utils/periodicity.helper.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts"
+        ]
+      },
+      {
+        "query": "warehouse data access service",
+        "gold": [
+          "warehouse.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 59.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/warehouseFilterApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/adapters/warehouse.adapter.ts"
+        ]
+      },
+      {
+        "query": "currencies application facade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 106.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/chat/application/facades/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/infrastructure/adapters/get-currencies.adapter.ts",
+          "/workspace/acme/sample-webapp/src/app/deb/application/facades/deb.facade.ts"
+        ]
+      },
+      {
+        "query": "user navigation persistence in local storage",
+        "gold": [
+          "user-local-storage.service.ts",
+          "user-navigation.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 1.0,
+        "rr": 0.1111111111111111,
+        "ndcg@10": 0.3010299956639812,
+        "ms": 98.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/a11y/run-pa11y-auth.mjs",
+          "/workspace/acme/sample-webapp/src/app/sales/orders/presentation/container/orders.component.ts",
+          "/workspace/acme/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts"
+        ]
+      },
+      {
+        "query": "company domain data access service",
+        "gold": [
+          "company.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 45.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/guards/can-access-feature/can-load-feature.guard.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/vat/data-access/services/vat.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.ts",
+          "/workspace/acme/sample-webapp/src/app/sales/orders/infrastructure/adapter/get-purchase-order-details.adapter.spec.ts"
+        ]
+      },
+      {
+        "query": "due date computation service",
+        "gold": [
+          "due-date.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 1.0,
+        "rr": 0.1111111111111111,
+        "ndcg@10": 0.3010299956639812,
+        "ms": 32.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dueDateApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/due-date/data-access/models/api/due-date-filter-api.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/paymentDueDateAssignmentApi.model.ts"
+        ]
+      },
+      {
+        "query": "user store for the user domain",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 33.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/app/sales/customers/application/store/countries.store.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/workspace/acme/sample-webapp/src/app/sales/customers/application/store/families.store.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts"
+        ]
+      },
+      {
+        "query": "dunning letter edit facade",
+        "gold": [
+          "dunning-letter-edit.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 28.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.facade.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterResponseApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/stores/dunning-parameters/actions/dunning-parameters.actions.ts"
+        ]
+      },
+      {
+        "query": "monthly treatment accounting service",
+        "gold": [
+          "monthly-treatment.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 29.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment-history/actions/monthly-treatment-history.actions.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/stimulsoftTreatmentGuidListApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/ui/index.ts"
+        ]
+      },
+      {
+        "query": "report categories service",
+        "gold": [
+          "report-category.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 46.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/fixtures/custom-report-information-api-fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/models/report-information.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/custom-report-information.fixture.ts"
+        ]
+      },
+      {
+        "query": "navigation hook that intercepts route changes",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 33.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/sales/customers/presentation/details/mobile/customer-details/customer-details.component.ts"
+        ]
+      },
+      {
+        "query": "demo mode login listener for auth",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 32.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/app/deb/presentation/declaration/form/deb-declaration-form/deb-declaration-form.component.ts"
+        ]
+      },
+      {
+        "query": "business review domain form service",
+        "gold": [
+          "business-review-form.service.ts",
+          "business-review.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 30.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/segmentApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/businessReviewCalculationFilterApi.model.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/businessReviewLoadCustomerDynamismFilterApi.model.ts"
+        ]
+      },
+      {
+        "query": "product characteristics data service",
+        "gold": [
+          "product-characteristics.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 33.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/stores/code-structure/product-characteristics-reload.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-designation.service.ts"
+        ]
+      },
+      {
+        "query": "custom report information service",
+        "gold": [
+          "custom-report-information.service.ts",
+          "report-information.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 28.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/custom-report-information.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/fixtures/custom-report-information-api-fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/models/report-information.model.ts"
+        ]
+      },
+      {
+        "query": "BreadcrumbService",
+        "gold": [
+          "breadcrumb.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 36.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/index.ts"
+        ]
+      },
+      {
+        "query": "DunningLetterService",
+        "gold": [
+          "dunning-letter.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 33.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterResponseApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts"
+        ]
+      },
+      {
+        "query": "FiscalYearService",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 32.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/adapters/fiscal-year.adapter.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts"
+        ]
+      },
+      {
+        "query": "UserStoreService",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 68.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts"
+        ]
+      },
+      {
+        "query": "AppConfigService",
+        "gold": [
+          "app-config.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 33.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/flag.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/app-config.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/flag.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts"
+        ]
+      },
+      {
+        "query": "VatFacade",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 32.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/vat/application/vat.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/vat/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vat-situations.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts"
+        ]
+      },
+      {
+        "query": "CurrenciesFacade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 31.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/infrastructure/api/endpoints/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/store/index.ts",
+          "/workspace/acme/sample-webapp/src/app/direct-debits/application/facades/direct-debits.facade.ts"
+        ]
+      },
+      {
+        "query": "LogoutStoreClearerService",
+        "gold": [
+          "logout-store-clearer.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 38.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-cache-clearer.ts"
+        ]
+      },
+      {
+        "query": "NavigationHookService",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 27.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "DemoModeLoginListenerService",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 32.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/services/demo-mode.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts"
+        ]
+      }
+    ]
+  },
+  "hybrid+rerank": {
+    "mode": "hybrid+rerank",
+    "recall_at_5": 0.9333333333333333,
+    "recall_at_10": 0.9666666666666667,
+    "mrr": 0.787037037037037,
+    "ndcg_at_10": 0.8308080872984561,
+    "p50_ms": 10445.82100000116,
+    "p95_ms": 14871.715429348114,
+    "per_query": [
+      {
+        "query": "how does the app fetch the configuration on startup",
+        "gold": [
+          "app-config.service.ts",
+          "configuration-guard.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 7660.2,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts",
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/configuration.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts",
+          "/workspace/acme/sample-webapp/src/app/runtime-app-config.provider.spec.ts"
+        ]
+      },
+      {
+        "query": "logout flow that clears stored user state",
+        "gold": [
+          "logout-store-clearer.service.ts",
+          "logout-redirect.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 11478.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/mocks/file_cors.py",
+          "/workspace/acme/sample-webapp/src/app/chat/application/use-cases/process-query.use-case.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts"
+        ]
+      },
+      {
+        "query": "where is the navigation breadcrumb built",
+        "gold": [
+          "breadcrumb.service.ts",
+          "subheader-builder.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 8764.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "service that calls the dunning letter REST API",
+        "gold": [
+          "dunning-letter.service.ts",
+          "dunning.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 7945.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterApi.model.ts"
+        ]
+      },
+      {
+        "query": "VAT facade exposed to components",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 8331.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/vat/data-access/services/vat.service.ts"
+        ]
+      },
+      {
+        "query": "fiscal year repository fetching periods",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 10684.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/models/fixture/fiscal-year.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/utils/periodicity.helper.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts"
+        ]
+      },
+      {
+        "query": "warehouse data access service",
+        "gold": [
+          "warehouse.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 7663.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/adapters/warehouse.adapter.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/adapters/warehouse-response-api.adapter.ts"
+        ]
+      },
+      {
+        "query": "currencies application facade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 13073.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/chat/application/facades/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/infrastructure/adapters/get-currencies.adapter.ts",
+          "/workspace/acme/sample-webapp/src/app/sales/customers/presentation/create/shared/base/base-information.component.ts"
+        ]
+      },
+      {
+        "query": "user navigation persistence in local storage",
+        "gold": [
+          "user-local-storage.service.ts",
+          "user-navigation.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 1.0,
+        "rr": 0.1111111111111111,
+        "ndcg@10": 0.3010299956639812,
+        "ms": 7454.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.spec.ts",
+          "/workspace/acme/sample-webapp/a11y/run-pa11y-auth.mjs",
+          "/workspace/acme/sample-webapp/src/app/sales/orders/presentation/container/orders.component.ts",
+          "/workspace/acme/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts"
+        ]
+      },
+      {
+        "query": "company domain data access service",
+        "gold": [
+          "company.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 10897.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/guards/can-access-feature/can-load-feature.guard.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/vat/data-access/services/vat.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.spec.ts"
+        ]
+      },
+      {
+        "query": "due date computation service",
+        "gold": [
+          "due-date.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 7892.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/due-date/data-access/models/api/due-date-filter-api.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.ts",
+          "/workspace/acme/sample-webapp/src/domains/due-date/data-access/services/due-date.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dueDateApi.model.ts"
+        ]
+      },
+      {
+        "query": "user store for the user domain",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 12846.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/app/sales/customers/application/store/countries.store.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/shared/user/application/store/index.ts"
+        ]
+      },
+      {
+        "query": "dunning letter edit facade",
+        "gold": [
+          "dunning-letter-edit.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 14432.2,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.facade.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/stores/dunning-parameters/actions/dunning-parameters.actions.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts"
+        ]
+      },
+      {
+        "query": "monthly treatment accounting service",
+        "gold": [
+          "monthly-treatment.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 13713.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment-history/actions/monthly-treatment-history.actions.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment/effects/monthly-treatment.effects.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.spec.ts"
+        ]
+      },
+      {
+        "query": "report categories service",
+        "gold": [
+          "report-category.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 15408.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/fixtures/custom-report-information-api-fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/models/report-information.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/report-categories.fixture.ts"
+        ]
+      },
+      {
+        "query": "navigation hook that intercepts route changes",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 13959.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts"
+        ]
+      },
+      {
+        "query": "demo mode login listener for auth",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 10589.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/app/deb/presentation/declaration/form/deb-declaration-form/deb-declaration-form.component.ts"
+        ]
+      },
+      {
+        "query": "business review domain form service",
+        "gold": [
+          "business-review-form.service.ts",
+          "business-review.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 10615.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/segmentApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts"
+        ]
+      },
+      {
+        "query": "product characteristics data service",
+        "gold": [
+          "product-characteristics.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 11268.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/stores/code-structure/product-characteristics-reload.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-designation.service.ts"
+        ]
+      },
+      {
+        "query": "custom report information service",
+        "gold": [
+          "custom-report-information.service.ts",
+          "report-information.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 12087.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/custom-report-information.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/fixtures/custom-report-information-api-fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/index.ts"
+        ]
+      },
+      {
+        "query": "BreadcrumbService",
+        "gold": [
+          "breadcrumb.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 7925.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/index.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "DunningLetterService",
+        "gold": [
+          "dunning-letter.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 11631.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts"
+        ]
+      },
+      {
+        "query": "FiscalYearService",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 10301.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts"
+        ]
+      },
+      {
+        "query": "UserStoreService",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 9752.2,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts"
+        ]
+      },
+      {
+        "query": "AppConfigService",
+        "gold": [
+          "app-config.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 9506.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/flag.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/app-config.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/flag.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts"
+        ]
+      },
+      {
+        "query": "VatFacade",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 8038.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/vat/application/vat.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/vat/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vat-situations.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.ts"
+        ]
+      },
+      {
+        "query": "CurrenciesFacade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 1655.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/infrastructure/api/endpoints/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/store/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/infrastructure/index.ts"
+        ]
+      },
+      {
+        "query": "LogoutStoreClearerService",
+        "gold": [
+          "logout-store-clearer.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 7539.2,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-cache-clearer.ts"
+        ]
+      },
+      {
+        "query": "NavigationHookService",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 7464.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "DemoModeLoginListenerService",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 14095.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/services/demo-mode.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts"
+        ]
+      }
+    ]
+  },
+  "hybrid_dbsf": {
+    "mode": "hybrid_dbsf",
+    "recall_at_5": 0.9,
+    "recall_at_10": 0.9333333333333333,
+    "mrr": 0.6677777777777778,
+    "ndcg_at_10": 0.7332400790401241,
+    "p50_ms": 35.49137549998704,
+    "p95_ms": 108.24785785371205,
+    "per_query": [
+      {
+        "query": "how does the app fetch the configuration on startup",
+        "gold": [
+          "app-config.service.ts",
+          "configuration-guard.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 66.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/app/runtime-app-config.provider.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_DEB_V1/configuration.ts"
+        ]
+      },
+      {
+        "query": "logout flow that clears stored user state",
+        "gold": [
+          "logout-store-clearer.service.ts",
+          "logout-redirect.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 66.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/chat/application/use-cases/process-query.use-case.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-cache-clearer.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.spec.ts"
+        ]
+      },
+      {
+        "query": "where is the navigation breadcrumb built",
+        "gold": [
+          "breadcrumb.service.ts",
+          "subheader-builder.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 53.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts"
+        ]
+      },
+      {
+        "query": "service that calls the dunning letter REST API",
+        "gold": [
+          "dunning-letter.service.ts",
+          "dunning.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.2,
+        "ndcg@10": 0.38685280723454163,
+        "ms": 107.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterApi.model.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterResponseApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/stores/dunning-parameters/actions/dunning-parameters-api.actions.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts"
+        ]
+      },
+      {
+        "query": "VAT facade exposed to components",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 49.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/vatRateApi.model.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/vatApi.model.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/domains/rules/vat-application.rule.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/store/vats.store.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/information/vat-information-dialog.component.ts"
+        ]
+      },
+      {
+        "query": "fiscal year repository fetching periods",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 108.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/fiscalYearApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/models/fixture/fiscal-year.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/utils/periodicity.helper.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts"
+        ]
+      },
+      {
+        "query": "warehouse data access service",
+        "gold": [
+          "warehouse.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 63.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/warehouseResponseApi.model.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/warehouseFilterApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.ts"
+        ]
+      },
+      {
+        "query": "currencies application facade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 77.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/infrastructure/adapters/get-currencies.adapter.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/chat/application/facades/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/infrastructure/adapters/get-currencies.adapter.ts"
+        ]
+      },
+      {
+        "query": "user navigation persistence in local storage",
+        "gold": [
+          "user-local-storage.service.ts",
+          "user-navigation.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 86.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.spec.ts",
+          "/workspace/acme/sample-webapp/a11y/run-pa11y-auth.mjs",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/traces/feature/service/user-navigation-tracer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/traces/feature/service/user-navigation-tracer.service.ts"
+        ]
+      },
+      {
+        "query": "company domain data access service",
+        "gold": [
+          "company.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 30.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/guards/can-access-feature/can-load-feature.guard.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/vat/data-access/services/vat.service.spec.ts"
+        ]
+      },
+      {
+        "query": "due date computation service",
+        "gold": [
+          "due-date.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 32.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dueDateApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/due-date/data-access/models/api/due-date-filter-api.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/paymentDueDateAssignmentApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/due-date/models/due-date.model.ts"
+        ]
+      },
+      {
+        "query": "user store for the user domain",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 32.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/sales/customers/application/store/customers.store.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts"
+        ]
+      },
+      {
+        "query": "dunning letter edit facade",
+        "gold": [
+          "dunning-letter-edit.facade.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 1.0,
+        "rr": 0.16666666666666666,
+        "ndcg@10": 0.3562071871080222,
+        "ms": 29.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterApi.model.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterResponseApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/stores/dunning-parameters/actions/dunning-letter-edit-filter-component.actions.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/stores/dunning-parameters/actions/dunning-parameters.actions.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/stores/dunning-parameters/actions/dunning-parameters-api.actions.ts"
+        ]
+      },
+      {
+        "query": "monthly treatment accounting service",
+        "gold": [
+          "monthly-treatment.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 29.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment-history/actions/monthly-treatment-history.actions.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment/effects/monthly-treatment.effects.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.spec.ts"
+        ]
+      },
+      {
+        "query": "report categories service",
+        "gold": [
+          "report-category.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 35.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/pages/report/reports-list/reports-list.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/report-information.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/custom-report-information.fixture.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/reportInformationApi.model.ts"
+        ]
+      },
+      {
+        "query": "navigation hook that intercepts route changes",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 42.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/guards/can-navigate-to-business-review/can-navigate-to-business-review.guard.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "demo mode login listener for auth",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 36.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/deb/presentation/declaration/form/deb-declaration-form/deb-declaration-form.component.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts"
+        ]
+      },
+      {
+        "query": "business review domain form service",
+        "gold": [
+          "business-review-form.service.ts",
+          "business-review.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 33.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/businessReviewCalculationFilterApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/segmentApi.model.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/businessReviewLoadCustomerDynamismFilterApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts"
+        ]
+      },
+      {
+        "query": "product characteristics data service",
+        "gold": [
+          "product-characteristics.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 35.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-designation.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/adapters/product-characteristic.adapter.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/stores/code-structure/product-characteristics-reload.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/stores/code-structure/product-characteristics-form.service.ts"
+        ]
+      },
+      {
+        "query": "custom report information service",
+        "gold": [
+          "custom-report-information.service.ts",
+          "report-information.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 29.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/custom-report-information.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/fixtures/custom-report-information-api-fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/feature/custom-report-cards/custom-report-cards.component.ts"
+        ]
+      },
+      {
+        "query": "BreadcrumbService",
+        "gold": [
+          "breadcrumb.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 38.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/index.ts"
+        ]
+      },
+      {
+        "query": "DunningLetterService",
+        "gold": [
+          "dunning-letter.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 28.2,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts"
+        ]
+      },
+      {
+        "query": "FiscalYearService",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 27.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/models/fixture/fiscal-year.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/models/fiscal-year.model.ts"
+        ]
+      },
+      {
+        "query": "UserStoreService",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 55.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/store/navigation.store.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts"
+        ]
+      },
+      {
+        "query": "AppConfigService",
+        "gold": [
+          "app-config.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 34.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/flag.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/app-config.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/flag.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts"
+        ]
+      },
+      {
+        "query": "VatFacade",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 33.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/vat/application/vat.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/vat/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vat-situations.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts"
+        ]
+      },
+      {
+        "query": "CurrenciesFacade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 33.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/store/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/integration-api.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/store/currencies.store.ts"
+        ]
+      },
+      {
+        "query": "LogoutStoreClearerService",
+        "gold": [
+          "logout-store-clearer.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 36.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts"
+        ]
+      },
+      {
+        "query": "NavigationHookService",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 30.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "DemoModeLoginListenerService",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 32.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/services/demo-mode.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts"
+        ]
+      }
+    ]
+  },
+  "hybrid_dbsf+rerank": {
+    "mode": "hybrid_dbsf+rerank",
+    "recall_at_5": 0.9,
+    "recall_at_10": 0.9333333333333333,
+    "mrr": 0.7011111111111111,
+    "ndcg_at_10": 0.7586353959448879,
+    "p50_ms": 9387.287416000618,
+    "p95_ms": 40156.34329155291,
+    "per_query": [
+      {
+        "query": "how does the app fetch the configuration on startup",
+        "gold": [
+          "app-config.service.ts",
+          "configuration-guard.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 8961.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/app/runtime-app-config.provider.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts",
+          "/workspace/acme/sample-webapp/src/main.ts"
+        ]
+      },
+      {
+        "query": "logout flow that clears stored user state",
+        "gold": [
+          "logout-store-clearer.service.ts",
+          "logout-redirect.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 7658.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/chat/application/use-cases/process-query.use-case.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-cache-clearer.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.spec.ts"
+        ]
+      },
+      {
+        "query": "where is the navigation breadcrumb built",
+        "gold": [
+          "breadcrumb.service.ts",
+          "subheader-builder.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 11841.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts"
+        ]
+      },
+      {
+        "query": "service that calls the dunning letter REST API",
+        "gold": [
+          "dunning-letter.service.ts",
+          "dunning.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 9604.2,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterResponseApi.model.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/stores/dunning-parameters/actions/dunning-parameters-api.actions.ts"
+        ]
+      },
+      {
+        "query": "VAT facade exposed to components",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 11963.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/domains/rules/vat-application.rule.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/store/vats.store.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/presentation/forms/vat-application/information/vat-information-dialog.component.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/vatRateApi.model.ts"
+        ]
+      },
+      {
+        "query": "fiscal year repository fetching periods",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 16610.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/models/fixture/fiscal-year.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/utils/periodicity.helper.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/adapters/fiscal-years-response-api.adapter.spec.ts"
+        ]
+      },
+      {
+        "query": "warehouse data access service",
+        "gold": [
+          "warehouse.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 11985.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/warehouse/data-access/adapters/warehouse.adapter.spec.ts"
+        ]
+      },
+      {
+        "query": "currencies application facade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 40263.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/infrastructure/adapters/get-currencies.adapter.ts",
+          "/workspace/acme/sample-webapp/src/app/chat/application/facades/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/infrastructure/adapters/get-currencies.adapter.ts"
+        ]
+      },
+      {
+        "query": "user navigation persistence in local storage",
+        "gold": [
+          "user-local-storage.service.ts",
+          "user-navigation.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 12546.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/a11y/run-pa11y-auth.mjs",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/traces/feature/service/user-navigation-tracer.service.ts"
+        ]
+      },
+      {
+        "query": "company domain data access service",
+        "gold": [
+          "company.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 40068.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/guards/can-access-feature/can-load-feature.guard.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/company/data-access/services/company.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/vat/data-access/services/vat.service.spec.ts"
+        ]
+      },
+      {
+        "query": "due date computation service",
+        "gold": [
+          "due-date.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 24059.2,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.ts",
+          "/workspace/acme/sample-webapp/src/domains/due-date/data-access/models/api/due-date-filter-api.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/due-date/models/due-date.model.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dueDateApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/due-date/models/fixtures/due-date.fixtures.ts"
+        ]
+      },
+      {
+        "query": "user store for the user domain",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 20188.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts"
+        ]
+      },
+      {
+        "query": "dunning letter edit facade",
+        "gold": [
+          "dunning-letter-edit.facade.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 1.0,
+        "rr": 0.16666666666666666,
+        "ndcg@10": 0.3562071871080222,
+        "ms": 8106.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/stores/dunning-parameters/actions/dunning-letter-edit-filter-component.actions.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/stores/dunning-parameters/actions/dunning-parameters.actions.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterResponseApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/stores/dunning-parameters/actions/dunning-parameters-api.actions.ts"
+        ]
+      },
+      {
+        "query": "monthly treatment accounting service",
+        "gold": [
+          "monthly-treatment.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.2,
+        "ndcg@10": 0.38685280723454163,
+        "ms": 15993.7,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment-history/actions/monthly-treatment-history.actions.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment/effects/monthly-treatment.effects.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.ts"
+        ]
+      },
+      {
+        "query": "report categories service",
+        "gold": [
+          "report-category.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 19951.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/pages/report/reports-list/reports-list.component.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/report-information.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/report-category.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/custom-report-information.fixture.ts"
+        ]
+      },
+      {
+        "query": "navigation hook that intercepts route changes",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 8733.6,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/guards/can-navigate-to-business-review/can-navigate-to-business-review.guard.spec.ts"
+        ]
+      },
+      {
+        "query": "demo mode login listener for auth",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 7156.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/app/deb/presentation/declaration/form/deb-declaration-form/deb-declaration-form.component.ts"
+        ]
+      },
+      {
+        "query": "business review domain form service",
+        "gold": [
+          "business-review-form.service.ts",
+          "business-review.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 8493.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/businessReviewCalculationFilterApi.model.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/segmentApi.model.ts",
+          "/workspace/acme/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/businessReviewLoadCustomerDynamismFilterApi.model.ts"
+        ]
+      },
+      {
+        "query": "product characteristics data service",
+        "gold": [
+          "product-characteristics.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 6053.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/stores/code-structure/product-characteristics-reload.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/service/product-designation.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/stores/code-structure/product-characteristics-fixed.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/product/data-access/stores/code-structure/product-characteristics-fixed.service.spec.ts"
+        ]
+      },
+      {
+        "query": "custom report information service",
+        "gold": [
+          "custom-report-information.service.ts",
+          "report-information.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 7074.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/report/models/fixtures/custom-report-information.fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/fixtures/custom-report-information-api-fixture.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/report/feature/custom-report-cards/custom-report-cards.component.ts"
+        ]
+      },
+      {
+        "query": "BreadcrumbService",
+        "gold": [
+          "breadcrumb.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 6420.8,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/presentation/breadcrumb/index.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "DunningLetterService",
+        "gold": [
+          "dunning-letter.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 8015.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts"
+        ]
+      },
+      {
+        "query": "FiscalYearService",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 9140.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/fiscal-year/models/fixture/fiscal-year.fixture.ts"
+        ]
+      },
+      {
+        "query": "UserStoreService",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 9967.3,
+        "top": [
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/store/user-store.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts"
+        ]
+      },
+      {
+        "query": "AppConfigService",
+        "gold": [
+          "app-config.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 5707.0,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/app-config.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/flag.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/app-config.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/core/navigation/feature/services/flag.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/configuration/configuration-guard.service.ts"
+        ]
+      },
+      {
+        "query": "VatFacade",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 9170.4,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/vat/application/vat.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/vat/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vat-situations.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/taxes/application/facades/vats.facade.ts"
+        ]
+      },
+      {
+        "query": "CurrenciesFacade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 13657.2,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/application/store/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/infrastructure/api/endpoints/index.ts",
+          "/workspace/acme/sample-webapp/src/app/currencies/infrastructure/index.ts"
+        ]
+      },
+      {
+        "query": "LogoutStoreClearerService",
+        "gold": [
+          "logout-store-clearer.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 11121.9,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts"
+        ]
+      },
+      {
+        "query": "NavigationHookService",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 7941.1,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/workspace/acme/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "DemoModeLoginListenerService",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 7299.5,
+        "top": [
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/index.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/services/demo-mode.service.ts",
+          "/workspace/acme/sample-webapp/src/shared/api/authentication/data-access/index.ts",
+          "/workspace/acme/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts"
+        ]
+      }
+    ]
+  }
+}
