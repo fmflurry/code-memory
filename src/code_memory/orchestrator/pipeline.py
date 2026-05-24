@@ -14,6 +14,8 @@ from ..embed import M3Embedder, get_embedder
 from ..episodic import Episode, EpisodicStore
 from ..episodic.sqlite_store import episode_payload, episode_text
 from ..extractor import ExtractedFile, Extractor, Symbol
+from ..extractor.csproj import CsprojInfo, walk_csprojs
+from ..extractor.sanity import SUSPECT_THRESHOLD, SanitySummary
 from ..graph import FalkorStore, GraphEdge, GraphNode
 from ..vector import QdrantStore, VectorRecord
 from . import git_delta
@@ -91,6 +93,8 @@ class IngestStats:
     base_sha: str | None = None
     head_sha: str | None = None
     resolver: dict[str, int] | None = None
+    sanity: dict[str, object] | None = None
+    projects: dict[str, int] | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -208,6 +212,7 @@ class Pipeline:
     def _ingest_full(self, root: Path, *, dry_run: bool) -> IngestStats:
         extractor = Extractor()
         stats = IngestStats(mode="full")
+        sanity = SanitySummary()
         if not dry_run:
             self._purge_project_index(root)
         hb = _Heartbeat("full ingest" + (" (dry-run)" if dry_run else ""))
@@ -217,10 +222,13 @@ class Pipeline:
             stats.imports += len(ex.imports)
             stats.calls += len(ex.calls)
             stats.chunks += len(ex.symbols) or 1
+            sanity.record(ex)
             if not dry_run:
                 self.ingest_file(ex)
             hb.tick(stats)
         hb.done(stats)
+        _attach_sanity(stats, sanity)
+        self._ingest_dotnet_projects(root, stats, dry_run=dry_run)
         return stats
 
     def _run_resolver(self, stats: IngestStats) -> None:
@@ -246,6 +254,96 @@ class Pipeline:
             "placeholders_deleted": r.placeholders_deleted,
         }
 
+    def _ingest_dotnet_projects(
+        self, root: Path, stats: IngestStats, *, dry_run: bool
+    ) -> None:
+        """Walk `.csproj`/`.fsproj`/`.vbproj` and emit Project topology.
+
+        Adds three node/edge kinds to the graph:
+
+        * ``Project`` nodes keyed by absolute path.
+        * ``PROJECT_REFERENCES`` edges (Project → Project) from every
+          ``<ProjectReference>``. Targets outside the repo or unparseable
+          are silently dropped — see ``parse_csproj``.
+        * ``PACKAGE_REFERENCES`` edges (Project → Package) from every
+          ``<PackageReference>``. ``Package`` is a new label so NuGet
+          packages don't pollute the ``Module`` namespace (which holds
+          `using` import targets).
+
+        Non-.NET repos see zero ``.csproj`` files and this is a no-op.
+        Failures are non-fatal: source ingest already happened.
+        """
+        try:
+            projects = walk_csprojs(root)
+        except Exception as e:  # noqa: BLE001
+            stats.notes.append(f"csproj indexing skipped: {e}")
+            return
+        if not projects:
+            return
+        counts = {
+            "projects": len(projects),
+            "project_refs": sum(len(p.project_references) for p in projects),
+            "package_refs": sum(len(p.package_references) for p in projects),
+        }
+        stats.projects = counts
+        if dry_run:
+            return
+        self._upsert_dotnet_projects(projects)
+
+    def _upsert_dotnet_projects(self, projects: list[CsprojInfo]) -> None:
+        nodes: list[GraphNode] = []
+        edges: list[GraphEdge] = []
+        seen_pkgs: set[str] = set()
+        for proj in projects:
+            props: dict[str, object] = {
+                "name": proj.name,
+                "assembly_name": proj.assembly_name or proj.name,
+                "sdk_style": proj.sdk_style,
+            }
+            if proj.target_framework:
+                props["target_framework"] = proj.target_framework
+            nodes.append(GraphNode(label="Project", key=proj.path, props=props))
+            for ref in proj.project_references:
+                # Forward-reference target Project node — `upsert_nodes`
+                # is idempotent, and walking all projects first then
+                # writing edges would require two passes for no win.
+                nodes.append(GraphNode(label="Project", key=ref))
+                edges.append(
+                    GraphEdge(
+                        type="PROJECT_REFERENCES",
+                        src_label="Project",
+                        src_key=proj.path,
+                        dst_label="Project",
+                        dst_key=ref,
+                    )
+                )
+            for pkg in proj.package_references:
+                key = pkg.name
+                if key not in seen_pkgs:
+                    seen_pkgs.add(key)
+                    nodes.append(
+                        GraphNode(
+                            label="Package",
+                            key=key,
+                            props={"name": pkg.name},
+                        )
+                    )
+                edge_props: dict[str, object] = {}
+                if pkg.version:
+                    edge_props["version"] = pkg.version
+                edges.append(
+                    GraphEdge(
+                        type="PACKAGE_REFERENCES",
+                        src_label="Project",
+                        src_key=proj.path,
+                        dst_label="Package",
+                        dst_key=key,
+                        props=edge_props,
+                    )
+                )
+        self.graph.upsert_nodes(nodes)
+        self.graph.upsert_edges(edges)
+
     def _purge_project_index(self, root: Path) -> None:
         """Wipe code vectors + graph + ingest_state for this project.
 
@@ -267,6 +365,7 @@ class Pipeline:
         dry_run: bool,
     ) -> IngestStats:
         stats = IngestStats(mode="incremental", base_sha=base_sha, head_sha=head_sha)
+        sanity = SanitySummary()
         reingest = list(delta.reingest_paths())
         hb = _Heartbeat(
             "incremental ingest" + (" (dry-run)" if dry_run else ""),
@@ -296,6 +395,7 @@ class Pipeline:
                 stats.imports += len(ex.imports)
                 stats.calls += len(ex.calls)
                 stats.chunks += len(ex.symbols) or 1
+                sanity.record(ex)
                 continue
 
             ex = self.reingest_file(path)
@@ -307,9 +407,14 @@ class Pipeline:
             stats.imports += len(ex.imports)
             stats.calls += len(ex.calls)
             stats.chunks += len(ex.symbols) or 1
+            sanity.record(ex)
             hb.tick(stats)
 
         hb.done(stats)
+        _attach_sanity(stats, sanity)
+        # Re-run csproj indexing on every delta — project files are
+        # tiny and the topology shifts independently of source edits.
+        self._ingest_dotnet_projects(root, stats, dry_run=dry_run)
         if delta.is_empty:
             stats.notes.append("no changes since last ingest")
         return stats
@@ -375,20 +480,22 @@ class Pipeline:
         edges: list[GraphEdge] = []
 
         for s in ex.symbols:
-            sym_key = f"{ex.path}::{s.name}#{s.start_line}"
-            nodes.append(
-                GraphNode(
-                    label="Symbol",
-                    key=sym_key,
-                    props={
-                        "name": s.name,
-                        "kind": s.kind,
-                        "start": s.start_line,
-                        "end": s.end_line,
-                        "file": ex.path,
-                    },
-                )
-            )
+            sym_key = _symbol_key(ex.path, s)
+            props: dict[str, object] = {
+                "name": s.name,
+                "kind": s.kind,
+                "start": s.start_line,
+                "end": s.end_line,
+                "file": ex.path,
+            }
+            if s.namespace:
+                props["namespace"] = s.namespace
+            if s.partial:
+                # Partial declarations live in multiple files; the per-key
+                # ``file`` / ``start`` / ``end`` reflect *one* part. The
+                # ``partial`` flag tells consumers to expect siblings.
+                props["partial"] = True
+            nodes.append(GraphNode(label="Symbol", key=sym_key, props=props))
             edges.append(
                 GraphEdge(
                     type="DEFINES",
@@ -461,6 +568,55 @@ class Pipeline:
                 for c, hv in zip(batch, hvecs, strict=True)
             ]
             self.vector.upsert(self.cfg.qdrant_code, records)
+
+
+def _symbol_key(path: str, sym: Symbol) -> str:
+    """Build the graph key for a Symbol node.
+
+    Non-partial symbols stay file-scoped — ``{path}::{name}#{line}``.
+    Partial declarations with a known namespace collapse to one key
+    across every file that declares a part — ``partial::{ns}.{name}``.
+    Multiple ``DEFINES`` edges from the contributing files all point
+    at the same Symbol node, so callers/callees queries see one
+    logical entity instead of N orphan duplicates.
+
+    Partial declarations without a resolvable namespace are rare
+    (global namespace, error recovery); fall back to file-scoped so
+    we never collide two unrelated globals.
+    """
+    if sym.partial and sym.namespace:
+        return f"partial::{sym.namespace}.{sym.name}"
+    return f"{path}::{sym.name}#{sym.start_line}"
+
+
+def _attach_sanity(stats: IngestStats, sanity: SanitySummary) -> None:
+    """Record sanity-check results on ``stats`` and warn on high failure rates.
+
+    A symbol fails the round-trip when its snippet doesn't contain its
+    own (plain-identifier) name verbatim. That happens when the
+    extractor's byte/char accounting is broken — historically the
+    UTF-8 chop bug. Surface failures on the stats object so the CLI
+    output shows them, and append a loud note when the rate crosses
+    the suspect threshold so a human looks.
+    """
+    if sanity.symbols_checked == 0:
+        return
+    rate = sanity.failure_rate
+    stats.sanity = {
+        "checked": sanity.symbols_checked,
+        "failed": sanity.symbols_failed,
+        "failure_rate": round(rate, 4),
+        "samples": [
+            {"path": v.path, "name": v.name, "kind": v.kind, "line": v.start_line}
+            for v in sanity.sample_violations
+        ],
+    }
+    if rate > SUSPECT_THRESHOLD:
+        stats.notes.append(
+            f"sanity: {sanity.symbols_failed}/{sanity.symbols_checked} "
+            f"plain-identifier symbols ({rate * 100:.1f}%) did not round-trip; "
+            f"extractor may be miscounting offsets — see stats.sanity.samples"
+        )
 
 
 @dataclass

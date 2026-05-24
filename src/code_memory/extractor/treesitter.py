@@ -78,6 +78,8 @@ class Symbol:
     start_line: int
     end_line: int
     snippet: str
+    namespace: str | None = None
+    partial: bool = False
 
 
 @dataclass
@@ -195,15 +197,75 @@ def extract_file(path: str | Path) -> ExtractedFile | None:
         source=source,
         generated=looks_generated(p, source),
     )
-    _walk(root, raw, ex)
+    _walk(root, raw, ex, ns_stack=[])
     return ex
 
 
-def _walk(node: Node, source: bytes, ex: ExtractedFile) -> None:
+# C# block-scoped ``namespace Foo { ... }``. Pushed while walking the
+# block's children and popped on exit.
+_BLOCK_NAMESPACE_NODE_TYPES = {"namespace_declaration"}
+
+# C# 10 ``namespace Foo;`` (file-scoped). One per file by spec; applies
+# to *everything after it*. We push without popping.
+_FILE_SCOPED_NAMESPACE_NODE_TYPES = {"file_scoped_namespace_declaration"}
+
+# Symbol kinds that can carry a ``partial`` modifier in C#. Partial
+# classes / structs / interfaces / records get merged into a single
+# logical entity in the graph; non-partial symbols stay file-scoped.
+_PARTIAL_CAPABLE_KINDS = {
+    "class_declaration",
+    "struct_declaration",
+    "interface_declaration",
+    "record_declaration",
+}
+
+
+def _is_partial_modifier(node: Node, source: bytes) -> bool:
+    """``True`` when this is a ``modifier`` node carrying ``partial``."""
+    if node.type != "modifier":
+        return False
+    text = _slice(source, node).strip()
+    return text == "partial"
+
+
+def _has_partial_modifier(node: Node, source: bytes) -> bool:
+    return any(_is_partial_modifier(c, source) for c in node.children)
+
+
+def _namespace_name(node: Node, source: bytes) -> str | None:
+    """Return the dotted name of a C# namespace declaration."""
+    for child in node.children:
+        if child.type in {"qualified_name", "identifier"}:
+            return _slice(source, child)
+    return None
+
+
+def _walk(
+    node: Node,
+    source: bytes,
+    ex: ExtractedFile,
+    ns_stack: list[str],
+) -> None:
     t = node.type
+    pushed_ns = False
+    if t in _BLOCK_NAMESPACE_NODE_TYPES:
+        ns = _namespace_name(node, source)
+        if ns:
+            ns_stack.append(ns)
+            pushed_ns = True
+    elif t in _FILE_SCOPED_NAMESPACE_NODE_TYPES:
+        # C# 10 file-scoped namespace scopes the rest of the file.
+        # Push and never pop within this walk — there is at most one.
+        ns = _namespace_name(node, source)
+        if ns:
+            ns_stack.append(ns)
+
     if t in SYMBOL_NODE_TYPES:
         name = _symbol_name(node, source)
         if name:
+            partial = (
+                t in _PARTIAL_CAPABLE_KINDS and _has_partial_modifier(node, source)
+            )
             ex.symbols.append(
                 Symbol(
                     name=name,
@@ -211,6 +273,8 @@ def _walk(node: Node, source: bytes, ex: ExtractedFile) -> None:
                     start_line=node.start_point[0] + 1,
                     end_line=node.end_point[0] + 1,
                     snippet=_slice(source, node),
+                    namespace=".".join(ns_stack) if ns_stack else None,
+                    partial=partial,
                 )
             )
     elif t in IMPORT_NODE_TYPES:
@@ -221,8 +285,12 @@ def _walk(node: Node, source: bytes, ex: ExtractedFile) -> None:
         callee = _callee_name(node, source)
         if callee:
             ex.calls.append(callee)
+
     for child in node.children:
-        _walk(child, source, ex)
+        _walk(child, source, ex, ns_stack)
+
+    if pushed_ns:
+        ns_stack.pop()
 
 
 def _slice(source: bytes, node: Node) -> str:
