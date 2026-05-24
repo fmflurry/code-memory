@@ -50,7 +50,17 @@ def ensure_autostart(repo: Path, *, project: str | None = None) -> AutostartStat
 
     Idempotent. Safe to call on every MCP server boot.
     """
-    repo = Path(repo).resolve()
+    from ..safety import UnsafeWatchRootError, assert_safe_watch_root
+
+    try:
+        repo = assert_safe_watch_root(repo)
+    except UnsafeWatchRootError as e:
+        return AutostartStatus(
+            installed=False,
+            running=False,
+            label="<unsafe-root>",
+            note=str(e),
+        )
     try:
         adapter = get_adapter()
     except RuntimeError as e:

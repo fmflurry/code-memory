@@ -427,9 +427,16 @@ def watch(
     project: str | None = ProjectOpt,
 ) -> None:
     """Run the filesystem watcher in the foreground until interrupted."""
+    from .sync.safety import UnsafeWatchRootError, assert_safe_watch_root
     from .sync.watcher import run_foreground
 
-    run_foreground(root, project=project)
+    try:
+        safe_root = assert_safe_watch_root(root)
+    except UnsafeWatchRootError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(code=2) from e
+
+    run_foreground(safe_root, project=project)
 
 
 @app.command()
