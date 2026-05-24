@@ -21,8 +21,8 @@ def _seed_repo(root: Path) -> None:
     (root / "src" / "app" / "auth.ts").write_text(REAL_TS)
     (root / ".angular" / "cache" / "vite" / "deps").mkdir(parents=True)
     (root / ".angular" / "cache" / "vite" / "deps" / "dep.js").write_text(REAL_TS)
-    (root / "tmp" / "internal-ng-security-18" / "package").mkdir(parents=True)
-    (root / "tmp" / "internal-ng-security-18" / "package" / "x.ts").write_text(REAL_TS)
+    (root / "tmp" / "acme-ng-security-18" / "package").mkdir(parents=True)
+    (root / "tmp" / "acme-ng-security-18" / "package" / "x.ts").write_text(REAL_TS)
     (root / "dist").mkdir()
     (root / "dist" / "bundle.js").write_text(REAL_TS)
 
@@ -63,7 +63,7 @@ def test_gitignore_matcher_skips_listed_dirs(tmp_path: Path) -> None:
     _seed_repo(tmp_path)
     matcher = GitignoreMatcher.from_root(tmp_path)
     assert matcher.match(tmp_path / ".angular" / "cache" / "vite" / "deps" / "dep.js", is_dir=False)
-    assert matcher.match(tmp_path / "tmp" / "internal-ng-security-18" / "package" / "x.ts", is_dir=False)
+    assert matcher.match(tmp_path / "tmp" / "acme-ng-security-18" / "package" / "x.ts", is_dir=False)
     assert matcher.match(tmp_path / "dist" / "bundle.js", is_dir=False)
     assert not matcher.match(tmp_path / "src" / "app" / "auth.ts", is_dir=False)
 

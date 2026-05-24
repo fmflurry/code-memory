@@ -220,7 +220,7 @@ _TOOLS: list[Tool] = [
         name="codememory_importers",
         description=(
             "Files that import a module or package. Pass a package name "
-            "('@internal-ng/security', 'rxjs') or a relative path that was "
+            "('@acme-ng/security', 'rxjs') or a relative path that was "
             "preserved during ingest ('./bar')."
         ),
         inputSchema={

@@ -157,7 +157,7 @@ class FalkorStore:
     def importers(self, target: str) -> list[dict[str, Any]]:
         """Files that import a Module whose key matches ``target``.
 
-        ``target`` may be a package name (``@internal-ng/security``,
+        ``target`` may be a package name (``@acme-ng/security``,
         ``rxjs``) or a relative path that was preserved on ingest
         (``./bar``). Match is exact.
         """

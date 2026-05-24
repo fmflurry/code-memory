@@ -99,14 +99,14 @@ def test_callees_excludes_unresolved_targets() -> None:
 def test_importers_decodes_rows() -> None:
     store, _ = _store_with(
         [
-            ["/r/a.ts", "@internal-ng/security"],
-            ["/r/b.ts", "@internal-ng/security"],
+            ["/r/a.ts", "@acme-ng/security"],
+            ["/r/b.ts", "@acme-ng/security"],
         ]
     )
-    out = store.importers("@internal-ng/security")
+    out = store.importers("@acme-ng/security")
     assert out == [
-        {"file": "/r/a.ts", "module": "@internal-ng/security"},
-        {"file": "/r/b.ts", "module": "@internal-ng/security"},
+        {"file": "/r/a.ts", "module": "@acme-ng/security"},
+        {"file": "/r/b.ts", "module": "@acme-ng/security"},
     ]
 
 

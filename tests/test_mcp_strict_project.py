@@ -46,11 +46,11 @@ def test_non_string_project_raises() -> None:
 
 
 def test_valid_project_is_returned_verbatim() -> None:
-    assert _require_project({"project": "gc-webapp"}) == "gc-webapp"
+    assert _require_project({"project": "sample-webapp"}) == "sample-webapp"
 
 
 def test_valid_project_is_trimmed() -> None:
-    assert _require_project({"project": "  gc-webapp  "}) == "gc-webapp"
+    assert _require_project({"project": "  sample-webapp  "}) == "sample-webapp"
 
 
 def test_error_message_includes_default_slug() -> None:

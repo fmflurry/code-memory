@@ -13,7 +13,7 @@ Structural symbol graph &nbsp;·&nbsp; semantic vector recall &nbsp;·&nbsp; epi
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FalkorDB](https://img.shields.io/badge/graph-FalkorDB-FF2C2C)](https://www.falkordb.com/)
 [![Qdrant](https://img.shields.io/badge/vector-Qdrant-DC382D)](https://qdrant.tech/)
-[![Ollama](https://img.shields.io/badge/embeddings-Ollama-000000)](https://ollama.com/)
+[![Ollama](https://img.shields.io/badge/embeddings-Ollama%20bge--m3-000000)](https://ollama.com/library/bge-m3)
 [![tree-sitter](https://img.shields.io/badge/parser-tree--sitter-228B22)](https://tree-sitter.github.io/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -24,7 +24,7 @@ Structural symbol graph &nbsp;·&nbsp; semantic vector recall &nbsp;·&nbsp; epi
 ---
 
 > [!NOTE]
-> **Using this with a coding agent?** My personal Claude Code / OpenCode harness — hooks, agents, MCP wiring, and the `code-memory` integration — lives at **[fmflurry/settings-opencode](https://github.com/fmflurry/settings-opencode)**. Drop-in reference for plugging this memory layer into a real agent setup.
+> **Using this with a coding agent?** My personal Claude Code / OpenCode harness — hooks, agents, MCP wiring, and the `code-memory` integration — lives at **[dev/settings-opencode](https://github.com/dev/settings-opencode)**. Drop-in reference for plugging this memory layer into a real agent setup.
 
 ---
 
@@ -33,7 +33,7 @@ Structural symbol graph &nbsp;·&nbsp; semantic vector recall &nbsp;·&nbsp; epi
 `code-memory` gives a coding agent (Claude Code, OpenCode, Cursor, your own harness) a memory it can actually use:
 
 - **Structural memory** — a symbol graph of every file, function, import, and call (FalkorDB).
-- **Semantic memory** — vector embeddings of every symbol, queryable by natural language (Qdrant + Ollama).
+- **Semantic memory** — dense embeddings of every symbol (Qdrant + Ollama-served `bge-m3`), with an opt-in dense+sparse hybrid path for symbol-heavy corpora.
 - **Episodic memory** — a task log of past prompts, plans, patches, and outcomes (SQLite + embedded recall).
 
 It runs entirely on your machine. No OpenAI calls. No cloud. No vendor lock-in. Designed to be _boring infrastructure_ you can wire into any harness via CLI, hooks, or MCP.
@@ -55,8 +55,10 @@ The trick is a two-phase split:
 
 1. **Offline — index everything, inject nothing.**
    Ingest walks the repo once, chunks code with tree-sitter, embeds each chunk
-   with `bge-m3`, and stores:
-   - vectors in **Qdrant** (semantic recall)
+   with `bge-m3` (default: served by **Ollama** so the model stays warm across
+   per-file save-hook re-ingests; opt-in `EMBED_BACKEND=flagembed` for true
+   dense+sparse), and stores:
+   - vectors in **Qdrant** (semantic recall, hybrid-ready collection layout)
    - symbol / import / call edges in **FalkorDB** (structural recall)
    - past prompts / plans / patches / verdicts in **SQLite** (episodic recall)
 
@@ -88,25 +90,58 @@ Net effect: memory grows with the repo; **context stays roughly constant**.
 
 ---
 
-## Two-stage ranking: bi-encoder + cross-encoder
+## Two-stage retrieval: bi-encoder + cross-encoder (+ hybrid opt-in)
 
 Retrieval quality is the difference between an agent that hits the right file
-on the first try and one that flounders for ten tool calls. `code-memory` uses
-a **two-stage** ranker that combines a fast vector search with an optional
-deeper rescoring pass:
+on the first try and one that flounders for ten tool calls. `code-memory` runs
+a **two-stage** pipeline with a third opt-in lexical layer:
 
-### Stage 1 — bi-encoder (always on, cheap)
+### Stage 1 — `bge-m3` bi-encoder (always on, default path)
 
-Every code chunk is embedded once at ingest time with `bge-m3` (a
-**bi-encoder**: query and document are encoded *independently* into a single
-vector each). At query time the question is embedded the same way, and Qdrant
-returns the top-N chunks by cosine similarity. One forward pass per query +
-an ANN lookup → millisecond latency, scales to millions of chunks. The
-weakness: because query and document never "see" each other, the model can be
-fooled by surface keyword overlap (e.g. a `mocks/file_cors.py` containing the
-word "authentication" can outrank the real auth service).
+Every code chunk is embedded once with `bge-m3`. The default backend is
+**Ollama** — the daemon keeps the model warm across short-lived processes,
+which matters because the Claude Code / OpenCode plugins fire a per-save
+`code-memory reingest <path>` after every `Write|Edit`. An in-process
+embedder would pay a multi-second cold load on every save; Ollama costs ~0
+extra startup.
 
-### Stage 2 — cross-encoder (auto on Metal/CUDA, blended)
+The query is embedded the same way, and Qdrant returns the top-N chunks by
+cosine similarity in milliseconds. Collection layout is named-vector (`dense`
++ `sparse` slots) so the door stays open for lexical fusion without
+re-ingestion; the `sparse` slot is simply empty under the Ollama backend.
+
+### Hybrid opt-in — `EMBED_BACKEND=flagembed` + `CODEMEMORY_HYBRID=1`
+
+For corpora where the agent queries mostly by exact symbol name
+(`JwtAuthGuard.canActivate`, `useCustomerStore`), you can flip to the
+in-process FlagEmbedding backend, which emits **both** the dense vector
+**and** a learned sparse lexical vector from one forward pass:
+
+```bash
+uv sync --extra hybrid
+export EMBED_BACKEND=flagembed
+export CODEMEMORY_HYBRID=1
+# then re-ingest so the sparse slot gets populated
+code-memory ingest . --full
+```
+
+Queries then go through Qdrant's server-side **Reciprocal Rank Fusion**:
+
+```
+RRF(d) = Σ_branches  1 / (k + rank_branch(d))
+```
+
+Why this is **opt-in, not default**: benchmarks on a 2.6k-file Angular
+corpus (see [`docs/BENCHMARK.md`](docs/BENCHMARK.md)) showed pure dense
+outperforming hybrid (RRF and DBSF) on realistic queries — m3's dense head
+is strong enough that adding sparse tends to surface generated API stubs
+and `.spec.ts` files that share identifier vocabulary with the query,
+without bringing new wins. And the FlagEmbedding backend trades Ollama's
+warm-daemon model for an in-process load (~5-15 s) which is a regression
+for hook-driven workflows. Re-run `scripts/benchmark.py` against your own
+corpus before flipping it.
+
+### Stage 2 — cross-encoder rerank (auto on Metal/CUDA, blended)
 
 The top-N candidates from stage 1 are then rescored by a **cross-encoder**
 (`BAAI/bge-reranker-v2-m3` by default): query and chunk are concatenated and
@@ -149,6 +184,30 @@ uv sync --extra rerank        # or: pip install -e .[rerank]
 
 On a first call the model warms up (~2-5 s, ~1.1 GB from HF cache); after
 that it's a singleton (~50-200 ms per query on MPS).
+
+### Benchmark highlights — sample-webapp Angular corpus (2.6k files, 5.5k chunks)
+
+| Mode | Recall@5 | MRR | nDCG@10 | p50 (ms) |
+|------|---------:|----:|--------:|---------:|
+| **dense (default)** | **0.967** | **0.798** | **0.840** | 36 |
+| hybrid (`EMBED_BACKEND=flagembed` + `CODEMEMORY_HYBRID=1`) | 0.900 | 0.680 | 0.750 | 34 |
+| dense + CE rerank | 0.900 | 0.568 | 0.668 | 8853 |
+| hybrid + CE rerank | 0.933 | 0.787 | 0.831 | 10446 |
+
+**Read it this way:** on this corpus the m3 dense head is strong enough on
+its own that adding the sparse view via RRF surfaces spec/generated noise
+without clear wins. Cross-encoder rerank improves hybrid (closes the gap to
+~0.787 MRR) but never beats pure dense, and costs ~200× the latency. We ship
+**dense via Ollama as the default** and keep hybrid + rerank behind two env
+vars for corpora where the tradeoffs flip.
+
+Full breakdown — per-query top-5 lists, deltas across 30 queries (NL +
+PascalCase identifier mix), latency p50/p95 — lives in
+[`docs/BENCHMARK.md`](docs/BENCHMARK.md). Regenerate against your own corpus:
+
+```bash
+uv run python scripts/benchmark.py --project <slug> --out docs/BENCHMARK.md
+```
 
 ---
 
@@ -224,8 +283,8 @@ ingest](#git-aware-incremental-ingest) below.
 | ------------------- | ------------------------------ | ------------------------------------------------------------------ |
 | **Python**          | 3.11                           | Used to build the orchestrator, CLI, and extractor.                |
 | **Docker**          | 20.x (Compose v2)              | Runs FalkorDB and Qdrant locally.                                  |
-| **Ollama**          | latest                         | Local embeddings backend.                                          |
-| **Embedding model** | `bge-m3`                       | Pulled via `ollama pull bge-m3`. Alternatives: `nomic-embed-text`. |
+| **Ollama**          | latest                         | Default embedding backend (long-running daemon keeps `bge-m3` warm across CLI hooks). |
+| **Embedding model** | `bge-m3`                       | `ollama pull bge-m3` (~1.2 GB). Optional opt-in: `EMBED_BACKEND=flagembed` for in-process dense+sparse via FlagEmbedding (~2.3 GB). |
 | **Disk**            | ~3 GB                          | Ollama model (~1.2 GB) + Docker volumes + Python deps.             |
 | **RAM**             | 8 GB+                          | 16 GB+ recommended for large repos.                                |
 | **OS**              | macOS / Linux / Windows (WSL2) | Tested on Apple Silicon (M-series) and Linux x86_64.               |
@@ -402,7 +461,7 @@ code-memory callers getBearerToken              # who calls this symbol?
 code-memory callees UserService --depth 2       # what does UserService reach?
 code-memory definitions UserService             # all defining files + lines
 code-memory dependencies src/auth.ts            # what does this file import?
-code-memory importers '@internal-ng/security'     # who imports this package?
+code-memory importers '@acme-ng/security'     # who imports this package?
 code-memory resolve                             # rebuild call/import edges
 ```
 
@@ -462,7 +521,7 @@ Requires [`uv`](https://docs.astral.sh/uv/) (`brew install uv` / `pipx install u
 ```bash
 claude mcp add code-memory \
   --scope user \
-  -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
+  -- uvx --from git+https://github.com/dev/code-memory code-memory-mcp
 ```
 
 ##### OpenCode
@@ -475,7 +534,7 @@ claude mcp add code-memory \
       "command": [
         "uvx",
         "--from",
-        "git+https://github.com/fmflurry/code-memory",
+        "git+https://github.com/dev/code-memory",
         "code-memory-mcp"
       ],
       "enabled": true
@@ -485,7 +544,7 @@ claude mcp add code-memory \
 ```
 
 Pin a version by appending `@<tag-or-sha>` to the git URL, e.g.
-`git+https://github.com/fmflurry/code-memory@v0.1.0`.
+`git+https://github.com/dev/code-memory@v0.1.0`.
 
 > Once the package is published to PyPI the `--from git+…` part drops:
 > `command: ["uvx", "code-memory-mcp"]`.
@@ -499,7 +558,7 @@ automatically.
 #### Alternative: pipx (persistent install on `$PATH`)
 
 ```bash
-pipx install git+https://github.com/fmflurry/code-memory
+pipx install git+https://github.com/dev/code-memory
 # then in any MCP client:
 #   command: ["code-memory-mcp"]
 ```
@@ -522,7 +581,7 @@ pipx install git+https://github.com/fmflurry/code-memory
 #### Run directly (debug)
 
 ```bash
-uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
+uvx --from git+https://github.com/dev/code-memory code-memory-mcp
 # speaks JSON-RPC on stdio; useful with `npx @modelcontextprotocol/inspector`
 ```
 

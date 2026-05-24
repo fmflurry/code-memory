@@ -20,7 +20,7 @@ Imports are resolved best-effort:
 - Relative paths (``./bar``, ``../svc/auth``) are probed against project
   files with common extensions (``.ts``, ``.tsx``, ``.js``, ``.jsx``,
   ``.py``, plus ``/index.*``).
-- Bare module names (``@internal-ng/security``, ``rxjs``) are treated as
+- Bare module names (``@acme-ng/security``, ``rxjs``) are treated as
   external — we can't resolve them without a package map.
 
 The resolver is read-mostly; it only writes when something actually

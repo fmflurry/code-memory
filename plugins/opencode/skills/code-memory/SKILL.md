@@ -92,7 +92,7 @@ Who calls this symbol? Reverse `CALLS` traversal.
 - About to refactor or rename a function/method/class.
 - Need to estimate blast radius before a change.
 
-**Example:** `codememory_callers(symbol="getBearerToken", project="gc-webapp")`
+**Example:** `codememory_callers(symbol="getBearerToken", project="sample-webapp")`
 → list of files + the definition's location.
 
 ### `codememory_callees(symbol, project, depth?=1)`
@@ -112,7 +112,7 @@ Which files import this module or relative path? Reverse `IMPORTS`.
 - Auditing impact of removing or replacing a barrel/module.
 - Checking which files depend on a shared utility.
 
-**Example:** `codememory_importers(target="@internal-ng/security", project="gc-webapp")`.
+**Example:** `codememory_importers(target="@acme-ng/security", project="sample-webapp")`.
 
 ### `codememory_dependencies(file, project, depth?=1)`
 
