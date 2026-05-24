@@ -3,10 +3,13 @@
 # code-memory installer (macOS / Linux)
 #
 # Usage:
-#   ./scripts/install.sh                 # full install (interactive plugin prompt)
+#   ./scripts/install.sh                 # full install (interactive prompts)
 #   ./scripts/install.sh --no-docker     # skip docker compose
 #   ./scripts/install.sh --no-ollama     # skip ollama pull
 #   ./scripts/install.sh --no-tests      # skip smoke tests
+#   ./scripts/install.sh --with-rerank   # install [rerank] extra (sentence-transformers + torch, ~1.5 GB)
+#   ./scripts/install.sh --with-hybrid   # install [hybrid] extra (FlagEmbedding + torch, m3 dense+sparse)
+#   ./scripts/install.sh --extras=none   # bypass interactive prompt; install only [dev]
 #   ./scripts/install.sh --plugins=opencode,claudecode
 #                                        # install named harness plugins (non-interactive)
 #   ./scripts/install.sh --plugins=all   # install both
@@ -41,6 +44,9 @@ SKIP_DOCKER=0
 SKIP_OLLAMA=0
 SKIP_TESTS=0
 SKIP_MCP=0
+WITH_RERANK=0
+WITH_HYBRID=0
+EXTRAS_ARG=""        # empty = interactive; "none" = skip extras prompt; other ignored
 PLUGINS_ARG=""       # empty = interactive; explicit value bypasses prompt
 PLUGINS_SCOPE="global"  # global | project
 for arg in "$@"; do
@@ -49,10 +55,13 @@ for arg in "$@"; do
     --no-ollama) SKIP_OLLAMA=1 ;;
     --no-tests)  SKIP_TESTS=1 ;;
     --no-mcp)    SKIP_MCP=1 ;;
+    --with-rerank) WITH_RERANK=1 ;;
+    --with-hybrid) WITH_HYBRID=1 ;;
+    --extras=*)         EXTRAS_ARG="${arg#--extras=}" ;;
     --plugins=*)        PLUGINS_ARG="${arg#--plugins=}" ;;
     --plugins-scope=*)  PLUGINS_SCOPE="${arg#--plugins-scope=}" ;;
     -h|--help)
-      sed -n '1,18p' "$0"; exit 0 ;;
+      sed -n '1,22p' "$0"; exit 0 ;;
     *) die "unknown flag: $arg" ;;
   esac
 done
@@ -165,8 +174,39 @@ python -m pip install --upgrade pip wheel >/dev/null
 ok "pip upgraded"
 
 # ---------- 3. package install ----------
-step "Installing code-memory (editable, with dev extras)"
-pip install -e ".[dev]"
+# Decide optional extras before the install call so we pay the wheel
+# download cost exactly once.
+prompt_yes_no() {
+  # $1 = prompt text, $2 = default (y|n)
+  local prompt="$1" default="$2" ans
+  local hint="[y/N]"
+  [ "$default" = "y" ] && hint="[Y/n]"
+  read -r -p "  $prompt $hint " ans </dev/tty || ans=""
+  ans="$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')"
+  [ -z "$ans" ] && ans="$default"
+  [ "$ans" = "y" ] || [ "$ans" = "yes" ]
+}
+
+if [ -z "$EXTRAS_ARG" ] && [ "$WITH_RERANK" -eq 0 ] && [ "$WITH_HYBRID" -eq 0 ]; then
+  # Only interactive if stdin/stdout are a TTY.
+  if [ -t 0 ] && [ -t 1 ]; then
+    step "Optional extras"
+    echo "  [rerank]  cross-encoder rerank stage (sentence-transformers + torch, ~1.5 GB)."
+    echo "            Auto-fires on Apple Silicon / CUDA; CPU stays on bi-encoder."
+    echo "  [hybrid]  in-process BGE-M3 (FlagEmbedding) for dense+sparse retrieval (~2.3 GB)."
+    echo "            Default backend is Ollama (warm across hooks); hybrid is opt-in."
+    echo
+    if prompt_yes_no "Install [rerank] extra?" "y"; then WITH_RERANK=1; fi
+    if prompt_yes_no "Install [hybrid] extra? (heavy)" "n"; then WITH_HYBRID=1; fi
+  fi
+fi
+
+EXTRAS="dev"
+[ "$WITH_RERANK" -eq 1 ] && EXTRAS="${EXTRAS},rerank"
+[ "$WITH_HYBRID" -eq 1 ] && EXTRAS="${EXTRAS},hybrid"
+
+step "Installing code-memory (editable, extras: $EXTRAS)"
+pip install -e ".[${EXTRAS}]"
 ok "code-memory installed"
 
 # ---------- 4. .env ----------
@@ -278,17 +318,6 @@ resolve_plugin_selection() {
   done
 }
 
-prompt_yes_no() {
-  # $1 = prompt text, $2 = default (y|n)
-  local prompt="$1" default="$2" ans
-  local hint="[y/N]"
-  [ "$default" = "y" ] && hint="[Y/n]"
-  read -r -p "  $prompt $hint " ans </dev/tty || ans=""
-  ans="$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')"
-  [ -z "$ans" ] && ans="$default"
-  [ "$ans" = "y" ] || [ "$ans" = "yes" ]
-}
-
 if [ -n "$PLUGINS_ARG" ]; then
   resolve_plugin_selection "$PLUGINS_ARG"
 elif [ -t 0 ] && [ -t 1 ]; then
@@ -352,4 +381,9 @@ cat <<EOF
   Browse:
     FalkorDB  http://localhost:3000
     Qdrant    http://localhost:6333/dashboard
+
+  Optional knobs (see .env.example):
+    EMBED_BACKEND=flagembed    # opt-in in-process BGE-M3 (needs --with-hybrid)
+    CODEMEMORY_HYBRID=1        # dense+sparse RRF (only with flagembed backend)
+    CODEMEMORY_RERANK=auto     # CE rerank (needs --with-rerank; auto on MPS/CUDA)
 EOF
