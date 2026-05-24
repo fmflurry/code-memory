@@ -9,6 +9,7 @@
 #   ./scripts/install.sh --no-tests      # skip smoke tests
 #   ./scripts/install.sh --with-rerank   # install [rerank] extra (sentence-transformers + torch, ~1.5 GB)
 #   ./scripts/install.sh --with-hybrid   # install [hybrid] extra (FlagEmbedding + torch, m3 dense+sparse)
+#   ./scripts/install.sh --with-dotnet   # install [dotnet] extra (dnfile, ~200 KB; .NET DLL metadata indexing)
 #   ./scripts/install.sh --extras=none   # bypass interactive prompt; install only [dev]
 #   ./scripts/install.sh --plugins=opencode,claudecode
 #                                        # install named harness plugins (non-interactive)
@@ -46,6 +47,7 @@ SKIP_TESTS=0
 SKIP_MCP=0
 WITH_RERANK=0
 WITH_HYBRID=0
+WITH_DOTNET=0
 EXTRAS_ARG=""        # empty = interactive; "none" = skip extras prompt; other ignored
 PLUGINS_ARG=""       # empty = interactive; explicit value bypasses prompt
 PLUGINS_SCOPE="global"  # global | project
@@ -57,6 +59,7 @@ for arg in "$@"; do
     --no-mcp)    SKIP_MCP=1 ;;
     --with-rerank) WITH_RERANK=1 ;;
     --with-hybrid) WITH_HYBRID=1 ;;
+    --with-dotnet) WITH_DOTNET=1 ;;
     --extras=*)         EXTRAS_ARG="${arg#--extras=}" ;;
     --plugins=*)        PLUGINS_ARG="${arg#--plugins=}" ;;
     --plugins-scope=*)  PLUGINS_SCOPE="${arg#--plugins-scope=}" ;;
@@ -187,7 +190,7 @@ prompt_yes_no() {
   [ "$ans" = "y" ] || [ "$ans" = "yes" ]
 }
 
-if [ -z "$EXTRAS_ARG" ] && [ "$WITH_RERANK" -eq 0 ] && [ "$WITH_HYBRID" -eq 0 ]; then
+if [ -z "$EXTRAS_ARG" ] && [ "$WITH_RERANK" -eq 0 ] && [ "$WITH_HYBRID" -eq 0 ] && [ "$WITH_DOTNET" -eq 0 ]; then
   # Only interactive if stdin/stdout are a TTY.
   if [ -t 0 ] && [ -t 1 ]; then
     step "Optional extras"
@@ -195,15 +198,19 @@ if [ -z "$EXTRAS_ARG" ] && [ "$WITH_RERANK" -eq 0 ] && [ "$WITH_HYBRID" -eq 0 ];
     echo "            Auto-fires on Apple Silicon / CUDA; CPU stays on bi-encoder."
     echo "  [hybrid]  in-process BGE-M3 (FlagEmbedding) for dense+sparse retrieval (~2.3 GB)."
     echo "            Default backend is Ollama (warm across hooks); hybrid is opt-in."
+    echo "  [dotnet]  .NET DLL metadata indexing (dnfile, ~200 KB)."
+    echo "            Skip if no .csproj / .NET source in repos you ingest."
     echo
     if prompt_yes_no "Install [rerank] extra?" "y"; then WITH_RERANK=1; fi
     if prompt_yes_no "Install [hybrid] extra? (heavy)" "n"; then WITH_HYBRID=1; fi
+    if prompt_yes_no "Install [dotnet] extra?" "n"; then WITH_DOTNET=1; fi
   fi
 fi
 
 EXTRAS="dev"
 [ "$WITH_RERANK" -eq 1 ] && EXTRAS="${EXTRAS},rerank"
 [ "$WITH_HYBRID" -eq 1 ] && EXTRAS="${EXTRAS},hybrid"
+[ "$WITH_DOTNET" -eq 1 ] && EXTRAS="${EXTRAS},dotnet"
 
 step "Installing code-memory (editable, extras: $EXTRAS)"
 pip install -e ".[${EXTRAS}]"

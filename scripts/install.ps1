@@ -30,6 +30,11 @@
   in-process BGE-M3 for dense+sparse retrieval. Default backend stays
   Ollama unless you also set EMBED_BACKEND=flagembed.
 
+.PARAMETER WithDotnet
+  Install the [dotnet] extra (dnfile, ~200 KB). Enables .NET assembly
+  metadata indexing (Assembly + Type graph nodes from .dll referenced
+  via .csproj). Skip if no .NET source in repos you ingest.
+
 .PARAMETER Plugins
   Comma-separated whitelist of harness plugins to install:
   'opencode', 'claudecode', 'all', or 'none'. Bypasses the interactive
@@ -58,6 +63,7 @@ param(
   [switch]$NoMcp,
   [switch]$WithRerank,
   [switch]$WithHybrid,
+  [switch]$WithDotnet,
   [string]$Plugins = '',
   [ValidateSet('global', 'project')]
   [string]$PluginsScope = 'global',
@@ -176,7 +182,7 @@ Ok "pip upgraded"
 
 # ---------- 3. package install ----------
 # Resolve optional extras up front so we do one pip resolve.
-if ($ExtrasInteractive -and -not $WithRerank -and -not $WithHybrid) {
+if ($ExtrasInteractive -and -not $WithRerank -and -not $WithHybrid -and -not $WithDotnet) {
   $isTty = [Environment]::UserInteractive -and [Console]::IsInputRedirected -eq $false
   if ($isTty) {
     Step "Optional extras"
@@ -184,15 +190,19 @@ if ($ExtrasInteractive -and -not $WithRerank -and -not $WithHybrid) {
     Write-Host "            Auto-fires on Apple Silicon / CUDA; CPU stays on bi-encoder."
     Write-Host "  [hybrid]  in-process BGE-M3 (FlagEmbedding) for dense+sparse retrieval (~2.3 GB)."
     Write-Host "            Default backend is Ollama (warm across hooks); hybrid is opt-in."
+    Write-Host "  [dotnet]  .NET DLL metadata indexing (dnfile, ~200 KB)."
+    Write-Host "            Skip if no .csproj / .NET source in repos you ingest."
     Write-Host ""
-    if (Prompt-YesNo "Install [rerank] extra?" $true)  { $WithRerank = $true }
+    if (Prompt-YesNo "Install [rerank] extra?" $true)        { $WithRerank = $true }
     if (Prompt-YesNo "Install [hybrid] extra? (heavy)" $false) { $WithHybrid = $true }
+    if (Prompt-YesNo "Install [dotnet] extra?" $false)         { $WithDotnet = $true }
   }
 }
 
 $extras = @('dev')
 if ($WithRerank) { $extras += 'rerank' }
 if ($WithHybrid) { $extras += 'hybrid' }
+if ($WithDotnet) { $extras += 'dotnet' }
 $extrasJoined = ($extras -join ',')
 
 Step "Installing code-memory (editable, extras: $extrasJoined)"

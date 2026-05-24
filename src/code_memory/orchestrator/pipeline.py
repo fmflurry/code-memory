@@ -15,6 +15,8 @@ from ..episodic import Episode, EpisodicStore
 from ..episodic.sqlite_store import episode_payload, episode_text
 from ..extractor import ExtractedFile, Extractor, Symbol
 from ..extractor.csproj import CsprojInfo, walk_csprojs
+from ..extractor.dll import parse_assembly
+from ..extractor.nuget import resolve_refs
 from ..extractor.sanity import SUSPECT_THRESHOLD, SanitySummary
 from ..graph import FalkorStore, GraphEdge, GraphNode
 from ..vector import QdrantStore, VectorRecord
@@ -95,6 +97,7 @@ class IngestStats:
     resolver: dict[str, int] | None = None
     sanity: dict[str, object] | None = None
     projects: dict[str, int] | None = None
+    dlls: dict[str, int] | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -289,6 +292,127 @@ class Pipeline:
         if dry_run:
             return
         self._upsert_dotnet_projects(projects)
+        self._index_referenced_assemblies(projects, stats)
+
+    def _index_referenced_assemblies(
+        self,
+        projects: list[CsprojInfo],
+        stats: IngestStats,
+    ) -> None:
+        """Parse referenced DLLs and index their public type surface.
+
+        Layer on top of the csproj topology (PR1 shipped Project +
+        Package + PackageReference edges). This step turns the logical
+        ``<PackageReference>`` and ``<ProjectReference>`` into concrete
+        ``.dll`` paths, parses each via :func:`code_memory.extractor.dll.parse_assembly`,
+        and writes:
+
+        * ``Assembly`` nodes keyed by ``"Name, Version=X.Y.Z.W"``. Two
+          versions of the same lib stay distinct so the agent can see
+          when projects pin different versions of the same dep.
+        * ``Type`` nodes keyed by ``"{assembly_id}::{Namespace}.{Name}"``.
+          Only public types (top-level or nested-public); private
+          implementation detail stays unindexed.
+        * ``USES_ASSEMBLY`` edges (Project → Assembly).
+        * ``EXPOSES_TYPE`` edges (Assembly → Type).
+
+        DLL resolution leans on the NuGet global cache plus project
+        build outputs (see ``code_memory.extractor.nuget``). Failures
+        are silenced: DLLs are read-only metadata, not load-bearing.
+        ``stats.dlls`` carries the counters so users see how much of
+        the binary surface we managed to index.
+        """
+        # Dedupe DLL paths across the whole solution so a shared
+        # dependency parses exactly once even when many projects pull
+        # the same Newtonsoft.Json on disk. ``unresolved`` counts
+        # PackageReferences we couldn't locate (offline machine,
+        # unrestored NuGet cache).
+        path_to_consumers: dict[str, set[str]] = {}
+        unresolved = 0
+        for proj in projects:
+            refs = resolve_refs(proj)
+            for dll in refs.all_paths():
+                path_to_consumers.setdefault(str(dll), set()).add(proj.path)
+            for pkg in proj.package_references:
+                if pkg.name not in refs.package_dlls:
+                    unresolved += 1
+
+        if not path_to_consumers:
+            stats.dlls = {
+                "assemblies": 0,
+                "types": 0,
+                "skipped": 0,
+                "unresolved": unresolved,
+            }
+            return
+
+        nodes: list[GraphNode] = []
+        edges: list[GraphEdge] = []
+        seen_assembly_keys: set[str] = set()
+        seen_type_keys: set[str] = set()
+        skipped = 0
+
+        for dll_path, consumers in path_to_consumers.items():
+            info = parse_assembly(dll_path)
+            if info is None:
+                skipped += 1
+                continue
+            asm_key = info.identity
+            if asm_key not in seen_assembly_keys:
+                seen_assembly_keys.add(asm_key)
+                asm_props: dict[str, object] = {
+                    "name": info.name,
+                    "version": info.version,
+                    "path": info.path,
+                }
+                if info.public_key_token:
+                    asm_props["public_key_token"] = info.public_key_token
+                nodes.append(
+                    GraphNode(label="Assembly", key=asm_key, props=asm_props)
+                )
+                for tref in info.types:
+                    type_key = f"{asm_key}::{tref.namespace}.{tref.name}".rstrip(".")
+                    if type_key in seen_type_keys:
+                        continue
+                    seen_type_keys.add(type_key)
+                    type_props: dict[str, object] = {
+                        "name": tref.name,
+                        "namespace": tref.namespace,
+                        "kind": tref.kind,
+                        "sealed": tref.sealed,
+                        "assembly": asm_key,
+                    }
+                    nodes.append(
+                        GraphNode(label="Type", key=type_key, props=type_props)
+                    )
+                    edges.append(
+                        GraphEdge(
+                            type="EXPOSES_TYPE",
+                            src_label="Assembly",
+                            src_key=asm_key,
+                            dst_label="Type",
+                            dst_key=type_key,
+                        )
+                    )
+            for consumer in consumers:
+                edges.append(
+                    GraphEdge(
+                        type="USES_ASSEMBLY",
+                        src_label="Project",
+                        src_key=consumer,
+                        dst_label="Assembly",
+                        dst_key=asm_key,
+                    )
+                )
+
+        stats.dlls = {
+            "assemblies": len(seen_assembly_keys),
+            "types": len(seen_type_keys),
+            "skipped": skipped,
+            "unresolved": unresolved,
+        }
+        self.graph.upsert_nodes(nodes)
+        self.graph.upsert_edges(edges)
 
     def _upsert_dotnet_projects(self, projects: list[CsprojInfo]) -> None:
         nodes: list[GraphNode] = []
