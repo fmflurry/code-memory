@@ -130,8 +130,8 @@ def test_extract_csharp(tmp_path: Path) -> None:
     assert {"Greeter", "Hello", "IFoo", "Point", "Person", "Color"} <= names
     assert "System" in ex.imports
     assert "App.Bar" in ex.imports
-    assert "WriteLine" in ex.calls
-    assert "DoThing" in ex.calls
+    assert "WriteLine" in [c.name for c in ex.calls]
+    assert "DoThing" in [c.name for c in ex.calls]
 
 
 # ---------------------------------------------------------------- Razor
@@ -145,7 +145,7 @@ def test_extract_razor(tmp_path: Path) -> None:
     names = {s.name for s in ex.symbols}
     assert {"Greeting", "DoIt"} <= names
     assert "App.Bar.Baz" in ex.imports
-    assert "Run" in ex.calls
+    assert "Run" in [c.name for c in ex.calls]
 
 
 def test_extract_cshtml(tmp_path: Path) -> None:
@@ -170,8 +170,8 @@ def test_extract_vb(tmp_path: Path) -> None:
     assert "Util" in names  # module_block
     assert "System" in ex.imports
     assert "App.Bar" in ex.imports
-    assert "WriteLine" in ex.calls
-    assert "DoThing" in ex.calls
+    assert "WriteLine" in [c.name for c in ex.calls]
+    assert "DoThing" in [c.name for c in ex.calls]
 
 
 # ---------------------------------------------------------------- F#

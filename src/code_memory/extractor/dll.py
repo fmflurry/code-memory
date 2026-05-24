@@ -41,6 +41,23 @@ class TypeRef:
     sealed: bool = False
 
 
+@dataclass(frozen=True)
+class MemberRef:
+    """One public member of a Type — methods only at this layer.
+
+    Kept narrow on purpose: properties + events + fields can be added
+    when an agent needs them, but methods are what call-site
+    resolution will actually disambiguate against. Listing every
+    private field of every NuGet type would balloon the graph for
+    no return.
+    """
+
+    name: str
+    kind: str  # "method" | "constructor"
+    static: bool
+    params: int  # parameter count (without ``this``)
+
+
 @dataclass
 class AssemblyInfo:
     """Top-level result of parsing one DLL."""
@@ -246,3 +263,123 @@ def walk_dlls(paths: list[str | Path]) -> list[AssemblyInfo]:
         if info is not None:
             out.append(info)
     return out
+
+
+# --------------------------------------------------------------- members (on-demand)
+
+
+def parse_type_members(
+    dll_path: str | Path,
+    namespace: str,
+    name: str,
+) -> list[MemberRef] | None:
+    """Return the public methods declared on ``namespace.name`` in ``dll_path``.
+
+    Read-once, no caching — designed to back an MCP tool that queries
+    members lazily rather than bulk-indexing every member of every
+    referenced assembly (which would multiply the graph by 50-100x).
+
+    Returns:
+    * a list (possibly empty for a type with no public methods),
+    * ``None`` when the assembly can't be parsed, the type isn't
+      found, or dnfile isn't installed.
+    """
+    p = Path(dll_path).resolve()
+    try:
+        import dnfile
+    except ImportError:
+        return None
+    try:
+        pe = dnfile.dnPE(str(p), fast_load=True)
+        pe.parse_data_directories()
+    except Exception:  # noqa: BLE001
+        return None
+    if pe.net is None or pe.net.mdtables is None:
+        return None
+
+    td_table = pe.net.mdtables.TypeDef
+    if td_table is None:
+        return None
+
+    target_row = None
+    target_idx = None
+    for i, row in enumerate(td_table.rows):
+        if _row_text(row, "TypeName") == name and (_row_text(row, "TypeNamespace") or "") == namespace:
+            target_row = row
+            target_idx = i
+            break
+    if target_row is None or target_idx is None:
+        return None
+
+    methods = _members_for_type(td_table, target_row, target_idx)
+    return methods
+
+
+def _members_for_type(
+    td_table: object, row: object, idx: int
+) -> list[MemberRef]:
+    """Return public methods declared directly on this TypeDef.
+
+    Methods inherited from base types are NOT listed — the row's
+    MethodList only contains declarations local to the type. Adding
+    inherited members requires walking the BaseType pointer chain,
+    which we skip for the same balloon-the-graph reason as bulk
+    members.
+    """
+    method_list = getattr(row, "MethodList", None)
+    if not method_list:
+        return []
+
+    # The next TypeDef row's MethodList tells us where this row's
+    # methods end. dnfile resolves the inclusive range for us via the
+    # MDTableIndex pointers — each entry is one MethodDef row.
+    out: list[MemberRef] = []
+    seen: set[tuple[str, int, bool]] = set()
+    for idx_ref in method_list:
+        try:
+            method_row = idx_ref.table.rows[idx_ref.row_index - 1]
+        except (AttributeError, IndexError):
+            continue
+        flags = getattr(method_row, "Flags", None)
+        if flags is None:
+            continue
+        if not getattr(flags, "mdPublic", False):
+            continue
+        name = _row_text(method_row, "Name") or ""
+        if not name:
+            continue
+        is_ctor = name in (".ctor", ".cctor")
+        param_count = _method_param_count(method_row)
+        static = bool(getattr(flags, "mdStatic", False))
+        key = (name, param_count, static)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            MemberRef(
+                name=name,
+                kind="constructor" if is_ctor else "method",
+                static=static,
+                params=param_count,
+            )
+        )
+    return out
+
+
+def _method_param_count(method_row: object) -> int:
+    """Best-effort param count from the MethodDef's ParamList length.
+
+    The ParamList includes the return value slot for some signatures
+    (when the method has marshalling/attribute metadata on its
+    return). We can't disambiguate that without parsing the method
+    signature blob — which is out of scope here. Off-by-one on rare
+    methods is acceptable; the goal is overload disambiguation, not
+    exact reflection.
+    """
+    plist = getattr(method_row, "ParamList", None)
+    if plist is None:
+        return 0
+    try:
+        return len(plist)
+    except TypeError:
+        return 0

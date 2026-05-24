@@ -57,7 +57,8 @@ def test_csharp_with_french_accents(tmp_path: Path) -> None:
     assert "System" in ex.imports
     assert "Acme.Sample.Common" in ex.imports
     # Callee resolution should also produce un-truncated names.
-    assert "InitialiserDocument" in ex.calls or "DonnerDocumentRules" in ex.calls
+    call_names = [c.name for c in ex.calls]
+    assert "InitialiserDocument" in call_names or "DonnerDocumentRules" in call_names
 
 
 def test_csharp_with_utf8_bom(tmp_path: Path) -> None:

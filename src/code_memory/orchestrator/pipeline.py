@@ -18,6 +18,7 @@ from ..extractor.csproj import CsprojInfo, walk_csprojs
 from ..extractor.dll import parse_assembly
 from ..extractor.nuget import resolve_refs
 from ..extractor.sanity import SUSPECT_THRESHOLD, SanitySummary
+from ..extractor.sln import walk_solutions
 from ..graph import FalkorStore, GraphEdge, GraphNode
 from ..vector import QdrantStore, VectorRecord
 from . import git_delta
@@ -98,6 +99,7 @@ class IngestStats:
     sanity: dict[str, object] | None = None
     projects: dict[str, int] | None = None
     dlls: dict[str, int] | None = None
+    solutions: dict[str, int] | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -295,6 +297,7 @@ class Pipeline:
         self._upsert_dotnet_projects(projects)
         self._index_referenced_assemblies(projects, stats)
         self._index_file_containment(projects, stats)
+        self._index_solutions(root, stats)
 
     def _index_referenced_assemblies(
         self,
@@ -412,6 +415,64 @@ class Pipeline:
             "types": len(seen_type_keys),
             "skipped": skipped,
             "unresolved": unresolved,
+        }
+        self.graph.upsert_nodes(nodes)
+        self.graph.upsert_edges(edges)
+
+    def _index_solutions(self, root: Path, stats: IngestStats) -> None:
+        """Walk `.sln` files and emit Solution nodes + Project membership.
+
+        Schema added:
+
+        * ``Solution`` node keyed by the solution's absolute path with
+          ``name`` and ``project_count``.
+        * ``MEMBER_OF`` edge from each indexed Project to the
+          Solution(s) that include it. A single project can be a
+          member of multiple solutions (shared infra in monorepos);
+          all edges are emitted.
+
+        Solutions whose `Project(...)` entries point at csprojs we
+        didn't index (relative path goes outside the repo) end up
+        with fewer ``MEMBER_OF`` edges than their declared project
+        count — the discrepancy lives in ``stats.solutions``.
+        """
+        try:
+            solutions = walk_solutions(root)
+        except Exception as e:  # noqa: BLE001
+            stats.notes.append(f"sln indexing skipped: {e}")
+            return
+        if not solutions:
+            return
+
+        nodes: list[GraphNode] = []
+        edges: list[GraphEdge] = []
+        total_members = 0
+        for sln in solutions:
+            nodes.append(
+                GraphNode(
+                    label="Solution",
+                    key=sln.path,
+                    props={
+                        "name": sln.name,
+                        "project_count": len(sln.projects),
+                    },
+                )
+            )
+            for sp in sln.projects:
+                total_members += 1
+                edges.append(
+                    GraphEdge(
+                        type="MEMBER_OF",
+                        src_label="Project",
+                        src_key=sp.csproj_path,
+                        dst_label="Solution",
+                        dst_key=sln.path,
+                        props={"guid": sp.guid},
+                    )
+                )
+        stats.solutions = {
+            "solutions": len(solutions),
+            "memberships": total_members,
         }
         self.graph.upsert_nodes(nodes)
         self.graph.upsert_edges(edges)
@@ -686,6 +747,8 @@ class Pipeline:
                 # ``file`` / ``start`` / ``end`` reflect *one* part. The
                 # ``partial`` flag tells consumers to expect siblings.
                 props["partial"] = True
+            if s.param_count is not None:
+                props["params"] = s.param_count
             nodes.append(GraphNode(label="Symbol", key=sym_key, props=props))
             edges.append(
                 GraphEdge(
@@ -713,23 +776,60 @@ class Pipeline:
                 )
             )
 
-        seen_calls = set()
-        for callee in ex.calls:
-            if callee in seen_calls:
+        # Calls are now (name, arity) pairs. Dedupe on the pair so two
+        # call sites of ``Run()`` collapse, but ``Run()`` and ``Run(x)``
+        # both contribute their own edges — the resolver uses the
+        # arity downstream to disambiguate overloads.
+        seen_calls: set[tuple[str, int]] = set()
+        for call in ex.calls:
+            key_pair = (call.name, call.arity)
+            if key_pair in seen_calls:
                 continue
-            seen_calls.add(callee)
+            seen_calls.add(key_pair)
             edges.append(
                 GraphEdge(
                     type="CALLS",
                     src_label="File",
                     src_key=ex.path,
                     dst_label="Symbol",
-                    dst_key=f"name::{callee}",
+                    dst_key=f"name::{call.name}",
+                    props={"unresolved": True, "args": call.arity},
+                )
+            )
+            nodes.append(
+                GraphNode(
+                    label="Symbol",
+                    key=f"name::{call.name}",
+                    props={"name": call.name, "unresolved": True},
+                )
+            )
+
+        # Razor / Blazor DI: emit INJECTS edges to the same placeholder
+        # Symbol pool so the resolver can rewrite them to real Type /
+        # Symbol targets in the same pass that handles calls. Keeping
+        # the edge type distinct preserves the semantic ("X is a DI
+        # dependency of this file", not "X is called by this file").
+        seen_injects: set[str] = set()
+        for injected in ex.injects:
+            if injected in seen_injects:
+                continue
+            seen_injects.add(injected)
+            edges.append(
+                GraphEdge(
+                    type="INJECTS",
+                    src_label="File",
+                    src_key=ex.path,
+                    dst_label="Symbol",
+                    dst_key=f"name::{injected}",
                     props={"unresolved": True},
                 )
             )
             nodes.append(
-                GraphNode(label="Symbol", key=f"name::{callee}", props={"name": callee, "unresolved": True})
+                GraphNode(
+                    label="Symbol",
+                    key=f"name::{injected}",
+                    props={"name": injected, "unresolved": True},
+                )
             )
 
         self.graph.upsert_nodes(nodes)

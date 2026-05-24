@@ -34,7 +34,7 @@ def test_extract_ts(tmp_path: Path) -> None:
     names = [s.name for s in ex.symbols]
     assert "hello" in names
     assert any("bar" in m for m in ex.imports)
-    assert "greet" in ex.calls
+    assert "greet" in [c.name for c in ex.calls]
 
 
 def test_extract_py(tmp_path: Path) -> None:

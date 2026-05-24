@@ -59,6 +59,12 @@ CALL_NODE_TYPES = {
     "call",
     "invocation_expression",
     "invocation",  # VB
+    # C# / VB / Razor: ``new Foo()`` parses as ``object_creation_expression``
+    # rather than ``invocation_expression``. Without this, calls to
+    # constructors (factories, DI registrations, ``new Builder().X()``) never
+    # become CALLS edges, which is the #1 reason the call graph looks empty
+    # on real .NET codebases.
+    "object_creation_expression",
 }
 
 IMPORT_NODE_TYPES = {
@@ -68,6 +74,13 @@ IMPORT_NODE_TYPES = {
     "razor_using_directive",  # Razor
     "imports_statement",  # VB
     "import_decl",  # F#
+}
+
+# Razor / Blazor ``@inject TypeName Member`` directives. Each one is
+# a DI dependency declaration that we want as a graph edge from the
+# file to the injected type.
+INJECT_NODE_TYPES = {
+    "razor_inject_directive",
 }
 
 
@@ -80,6 +93,24 @@ class Symbol:
     snippet: str
     namespace: str | None = None
     partial: bool = False
+    # Parameter count for callable kinds (method_declaration,
+    # function_declaration, ...). ``None`` when the kind is not
+    # callable (class_declaration, etc.) or when the parser couldn't
+    # locate a parameter_list child.
+    param_count: int | None = None
+
+
+@dataclass(frozen=True)
+class Call:
+    """One call site: ``name(args)`` with arity captured.
+
+    Arity feeds the resolver's overload-disambiguation tier: when
+    multiple definitions share the same name (classic C# / Java
+    overload pattern), prefer the one whose parameter count matches.
+    """
+
+    name: str
+    arity: int
 
 
 @dataclass
@@ -88,7 +119,10 @@ class ExtractedFile:
     lang: str
     symbols: list[Symbol] = field(default_factory=list)
     imports: list[str] = field(default_factory=list)
-    calls: list[str] = field(default_factory=list)
+    calls: list[Call] = field(default_factory=list)
+    # DI declarations: list of injected type names (Razor ``@inject TypeName Member``).
+    # Populated for ``.razor`` / ``.cshtml`` files; empty for other languages.
+    injects: list[str] = field(default_factory=list)
     source: str = ""
     generated: bool = False
 
@@ -219,6 +253,20 @@ _PARTIAL_CAPABLE_KINDS = {
     "record_declaration",
 }
 
+# Symbol kinds that take parameters — we record their arity for the
+# resolver's overload disambiguation tier. Non-callable kinds
+# (classes, modules, enums) skip the count.
+_CALLABLE_KINDS = {
+    "function_declaration",
+    "function_definition",
+    "method_definition",
+    "method_declaration",
+    "constructor_declaration",
+    "delegate_declaration",
+    "arrow_function",
+    "function_or_value_defn",  # F#
+}
+
 
 def _is_partial_modifier(node: Node, source: bytes) -> bool:
     """``True`` when this is a ``modifier`` node carrying ``partial``."""
@@ -266,6 +314,7 @@ def _walk(
             partial = (
                 t in _PARTIAL_CAPABLE_KINDS and _has_partial_modifier(node, source)
             )
+            param_count = _param_count(node) if t in _CALLABLE_KINDS else None
             ex.symbols.append(
                 Symbol(
                     name=name,
@@ -275,16 +324,21 @@ def _walk(
                     snippet=_slice(source, node),
                     namespace=".".join(ns_stack) if ns_stack else None,
                     partial=partial,
+                    param_count=param_count,
                 )
             )
     elif t in IMPORT_NODE_TYPES:
         mod = _import_module(node, source)
         if mod:
             ex.imports.append(mod)
+    elif t in INJECT_NODE_TYPES:
+        injected = _inject_type(node, source)
+        if injected:
+            ex.injects.append(injected)
     elif t in CALL_NODE_TYPES:
         callee = _callee_name(node, source)
         if callee:
-            ex.calls.append(callee)
+            ex.calls.append(Call(name=callee, arity=_call_arity(node)))
 
     for child in node.children:
         _walk(child, source, ex, ns_stack)
@@ -351,6 +405,90 @@ def _import_module(node: Node, source: bytes) -> str | None:
     return None
 
 
+_PARAMETER_LIST_TYPES = {
+    "parameter_list",
+    "formal_parameters",
+    "parameters",  # F# / Python
+}
+
+_PARAMETER_NODE_TYPES = {
+    "parameter",
+    "required_parameter",
+    "optional_parameter",
+    "rest_parameter",
+    "typed_parameter",
+    "typed_default_parameter",
+    "default_parameter",
+    "identifier",  # F# value bindings expose bare identifiers
+}
+
+
+def _param_count(node: Node) -> int | None:
+    """Count parameters of a callable declaration.
+
+    Looks for a ``parameter_list`` (or grammar-specific equivalent)
+    child and counts its parameter children, ignoring punctuation
+    tokens like ``(``, ``)``, ``,``. Returns ``None`` when no
+    parameter list child is found — that signals the caller to leave
+    ``param_count`` unset rather than write a misleading 0.
+    """
+    for child in node.children:
+        if child.type in _PARAMETER_LIST_TYPES:
+            count = 0
+            for sub in child.children:
+                if sub.type in _PARAMETER_NODE_TYPES:
+                    count += 1
+            return count
+    return None
+
+
+def _call_arity(node: Node) -> int:
+    """Count arguments at a call site.
+
+    Returns the number of argument children in the call's argument
+    list. Falls back to ``0`` when we can't find one — that matches
+    what tree-sitter reports for property/field references parsed as
+    invocation_expression (rare, but happens in C# generated code).
+    """
+    for child in node.children:
+        if child.type in {"argument_list", "arguments"}:
+            count = 0
+            for sub in child.children:
+                if sub.type in {"argument", "spread_element"}:
+                    count += 1
+                elif sub.type not in {"(", ")", ",", "{", "}"}:
+                    # Some grammars (Python) emit expression children
+                    # directly without an ``argument`` wrapper.
+                    count += 1
+            return count
+    return 0
+
+
+def _inject_type(node: Node, source: bytes) -> str | None:
+    """Pull the injected type name out of a Razor ``@inject`` directive.
+
+    Grammar: ``@inject <Type> <Member>``. Tree-sitter wraps the
+    `<Type> <Member>` pair in a ``variable_declaration``; the type is
+    the first ``identifier`` / ``qualified_name`` / ``generic_name``
+    child. We capture the **type name only** — for ``ILogger<Foo>``
+    that's ``ILogger`` (the resolver matches by bare identifier;
+    generic parameters live at the call site, not in the graph).
+    """
+    for child in node.children:
+        if child.type == "variable_declaration":
+            for sub in child.children:
+                if sub.type in {"identifier", "qualified_name", "type_identifier"}:
+                    return _slice(source, sub)
+                if sub.type == "generic_name":
+                    # Drop the ``<T, ...>`` tail by finding the first
+                    # plain identifier under it.
+                    for inner in sub.children:
+                        if inner.type in {"identifier", "type_identifier"}:
+                            return _slice(source, inner)
+            break
+    return None
+
+
 # Callees that are stdlib / framework / RxJS / Angular DI built-ins.
 # Filtered at extract time so they never enter the graph as CALLS edges;
 # they pollute "who calls X" queries with high-frequency noise.
@@ -388,7 +526,15 @@ def _callee_name(node: Node, source: bytes) -> str | None:
     Returns ``None`` for callees in :data:`CALLEE_STOPLIST` so they don't
     enter the graph as noise.
     """
-    fn = node.child_by_field_name("function") or node.child_by_field_name("callee")
+    # ``new Foo()`` exposes the constructor target under the ``type`` field;
+    # plain calls use ``function`` / ``callee``. Without the ``type`` branch
+    # the first-child fallback would land on the ``new`` keyword and miss
+    # every constructor invocation.
+    fn = (
+        node.child_by_field_name("type")
+        or node.child_by_field_name("function")
+        or node.child_by_field_name("callee")
+    )
     if fn is None and node.children:
         fn = node.children[0]
     if fn is None:

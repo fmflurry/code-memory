@@ -40,6 +40,7 @@ class _FakeGraph:
         file_project: list[tuple[str, str]] | None = None,  # (file, project_key)
         project_assemblies: list[tuple[str, str]] | None = None,  # (project_key, asm_key)
         type_index: list[tuple[str, str, str]] | None = None,  # (type_name, type_key, asm_key)
+        inject_edges: list[tuple[str, str]] | None = None,  # (file, placeholder_key)
     ) -> None:
         self.defines = list(defines)
         self.imports = list(imports)
@@ -48,25 +49,41 @@ class _FakeGraph:
         self.file_project = list(file_project or [])
         self.project_assemblies = list(project_assemblies or [])
         self.type_index = list(type_index or [])
+        self.inject_edges = list(inject_edges or [])
         self.writes: list[tuple[str, dict[str, Any]]] = []
 
     def query(self, q: str, params: dict[str, Any] | None = None) -> _QueryResult:
         params = params or {}
         # Read paths — match by structural keywords.
-        if "MATCH (f:File)-[:DEFINES]->(s:Symbol)" in q and "RETURN f.key, s.name, s.key" in q:
-            return _QueryResult([list(r) for r in self.defines])
+        if "MATCH (f:File)-[:DEFINES]->(s:Symbol)" in q and "s.name" in q and "s.key" in q:
+            # New query shape includes s.params; pad with None when
+            # tests didn't supply a fourth column.
+            return _QueryResult(
+                [
+                    list(r) + ([None] if len(r) == 3 else [])
+                    for r in self.defines
+                ]
+            )
         if "MATCH (f:File)-[:IMPORTS]->(m:Module)" in q:
             return _QueryResult([list(r) for r in self.imports])
         if "STARTS WITH $p RETURN s.key, s.name" in q:
             return _QueryResult([list(r) for r in self.placeholders])
-        if "(f:File)-[:CALLS]->(s:Symbol)" in q and "STARTS WITH $p" in q and "RETURN f.key, s.key" in q:
-            return _QueryResult([list(r) for r in self.calls])
+        if "(f:File)-[r:CALLS]->(s:Symbol)" in q and "STARTS WITH $p" in q:
+            # Tests supply (file, placeholder) pairs; the resolver
+            # asks for arity too — pad with -1 for "unknown arity".
+            return _QueryResult([list(r) + [-1] for r in self.calls])
         if "[:CONTAINED_IN]" in q:
             return _QueryResult([list(r) for r in self.file_project])
         if "[:USES_ASSEMBLY]" in q:
             return _QueryResult([list(r) for r in self.project_assemblies])
         if "[:EXPOSES_TYPE]" in q:
             return _QueryResult([list(r) for r in self.type_index])
+        if (
+            "(f:File)-[:INJECTS]" in q
+            and "STARTS WITH $p" in q
+            and "RETURN f.key, s.key" in q
+        ):
+            return _QueryResult([list(r) for r in self.inject_edges])
 
         # Write paths — apply the rewrite to the in-memory tables.
         if "UNWIND $rows" in q and "MERGE (f)-[r:CALLS]->(t)" in q:
@@ -77,8 +94,18 @@ class _FakeGraph:
                     if not (e[0] == row["file"] and e[1] == row["placeholder"])
                 ]
             return _QueryResult([])
+        if "UNWIND $rows" in q and "MERGE (f)-[r:INJECTS]->(t)" in q:
+            for row in params["rows"]:
+                self.writes.append(("rewrite_inject", row))
+                self.inject_edges = [
+                    e for e in self.inject_edges
+                    if not (e[0] == row["file"] and e[1] == row["placeholder"])
+                ]
+            return _QueryResult([])
         if "NOT ( ()-[:CALLS]->(s) )" in q:
-            referenced = {e[1] for e in self.calls}
+            referenced = {e[1] for e in self.calls} | {
+                e[1] for e in self.inject_edges
+            }
             deleted = 0
             new_placeholders = []
             for key, name in self.placeholders:

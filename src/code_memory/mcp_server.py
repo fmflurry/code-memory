@@ -263,6 +263,39 @@ _TOOLS: list[Tool] = [
             "required": ["symbol", "project"],
         },
     ),
+    Tool(
+        name="codememory_assembly_members",
+        description=(
+            "List the public methods declared on a Type from an indexed .NET "
+            "Assembly. Members are NOT bulk-indexed (would multiply the graph "
+            "by 50-100x for a typical solution); this tool reads them on-demand "
+            "from the DLL when the agent needs to disambiguate an overload or "
+            "look up an API surface. Same DLL may be parsed multiple times — "
+            "fast enough for interactive use (~tens of ms)."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "description": (
+                        "Fully qualified type name (Namespace.Name). Run "
+                        "codememory_definitions on the bare name first if "
+                        "you're unsure which assembly exposes it."
+                    ),
+                },
+                "assembly": {
+                    "type": "string",
+                    "description": (
+                        "Optional assembly identity ('Name, Version=X.Y.Z.W'). "
+                        "When omitted, the first matching assembly wins."
+                    ),
+                },
+                "project": _project_schema(),
+            },
+            "required": ["type", "project"],
+        },
+    ),
 ]
 
 
@@ -456,6 +489,79 @@ def _definitions(args: dict[str, Any]) -> list[TextContent]:
     return _text({"project": slug, "symbol": args["symbol"], "definitions": rows})
 
 
+def _assembly_members(args: dict[str, Any]) -> list[TextContent]:
+    """List the public methods of one Type from an indexed Assembly.
+
+    Members aren't bulk-indexed (a NuGet pkg can expose 10k+ of them).
+    This tool reads them on-demand directly from the DLL when the
+    agent needs to disambiguate an overload or look up an API surface.
+    """
+    from .extractor.dll import parse_type_members
+
+    g, slug = _graph_for(_require_project(args))
+    type_arg = args.get("type")
+    if not isinstance(type_arg, str) or not type_arg:
+        return _text({"error": "ValueError", "message": "type is required"})
+
+    namespace, _, name = type_arg.rpartition(".")
+    if not name:
+        return _text(
+            {"error": "ValueError", "message": "type must be fully qualified"}
+        )
+
+    asm_filter = args.get("assembly")
+    cypher = (
+        "MATCH (a:Assembly)-[:EXPOSES_TYPE]->(t:Type) "
+        "WHERE t.name = $name AND t.namespace = $ns"
+    )
+    params: dict[str, Any] = {"name": name, "ns": namespace}
+    if isinstance(asm_filter, str) and asm_filter:
+        cypher += " AND a.key = $asm"
+        params["asm"] = asm_filter
+    cypher += " RETURN a.key, a.path"
+
+    rows = g.graph.query(cypher, params).result_set
+    if not rows:
+        return _text(
+            {
+                "project": slug,
+                "type": type_arg,
+                "assembly": asm_filter,
+                "error": "type not found in indexed assemblies",
+            }
+        )
+
+    for asm_key, asm_path in rows:
+        members = parse_type_members(asm_path, namespace, name)
+        if members is None:
+            continue
+        return _text(
+            {
+                "project": slug,
+                "type": type_arg,
+                "assembly": asm_key,
+                "count": len(members),
+                "members": [
+                    {
+                        "name": m.name,
+                        "kind": m.kind,
+                        "static": m.static,
+                        "params": m.params,
+                    }
+                    for m in members
+                ],
+            }
+        )
+
+    return _text(
+        {
+            "project": slug,
+            "type": type_arg,
+            "error": "no parsable DLL found for the type's assemblies",
+        }
+    )
+
+
 _HANDLERS = {
     "codememory_retrieve": _retrieve,
     "codememory_record": _record,
@@ -466,6 +572,7 @@ _HANDLERS = {
     "codememory_importers": _importers,
     "codememory_dependencies": _dependencies,
     "codememory_definitions": _definitions,
+    "codememory_assembly_members": _assembly_members,
 }
 
 
