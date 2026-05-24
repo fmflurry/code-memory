@@ -12,7 +12,13 @@ Resolution tiers (highest confidence first):
 2. **imported** — F imports a file/module that defines X → link to that.
 3. **project-unique** — exactly one File in the project defines X → link
    with medium confidence.
-4. **ambiguous / external** — leave the placeholder in place so the
+4. **assembly-exposed** — F belongs to a .NET Project whose referenced
+   Assemblies expose exactly one Type named X → link to that Type with
+   "external" confidence. This is what turns calls like
+   ``JsonConvert.SerializeObject(...)`` into resolved edges pointing at
+   the Newtonsoft.Json assembly instead of leaving them as orphan
+   placeholders.
+5. **ambiguous / external** — leave the placeholder in place so the
    structure is preserved but downstream graph queries can filter it.
 
 Imports are resolved best-effort:
@@ -44,8 +50,10 @@ RESOLVABLE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py")
 class ResolvedEdge:
     file_path: str
     placeholder_key: str  # e.g. "name::getBearerToken"
-    target_key: str  # real Symbol key, e.g. "/abs/path::getBearerToken#12"
-    confidence: str  # "high" | "medium"
+    target_key: str  # real Symbol or Type key
+    confidence: str  # "high" | "medium" | "external"
+    target_label: str = "Symbol"  # "Symbol" (in-project) | "Type" (assembly)
+    via_assembly: str | None = None  # set when target_label == "Type"
 
 
 @dataclass
@@ -55,6 +63,7 @@ class ResolverStats:
     edges_resolved_same_file: int = 0
     edges_resolved_imported: int = 0
     edges_resolved_unique: int = 0
+    edges_resolved_assembly: int = 0
     edges_left_ambiguous: int = 0
     edges_left_external: int = 0
     placeholders_deleted: int = 0
@@ -100,6 +109,12 @@ class _GraphState:
     name_index: dict[str, list[tuple[str, str]]]
     # set of project file paths (resolved absolute), for relative import lookup
     project_files: set[str]
+    # file_path -> project_key (CONTAINED_IN); empty for non-.NET projects
+    file_project: dict[str, str]
+    # project_key -> set of assembly_key references (USES_ASSEMBLY)
+    project_assemblies: dict[str, set[str]]
+    # type_name -> list of (assembly_key, type_key) tuples
+    type_index: dict[str, list[tuple[str, str]]]
 
     @classmethod
     def load(cls, graph: FalkorStore) -> _GraphState:
@@ -139,6 +154,30 @@ class _GraphState:
         ).result_set
         call_edges: list[tuple[str, str]] = [(f, s) for f, s in rows]
 
+        # File→Project containment (only emitted for .NET files).
+        rows = graph.graph.query(
+            "MATCH (f:File)-[:CONTAINED_IN]->(p:Project) RETURN f.key, p.key"
+        ).result_set
+        file_project: dict[str, str] = {f: p for f, p in rows}
+
+        # Project→Assembly use edges.
+        rows = graph.graph.query(
+            "MATCH (p:Project)-[:USES_ASSEMBLY]->(a:Assembly) "
+            "RETURN p.key, a.key"
+        ).result_set
+        project_assemblies: dict[str, set[str]] = defaultdict(set)
+        for p_key, a_key in rows:
+            project_assemblies[p_key].add(a_key)
+
+        # Type name index across all indexed assemblies.
+        rows = graph.graph.query(
+            "MATCH (a:Assembly)-[:EXPOSES_TYPE]->(t:Type) "
+            "RETURN t.name, t.key, a.key"
+        ).result_set
+        type_index: dict[str, list[tuple[str, str]]] = defaultdict(list)
+        for t_name, t_key, a_key in rows:
+            type_index[t_name].append((a_key, t_key))
+
         return cls(
             file_defines=dict(file_defines),
             file_imports=dict(file_imports),
@@ -146,6 +185,9 @@ class _GraphState:
             call_edges=call_edges,
             name_index=dict(name_index),
             project_files=set(file_defines.keys()),
+            file_project=file_project,
+            project_assemblies=dict(project_assemblies),
+            type_index=dict(type_index),
         )
 
 
@@ -197,10 +239,61 @@ def _resolve_all(state: _GraphState, stats: ResolverStats) -> list[ResolvedEdge]
             continue
         if len(candidates) > 1:
             stats.edges_left_ambiguous += 1
-        else:
-            stats.edges_left_external += 1
+            continue
+
+        # (4) assembly-exposed — only for .NET files whose project we
+        # indexed. Match the call name against Type nodes from any
+        # assembly the file's project references; require a unique
+        # hit to avoid resolving ambiguously across overlapping
+        # surface (e.g. ``Path`` exists in both BCL and a 3rd-party
+        # lib). Cross-language calls into an assembly never trigger
+        # this because non-.NET files don't get CONTAINED_IN edges.
+        asm_target = _resolve_via_assembly(file_path, name, state)
+        if asm_target is not None:
+            target_key, asm_key = asm_target
+            resolutions.append(
+                ResolvedEdge(
+                    file_path=file_path,
+                    placeholder_key=placeholder_key,
+                    target_key=target_key,
+                    confidence="external",
+                    target_label="Type",
+                    via_assembly=asm_key,
+                )
+            )
+            stats.edges_resolved_assembly += 1
+            continue
+
+        stats.edges_left_external += 1
 
     return resolutions
+
+
+def _resolve_via_assembly(
+    file_path: str, name: str, state: _GraphState
+) -> tuple[str, str] | None:
+    """Pick the unique ``(type_key, assembly_key)`` that resolves ``name``.
+
+    Returns ``None`` when:
+    * the file isn't contained in any project (non-.NET, or owned by a
+      project we didn't index),
+    * the type name isn't exposed by any indexed assembly,
+    * multiple referenced assemblies expose the same type name
+      (would be a coin flip; safer to leave it unresolved so the agent
+      sees ambiguity).
+    """
+    proj_key = state.file_project.get(file_path)
+    if proj_key is None:
+        return None
+    asm_set = state.project_assemblies.get(proj_key)
+    if not asm_set:
+        return None
+    candidates = state.type_index.get(name, [])
+    matches = [(t_key, a_key) for a_key, t_key in candidates if a_key in asm_set]
+    if len(matches) != 1:
+        return None
+    type_key, asm_key = matches[0]
+    return type_key, asm_key
 
 
 def _pick_target(
@@ -273,10 +366,16 @@ def _resolve_relative_import(
 def _apply_resolutions(
     graph: FalkorStore, resolutions: list[ResolvedEdge]
 ) -> None:
-    """Rewrite resolved CALLS edges from placeholder to real Symbol nodes."""
+    """Rewrite resolved CALLS edges from placeholder to real targets.
+
+    Targets are either ``Symbol`` (in-project resolution) or ``Type``
+    (assembly-exposed resolution). The two cases are issued as
+    separate Cypher batches because FalkorDB has no polymorphic node
+    match — the destination label has to be concrete in the pattern.
+    """
     if not resolutions:
         return
-    payload = [
+    symbol_rows = [
         {
             "file": r.file_path,
             "placeholder": r.placeholder_key,
@@ -284,18 +383,45 @@ def _apply_resolutions(
             "conf": r.confidence,
         }
         for r in resolutions
+        if r.target_label == "Symbol"
     ]
-    graph.graph.query(
-        """
-        UNWIND $rows AS row
-        MATCH (f:File {key: row.file})-[old:CALLS]->(:Symbol {key: row.placeholder})
-        MATCH (t:Symbol {key: row.target})
-        DELETE old
-        MERGE (f)-[r:CALLS]->(t)
-        SET r.confidence = row.conf, r.resolved = true
-        """,
-        {"rows": payload},
-    )
+    type_rows = [
+        {
+            "file": r.file_path,
+            "placeholder": r.placeholder_key,
+            "target": r.target_key,
+            "conf": r.confidence,
+            "via": r.via_assembly,
+        }
+        for r in resolutions
+        if r.target_label == "Type"
+    ]
+    if symbol_rows:
+        graph.graph.query(
+            """
+            UNWIND $rows AS row
+            MATCH (f:File {key: row.file})-[old:CALLS]->(:Symbol {key: row.placeholder})
+            MATCH (t:Symbol {key: row.target})
+            DELETE old
+            MERGE (f)-[r:CALLS]->(t)
+            SET r.confidence = row.conf, r.resolved = true
+            """,
+            {"rows": symbol_rows},
+        )
+    if type_rows:
+        graph.graph.query(
+            """
+            UNWIND $rows AS row
+            MATCH (f:File {key: row.file})-[old:CALLS]->(:Symbol {key: row.placeholder})
+            MATCH (t:Type {key: row.target})
+            DELETE old
+            MERGE (f)-[r:CALLS]->(t)
+            SET r.confidence = row.conf,
+                r.resolved = true,
+                r.via_assembly = row.via
+            """,
+            {"rows": type_rows},
+        )
 
 
 def _cleanup_orphans(

@@ -36,11 +36,18 @@ class _FakeGraph:
         imports: list[tuple[str, str]],  # (file, module_key)
         placeholders: list[tuple[str, str]],  # (placeholder_key, sym_name)
         calls: list[tuple[str, str]],  # (file, placeholder_key)
+        *,
+        file_project: list[tuple[str, str]] | None = None,  # (file, project_key)
+        project_assemblies: list[tuple[str, str]] | None = None,  # (project_key, asm_key)
+        type_index: list[tuple[str, str, str]] | None = None,  # (type_name, type_key, asm_key)
     ) -> None:
         self.defines = list(defines)
         self.imports = list(imports)
         self.placeholders = list(placeholders)
         self.calls = list(calls)
+        self.file_project = list(file_project or [])
+        self.project_assemblies = list(project_assemblies or [])
+        self.type_index = list(type_index or [])
         self.writes: list[tuple[str, dict[str, Any]]] = []
 
     def query(self, q: str, params: dict[str, Any] | None = None) -> _QueryResult:
@@ -54,6 +61,12 @@ class _FakeGraph:
             return _QueryResult([list(r) for r in self.placeholders])
         if "(f:File)-[:CALLS]->(s:Symbol)" in q and "STARTS WITH $p" in q and "RETURN f.key, s.key" in q:
             return _QueryResult([list(r) for r in self.calls])
+        if "[:CONTAINED_IN]" in q:
+            return _QueryResult([list(r) for r in self.file_project])
+        if "[:USES_ASSEMBLY]" in q:
+            return _QueryResult([list(r) for r in self.project_assemblies])
+        if "[:EXPOSES_TYPE]" in q:
+            return _QueryResult([list(r) for r in self.type_index])
 
         # Write paths — apply the rewrite to the in-memory tables.
         if "UNWIND $rows" in q and "MERGE (f)-[r:CALLS]->(t)" in q:

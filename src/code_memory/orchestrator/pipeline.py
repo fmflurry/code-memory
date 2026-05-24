@@ -252,6 +252,7 @@ class Pipeline:
             "resolved_same_file": r.edges_resolved_same_file,
             "resolved_imported": r.edges_resolved_imported,
             "resolved_unique": r.edges_resolved_unique,
+            "resolved_assembly": r.edges_resolved_assembly,
             "ambiguous": r.edges_left_ambiguous,
             "external": r.edges_left_external,
             "placeholders_deleted": r.placeholders_deleted,
@@ -293,6 +294,7 @@ class Pipeline:
             return
         self._upsert_dotnet_projects(projects)
         self._index_referenced_assemblies(projects, stats)
+        self._index_file_containment(projects, stats)
 
     def _index_referenced_assemblies(
         self,
@@ -413,6 +415,71 @@ class Pipeline:
         }
         self.graph.upsert_nodes(nodes)
         self.graph.upsert_edges(edges)
+
+    def _index_file_containment(
+        self, projects: list[CsprojInfo], stats: IngestStats
+    ) -> None:
+        """Tie each .NET source file to its owning ``Project`` node.
+
+        The resolver needs this to answer "which assemblies can this
+        file legitimately reach into" without inferring it from the
+        directory tree at query time. Containment is decided by the
+        **deepest** csproj whose directory is a prefix of the file's
+        path — important for repos that nest sub-projects (a file
+        under ``A/Sub/X.cs`` belongs to ``A/Sub`` if ``A/Sub.csproj``
+        exists, not the outer ``A.csproj``).
+
+        Files outside any csproj's directory get no edge — useful for
+        scripts / loose .cs at the repo root, where ownership is
+        ambiguous.
+
+        The :class:`IngestStats` record gains ``stats.projects`` keys
+        ``files_assigned`` / ``files_unowned`` so the agent can see
+        coverage at a glance.
+        """
+        # Sort csproj dirs by path length descending so the deepest
+        # prefix-match wins on a single linear scan per file.
+        proj_dirs = sorted(
+            ((str(Path(p.path).parent.resolve()), p.path) for p in projects),
+            key=lambda x: -len(x[0]),
+        )
+        if not proj_dirs:
+            return
+
+        rows = self.graph.graph.query(
+            "MATCH (f:File) "
+            "WHERE f.lang IN ['csharp', 'fsharp', 'vb', 'razor'] "
+            "RETURN f.key"
+        ).result_set
+        files = [row[0] for row in rows]
+        if not files:
+            return
+
+        edges: list[GraphEdge] = []
+        assigned = 0
+        unowned = 0
+        for file_path in files:
+            owner = _owning_project(file_path, proj_dirs)
+            if owner is None:
+                unowned += 1
+                continue
+            assigned += 1
+            edges.append(
+                GraphEdge(
+                    type="CONTAINED_IN",
+                    src_label="File",
+                    src_key=file_path,
+                    dst_label="Project",
+                    dst_key=owner,
+                )
+            )
+        if edges:
+            self.graph.upsert_edges(edges)
+
+        if stats.projects is None:
+            stats.projects = {}
+        stats.projects["files_assigned"] = assigned
+        stats.projects["files_unowned"] = unowned
 
     def _upsert_dotnet_projects(self, projects: list[CsprojInfo]) -> None:
         nodes: list[GraphNode] = []
@@ -692,6 +759,26 @@ class Pipeline:
                 for c, hv in zip(batch, hvecs, strict=True)
             ]
             self.vector.upsert(self.cfg.qdrant_code, records)
+
+
+def _owning_project(
+    file_path: str, proj_dirs: list[tuple[str, str]]
+) -> str | None:
+    """Return the project key whose directory is the deepest prefix of ``file_path``.
+
+    ``proj_dirs`` must already be sorted by descending directory-length
+    so the first match wins. ``None`` means the file lives outside any
+    indexed project.
+    """
+    abs_path = str(Path(file_path).resolve())
+    for dir_, proj_key in proj_dirs:
+        # Match on the directory boundary (``dir/file.cs``) — substring
+        # without the trailing separator would treat ``/A/B.csproj`` as
+        # owning files under ``/A/Beta/`` which it doesn't.
+        prefix = dir_.rstrip("/") + "/"
+        if abs_path.startswith(prefix):
+            return proj_key
+    return None
 
 
 def _symbol_key(path: str, sym: Symbol) -> str:
