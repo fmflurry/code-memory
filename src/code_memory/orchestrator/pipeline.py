@@ -218,6 +218,8 @@ class Pipeline:
         extractor = Extractor()
         stats = IngestStats(mode="full")
         sanity = SanitySummary()
+        head_sha, head_ord = _resolve_head(root)
+        stats.head_sha = head_sha
         if not dry_run:
             self._purge_project_index(root)
         hb = _Heartbeat("full ingest" + (" (dry-run)" if dry_run else ""))
@@ -229,11 +231,13 @@ class Pipeline:
             stats.chunks += len(ex.symbols) or 1
             sanity.record(ex)
             if not dry_run:
-                self.ingest_file(ex)
+                self.ingest_file(ex, head_sha=head_sha, head_ord=head_ord)
             hb.tick(stats)
         hb.done(stats)
         _attach_sanity(stats, sanity)
-        self._ingest_dotnet_projects(root, stats, dry_run=dry_run)
+        self._ingest_dotnet_projects(
+            root, stats, dry_run=dry_run, head_sha=head_sha, head_ord=head_ord
+        )
         return stats
 
     def _run_resolver(self, stats: IngestStats) -> None:
@@ -261,7 +265,13 @@ class Pipeline:
         }
 
     def _ingest_dotnet_projects(
-        self, root: Path, stats: IngestStats, *, dry_run: bool
+        self,
+        root: Path,
+        stats: IngestStats,
+        *,
+        dry_run: bool,
+        head_sha: str | None = None,
+        head_ord: int | None = None,
     ) -> None:
         """Walk `.csproj`/`.fsproj`/`.vbproj` and emit Project topology.
 
@@ -294,15 +304,26 @@ class Pipeline:
         stats.projects = counts
         if dry_run:
             return
-        self._upsert_dotnet_projects(projects)
-        self._index_referenced_assemblies(projects, stats)
-        self._index_file_containment(projects, stats)
-        self._index_solutions(root, stats)
+        self._upsert_dotnet_projects(
+            projects, head_sha=head_sha, head_ord=head_ord
+        )
+        self._index_referenced_assemblies(
+            projects, stats, head_sha=head_sha, head_ord=head_ord
+        )
+        self._index_file_containment(
+            projects, stats, head_sha=head_sha, head_ord=head_ord
+        )
+        self._index_solutions(
+            root, stats, head_sha=head_sha, head_ord=head_ord
+        )
 
     def _index_referenced_assemblies(
         self,
         projects: list[CsprojInfo],
         stats: IngestStats,
+        *,
+        head_sha: str | None = None,
+        head_ord: int | None = None,
     ) -> None:
         """Parse referenced DLLs and index their public type surface.
 
@@ -416,10 +437,17 @@ class Pipeline:
             "skipped": skipped,
             "unresolved": unresolved,
         }
-        self.graph.upsert_nodes(nodes)
-        self.graph.upsert_edges(edges)
+        self.graph.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
+        self.graph.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
 
-    def _index_solutions(self, root: Path, stats: IngestStats) -> None:
+    def _index_solutions(
+        self,
+        root: Path,
+        stats: IngestStats,
+        *,
+        head_sha: str | None = None,
+        head_ord: int | None = None,
+    ) -> None:
         """Walk `.sln` files and emit Solution nodes + Project membership.
 
         Schema added:
@@ -474,11 +502,16 @@ class Pipeline:
             "solutions": len(solutions),
             "memberships": total_members,
         }
-        self.graph.upsert_nodes(nodes)
-        self.graph.upsert_edges(edges)
+        self.graph.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
+        self.graph.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
 
     def _index_file_containment(
-        self, projects: list[CsprojInfo], stats: IngestStats
+        self,
+        projects: list[CsprojInfo],
+        stats: IngestStats,
+        *,
+        head_sha: str | None = None,
+        head_ord: int | None = None,
     ) -> None:
         """Tie each .NET source file to its owning ``Project`` node.
 
@@ -535,14 +568,20 @@ class Pipeline:
                 )
             )
         if edges:
-            self.graph.upsert_edges(edges)
+            self.graph.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
 
         if stats.projects is None:
             stats.projects = {}
         stats.projects["files_assigned"] = assigned
         stats.projects["files_unowned"] = unowned
 
-    def _upsert_dotnet_projects(self, projects: list[CsprojInfo]) -> None:
+    def _upsert_dotnet_projects(
+        self,
+        projects: list[CsprojInfo],
+        *,
+        head_sha: str | None = None,
+        head_ord: int | None = None,
+    ) -> None:
         nodes: list[GraphNode] = []
         edges: list[GraphEdge] = []
         seen_pkgs: set[str] = set()
@@ -593,8 +632,8 @@ class Pipeline:
                         props=edge_props,
                     )
                 )
-        self.graph.upsert_nodes(nodes)
-        self.graph.upsert_edges(edges)
+        self.graph.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
+        self.graph.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
 
     def _purge_project_index(self, root: Path) -> None:
         """Wipe code vectors + graph + ingest_state for this project.
@@ -618,6 +657,9 @@ class Pipeline:
     ) -> IngestStats:
         stats = IngestStats(mode="incremental", base_sha=base_sha, head_sha=head_sha)
         sanity = SanitySummary()
+        # Resolve the ordinal once: it's a git roundtrip we'd otherwise
+        # pay per-file when tombstoning deletes / stamping upserts.
+        head_ord = git_delta.commit_ordinal(root, head_sha) if head_sha else None
         reingest = list(delta.reingest_paths())
         hb = _Heartbeat(
             "incremental ingest" + (" (dry-run)" if dry_run else ""),
@@ -629,7 +671,9 @@ class Pipeline:
             stats.deleted += 1
             if dry_run:
                 continue
-            self.graph.delete_file(path_str)
+            self.graph.delete_file(
+                path_str, head_sha=head_sha, head_ord=head_ord
+            )
             self.vector.delete_by_path(self.cfg.qdrant_code, path_str)
 
         for path in reingest:
@@ -650,7 +694,7 @@ class Pipeline:
                 sanity.record(ex)
                 continue
 
-            ex = self.reingest_file(path)
+            ex = self.reingest_file(path, head_sha=head_sha, head_ord=head_ord)
             if ex is None:
                 stats.skipped += 1
                 continue
@@ -666,7 +710,9 @@ class Pipeline:
         _attach_sanity(stats, sanity)
         # Re-run csproj indexing on every delta — project files are
         # tiny and the topology shifts independently of source edits.
-        self._ingest_dotnet_projects(root, stats, dry_run=dry_run)
+        self._ingest_dotnet_projects(
+            root, stats, dry_run=dry_run, head_sha=head_sha, head_ord=head_ord
+        )
         if delta.is_empty:
             stats.notes.append("no changes since last ingest")
         return stats
@@ -698,19 +744,36 @@ class Pipeline:
         stats.head_sha = sha
         self.state.set(root, sha=sha, branch=branch)
 
-    def ingest_file(self, ex: ExtractedFile) -> None:
-        self._upsert_graph(ex)
+    def ingest_file(
+        self,
+        ex: ExtractedFile,
+        *,
+        head_sha: str | None = None,
+        head_ord: int | None = None,
+    ) -> None:
+        self._upsert_graph(ex, head_sha=head_sha, head_ord=head_ord)
         self._upsert_vectors(ex)
 
-    def reingest_file(self, path: str | Path) -> ExtractedFile | None:
+    def reingest_file(
+        self,
+        path: str | Path,
+        *,
+        head_sha: str | None = None,
+        head_ord: int | None = None,
+    ) -> ExtractedFile | None:
         from ..extractor.treesitter import extract_file
 
         ex = extract_file(path)
         if ex is None:
             return None
-        self.graph.delete_file(ex.path)
+        # When a caller doesn't know the SHA (per-file save hook), best-
+        # effort resolve from the file's enclosing repo so the temporal
+        # stamp still lands. Cheap: a single `git rev-parse HEAD`.
+        if head_sha is None:
+            head_sha, head_ord = _resolve_head(Path(ex.path).parent)
+        self.graph.delete_file(ex.path, head_sha=head_sha, head_ord=head_ord)
         self.vector.delete_by_path(self.cfg.qdrant_code, ex.path)
-        self.ingest_file(ex)
+        self.ingest_file(ex, head_sha=head_sha, head_ord=head_ord)
         return ex
 
     def record_episode(self, ep: Episode) -> str:
@@ -722,7 +785,13 @@ class Pipeline:
         )
         return ep_id
 
-    def _upsert_graph(self, ex: ExtractedFile) -> None:
+    def _upsert_graph(
+        self,
+        ex: ExtractedFile,
+        *,
+        head_sha: str | None = None,
+        head_ord: int | None = None,
+    ) -> None:
         file_node = GraphNode(
             label="File",
             key=ex.path,
@@ -832,8 +901,8 @@ class Pipeline:
                 )
             )
 
-        self.graph.upsert_nodes(nodes)
-        self.graph.upsert_edges(edges)
+        self.graph.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
+        self.graph.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
 
     def _upsert_vectors(self, ex: ExtractedFile, batch_size: int = 32) -> None:
         chunks = list(_chunks_for(ex))
@@ -859,6 +928,28 @@ class Pipeline:
                 for c, hv in zip(batch, hvecs, strict=True)
             ]
             self.vector.upsert(self.cfg.qdrant_code, records)
+
+
+def _resolve_head(root: str | Path) -> tuple[str | None, int | None]:
+    """Best-effort ``(head_sha, head_ord)`` for ``root``.
+
+    Returns ``(None, None)`` for non-git directories so callers can
+    fall through to legacy unstamped behaviour. The ordinal is the
+    first-parent commit count (``git rev-list --count --first-parent``),
+    which gives a monotonic integer along the trunk — usable as a
+    cheap "before/after" comparator without pulling the whole topology
+    into the graph.
+    """
+    p = Path(root)
+    if not git_delta.is_git_repo(p):
+        return None, None
+    try:
+        sha = git_delta.head_sha(p)
+    except git_delta.GitError:
+        return None, None
+    if not sha:
+        return None, None
+    return sha, git_delta.commit_ordinal(p, sha)
 
 
 def _owning_project(
