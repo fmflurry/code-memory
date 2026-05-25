@@ -421,6 +421,47 @@ Per-file Ollama HTTP calls had a ~75 ms fixed overhead. Buffering
 chunks across files (flush at 64) and pushing them in one call cuts
 that to a per-batch overhead.
 
+### Enterprise GPU path: text-embeddings-inference (TEI)
+
+For cold ingest on a real GPU — the actual enterprise scenario, where
+CI ingests a multi-tens-of-thousands-of-files monorepo on every
+non-trivial merge — drop in HuggingFace's
+[`text-embeddings-inference`](https://github.com/huggingface/text-embeddings-inference)
+as the embedding backend. Same `bge-m3` weights, **5-10× the Ollama
+throughput on Linux + NVIDIA**, no recall change. The cache and
+pipelined upserts continue to apply on top.
+
+```bash
+# Start TEI alongside FalkorDB + Qdrant
+docker compose --profile tei -f docker/docker-compose.yml up -d
+
+# Point code-memory at it
+export EMBED_BACKEND=tei
+export TEI_URL=http://localhost:8080
+
+# Ingest as usual; semantic retrieve / callers / definitions /
+# importers all behave identically — only the backend changed.
+code-memory ingest /path/to/repo --full
+```
+
+The Compose file ships a CPU TEI image by default so you can smoke-test
+the wiring on a laptop. To enable CUDA on a Linux + NVIDIA host,
+uncomment the `deploy.resources.reservations.devices` block in
+`docker/docker-compose.yml`.
+
+Expected impact on a ~17k-file C# monorepo (~134k chunks):
+
+| Path | Today (Ollama / Mac Metal) | With TEI on Linux + NVIDIA |
+|------|---------------------------:|---------------------------:|
+| Cold full ingest | ~2 h | **~15-25 min** |
+| Huge-delta merge (~5k chunks new) | ~10 min | **~1-2 min** |
+| Warm re-ingest (cache hits) | ~3 min | ~3 min (cache-bound, embedder irrelevant) |
+
+The cache key is shared between Ollama and TEI when both serve the
+same model — switching backends does **not** invalidate the cache,
+so the Mac dev who pre-warmed with Ollama doesn't pay to re-embed
+when pointing at the CI's TEI.
+
 ### Optional: `--no-vectors` for graph-only workloads
 
 A separate use case exists for agents that only consume `callers` /
@@ -433,15 +474,18 @@ slow-ingest problem with full features.
 
 ### Honest limits today
 
-- **Ollama `bge-m3` caps at ~21 chunks/sec on Apple Silicon (Metal).**
-  Linux + NVIDIA can serve `bge-m3` through `text-embeddings-inference`
-  at 5-10× that throughput; auto-detection of TEI is on the list.
-- **Resolver is full-graph scan.** Re-runs after every delta ingest.
-  Incremental resolver is on the list.
+- **On Mac, Ollama `bge-m3` caps at ~21 chunks/sec via the Metal-tuned
+  llama.cpp path.** That's the cold-ingest floor for laptop work; the
+  cache makes everything after the first ingest cheap. The enterprise
+  unlock is the TEI backend above on a real GPU.
+- **Resolver is a full-graph scan after every delta ingest.** Watch
+  mode doesn't trigger it; only `code-memory ingest`. Stings on a CI
+  ingest of a hub-symbol-heavy repo (~5-30 s). Incremental resolver
+  is on the list.
 - **Single-process ingest.** Tree-sitter extraction is CPU-bound and
-  could parallelize across cores; current walk is sequential. Not a
-  bottleneck while embedding dominates; becomes one once the embedder
-  is faster.
+  could parallelize across cores; current walk is sequential. Below
+  the noise floor while embedding dominates; becomes meaningful once
+  TEI is in front and the embedder is no longer the bottleneck.
 
 ---
 
@@ -633,7 +677,7 @@ sqlite3 ./data/<slug>/claims.db \
 | **Python**          | 3.11                           | Used to build the orchestrator, CLI, and extractor.                |
 | **Docker**          | 20.x (Compose v2)              | Runs FalkorDB and Qdrant locally.                                  |
 | **Ollama**          | latest                         | Default embedding backend (long-running daemon keeps `bge-m3` warm across CLI hooks). |
-| **Embedding model** | `bge-m3`                       | `ollama pull bge-m3` (~1.2 GB). Optional opt-in: `EMBED_BACKEND=flagembed` for in-process dense+sparse via FlagEmbedding (~2.3 GB). |
+| **Embedding model** | `bge-m3`                       | `ollama pull bge-m3` (~1.2 GB). Opt-ins: `EMBED_BACKEND=flagembed` for in-process dense+sparse via FlagEmbedding (~2.3 GB), or `EMBED_BACKEND=tei` for HuggingFace `text-embeddings-inference` (5-10× cold ingest on Linux + NVIDIA — see [Performance & scale](#performance--scale)). |
 | **Claims model**    | `gemma2:9b` *(optional)*       | `ollama pull gemma2:9b` (~5.4 GB). Only needed when `CLAIMS_EXTRACTION=true`. See [User-claim extraction](#user-claim-extraction-graphiti-style). |
 | **Disk**            | ~3 GB                          | Ollama model (~1.2 GB) + Docker volumes + Python deps. Add ~5.4 GB if you opt into claim extraction. |
 | **RAM**             | 8 GB+                          | 16 GB+ recommended for large repos.                                |

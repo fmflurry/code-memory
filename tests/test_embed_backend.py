@@ -49,12 +49,49 @@ def test_resolve_backend_flagembed_aliases(
     assert embed_pkg._resolve_backend() == "flagembed"
 
 
+@pytest.mark.parametrize("value", ["tei", "TEI", "text-embeddings-inference"])
+def test_resolve_backend_tei_aliases(
+    value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(embed_pkg.ENV_BACKEND, value)
+    assert embed_pkg._resolve_backend() == "tei"
+
+
 @pytest.mark.parametrize("value", ["ollama", "OLLAMA", "anything-else", ""])
 def test_resolve_backend_falls_back_to_ollama(
     value: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(embed_pkg.ENV_BACKEND, value)
     assert embed_pkg._resolve_backend() == "ollama"
+
+
+def test_get_embedder_returns_tei_when_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """``EMBED_BACKEND=tei`` resolves to a TEIEmbedder inside the cache wrapper."""
+    monkeypatch.setenv(embed_pkg.ENV_BACKEND, "tei")
+    monkeypatch.delenv(embed_pkg.ENV_DISABLE_CACHE, raising=False)
+    monkeypatch.setattr(
+        embed_pkg, "_cache_db_path", lambda: tmp_path / "embed_cache.sqlite"
+    )
+    e = get_embedder()
+    assert isinstance(e, embed_pkg.CachedEmbedder)
+    assert isinstance(e._inner, embed_pkg.TEIEmbedder)
+
+
+def test_tei_and_ollama_share_cache_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same bge-m3 weights served by either backend → same cache namespace.
+
+    Saves operators the cost of re-embedding the whole corpus when
+    they swap Ollama for TEI (or vice versa). Both build with
+    ``model:<embed_model>`` as the cache key prefix.
+    """
+    # Probe the private `_build_inner_embedder` helper directly so we
+    # don't need a live Ollama / TEI daemon to exercise the key path.
+    _, ollama_key = embed_pkg._build_inner_embedder("ollama")
+    _, tei_key = embed_pkg._build_inner_embedder("tei")
+    assert ollama_key == tei_key
+    assert ollama_key.startswith("model:")
 
 
 def test_get_embedder_returns_ollama_by_default(monkeypatch: pytest.MonkeyPatch) -> None:

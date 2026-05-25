@@ -1,6 +1,6 @@
 """Embedding backends.
 
-Two backends, same :class:`HybridVec` shape:
+Three backends, same :class:`HybridVec` shape:
 
 * :class:`OllamaEmbedder` (default) — dense-only via the Ollama daemon.
   Keeps the model warm across short-lived CLI processes (per-save
@@ -9,6 +9,11 @@ Two backends, same :class:`HybridVec` shape:
   + sparse from one in-process FlagEmbedding forward pass. Best for
   long-lived processes (watcher, MCP server) where the cold-load cost
   is paid once.
+* :class:`TEIEmbedder` (opt-in via ``EMBED_BACKEND=tei``) — dense-only
+  via HuggingFace's `text-embeddings-inference` GPU server. **5-10×
+  cold-ingest speedup vs Ollama on Linux + NVIDIA**, same weights, no
+  recall loss. Set ``TEI_URL`` to point at the TEI daemon (default
+  ``http://localhost:8080``).
 
 All backends are transparently wrapped in :class:`CachedEmbedder` so
 content-hash cache hits skip the model entirely on re-ingest.
@@ -29,6 +34,7 @@ from ..config import CONFIG
 from .cache import EmbedCache, hash_chunk
 from .m3 import HybridVec, M3Embedder, SparseVec
 from .ollama import OllamaEmbedder
+from .tei import TEIEmbedder
 
 log = logging.getLogger(__name__)
 
@@ -131,6 +137,8 @@ def _resolve_backend() -> str:
     raw = os.environ.get(ENV_BACKEND, "ollama").strip().lower()
     if raw in ("flagembed", "flag", "m3", "fastembed"):
         return "flagembed"
+    if raw in ("tei", "text-embeddings-inference"):
+        return "tei"
     return "ollama"
 
 
@@ -140,14 +148,28 @@ def _cache_enabled() -> bool:
 
 
 def _build_inner_embedder(backend: str) -> tuple[Embedder, str]:
-    """Return (embedder, model_id). model_id namespaces the cache."""
+    """Return (embedder, model_id). model_id namespaces the cache.
+
+    Note: the cache key includes only the embedding model name, not
+    the backend — Ollama and TEI serving the *same* ``bge-m3`` weights
+    yield the same vectors (within floating-point tolerance), so the
+    cache hits are interchangeable across backends. Saves the cache
+    cold-start cost when an operator switches Ollama → TEI.
+    """
     if backend == "flagembed":
         log.info("embed: backend=flagembed (in-process m3, dense+sparse)")
-        emb = M3Embedder()
-        return emb, f"flagembed:{getattr(emb, 'model_name', 'bge-m3')}"
+        emb_m3 = M3Embedder()
+        # FlagEmbed carries a sparse vector that Ollama/TEI don't —
+        # keep its cache slot separate so dense-only backends never
+        # see (and silently drop) those sparse rows.
+        return emb_m3, f"flagembed:{getattr(emb_m3, 'model_name', 'bge-m3')}"
+    if backend == "tei":
+        log.info("embed: backend=tei (HTTP @ %s, dense-only)", CONFIG.tei_url)
+        emb_tei = TEIEmbedder()
+        return emb_tei, f"model:{getattr(emb_tei, 'model', 'bge-m3')}"
     log.info("embed: backend=ollama (HTTP, dense-only)")
     emb = OllamaEmbedder()
-    return emb, f"ollama:{getattr(emb, 'model', 'bge-m3')}"
+    return emb, f"model:{getattr(emb, 'model', 'bge-m3')}"
 
 
 def get_embedder() -> Embedder:
@@ -195,6 +217,7 @@ __all__ = [
     "M3Embedder",
     "OllamaEmbedder",
     "SparseVec",
+    "TEIEmbedder",
     "get_embedder",
     "hash_chunk",
     "set_embedder_for_tests",

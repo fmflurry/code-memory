@@ -19,6 +19,32 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
+  # Opt-in GPU-accelerated embedding server (HuggingFace TEI).
+  # Activate with:    docker compose --profile tei up -d
+  # Then set:         EMBED_BACKEND=tei TEI_URL=http://localhost:8080
+  #
+  # On Linux + NVIDIA this serves bge-m3 at ~5-10x Ollama's throughput;
+  # the cold-ingest floor on a 17k-file monorepo drops from ~2h to
+  # ~15-25 min. CPU image works on Mac too but is roughly on par with
+  # Ollama there — stay on the default Ollama backend on Mac.
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:1.5
+    container_name: cm-tei
+    profiles: ["tei"]
+    command: --model-id BAAI/bge-m3 --max-batch-tokens 16384
+    ports:
+      - "8080:80"
+    volumes:
+      - tei_data:/data
+    restart: unless-stopped
+    # Uncomment the next four lines on Linux + NVIDIA to enable CUDA.
+    # The CPU image works without them but won't see the GPU speedup.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{ capabilities: [gpu] }]
+
 volumes:
   falkor_data:
   qdrant_data:
+  tei_data:

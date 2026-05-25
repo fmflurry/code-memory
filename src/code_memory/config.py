@@ -66,6 +66,13 @@ def detect_project_slug(root: str | Path | None = None) -> str:
 @dataclass(frozen=True)
 class Config:
     ollama_url: str = _env("OLLAMA_URL", "http://localhost:11434")
+    # TEI (text-embeddings-inference) server URL. Used only when
+    # ``EMBED_BACKEND=tei``. The enterprise-deploy story: stand TEI up
+    # on a GPU host (Linux + CUDA), point ``TEI_URL`` at it, get a
+    # 5-10× cold-ingest speedup over Ollama with the same bge-m3
+    # weights. On Mac there's no GPU advantage and Ollama's Metal path
+    # is faster — leave on the default backend there.
+    tei_url: str = _env("TEI_URL", "http://localhost:8080")
     embed_model: str = _env("EMBED_MODEL", "bge-m3")
     embed_dim: int = int(_env("EMBED_DIM", "1024"))
 
