@@ -47,13 +47,13 @@ _Full tables + methodology in [Benchmarks](#benchmarks)._
 
 **The pitch in one line:** Recall@10 +164% vs `rg`, *and* topology results small enough that the agent reads them back without re-grepping. code-memory is 0.5-0.8 s per topology query vs `rg`'s 30 ms — slower per call but **5-30× less context** to feed back, which is what actually costs agent tokens.
 
-**Decent ingest on a Mac, full semantic + graph, no features dropped:**
+**Decent ingest on a Mac, full semantic + graph, no quality tradeoff:**
 
 - **Persistent content-hash embedding cache** makes a re-ingest of an unchanged tree a 3-second op: **55.7 s → 2.9 s = 19× faster** on re-ingest. Default model (`bge-m3`), full Recall@10.
-- **Linux + NVIDIA** unlock: `EMBED_BACKEND=tei` for 5-10× cold ingest vs Ollama, same model + recall.
-- Opt-in **`nomic-embed-text`** for 3× faster cold ingest at the cost of measured ~42% lower Recall@10 — speed-vs-recall trade, not a free win.
+- **Linux + NVIDIA** unlock: `EMBED_BACKEND=tei` for 5-10× cold ingest vs Ollama, **same `bge-m3` weights, identical retrieval quality**.
+- Cold ingest pays the model cost **once** per repo; everything after is cache-bound.
 
-`retrieve` / `callers` / `definitions` / `importers` all stay on. See [Performance & scale](#performance--scale).
+`retrieve` / `callers` / `definitions` / `importers` all stay on, all return the same answers they did before any of these speedups. See [Performance & scale](#performance--scale).
 
 </div>
 
@@ -427,58 +427,27 @@ Per-file Ollama HTTP calls had a ~75 ms fixed overhead. Buffering
 chunks across files (flush at 64) and pushing them in one call cuts
 that to a per-batch overhead.
 
-### Mac speed-vs-recall trade: `nomic-embed-text` as opt-in
+### Mac cold ingest: bounded by `bge-m3` on Metal
 
-`bge-m3` is the recall champion but a heavy model — on Apple Silicon
-it runs at ~21 chunks/sec, which is the dominant cost of the default
-ingest. A lighter model (`nomic-embed-text`, 137M params, 768-dim) is
-~3× faster but **measurably worse on retrieval recall** for the
-Angular code-search benchmark this repo ships. Honest A/B on a real
-2,664-file TypeScript codebase using
-[`scripts/benchmark_queries.json`](scripts/benchmark_queries.json)
-(30 hand-crafted natural-language queries with gold paths):
+On Apple Silicon, `bge-m3` runs at ~21 chunks/sec via the Metal-tuned
+`llama.cpp` path inside Ollama. That's the hardware ceiling for full
+recall on Mac — no faster path exists today without giving up
+retrieval quality, and we don't ship trades that change what the
+agent finds.
 
-| Metric | `bge-m3` (default) | `nomic-embed-text` |
-|--------|-------------------:|-------------------:|
-| Cold ingest wall time | 5 min 5 s | **1 min 37 s** (3.15× faster) |
-| Recall@5 | **0.967** | 0.533 |
-| Recall@10 | **0.967** | 0.567 |
-| MRR | **0.782** | 0.315 |
-| nDCG@10 | **0.828** | 0.377 |
-| Query p50 latency | 87 ms | **31 ms** (3× faster) |
+The default-mode story is therefore:
 
-`nomic-embed-text` is **42% lower Recall@10** here. That's not a
-margin you can hand-wave away — it changes what the agent finds.
-Don't switch on it as a default-mode speedup unless you've decided
-you can live with that recall drop on your corpus.
+- Stay on **`bge-m3`**. Recall@10 0.967 on the shipped benchmark,
+  p50 query ~87 ms, 1024-d vectors.
+- Cold ingest of ~2.6k files takes ~5 min once. After that, the cache
+  takes over — every re-ingest is a SQLite scan, embedder cold-skip,
+  graph + qdrant upsert. Measured **2.9 s** on this repo.
+- If your daily flow is "save a file → watch reingest", that's
+  already ~70 ms unchanged (cache + UNWIND batching handle it).
 
-Where it does make sense:
-
-- You only use the **graph layer** (`callers` / `definitions` /
-  `importers`) and rarely call `retrieve` — semantic recall is
-  irrelevant.
-- Your corpus is heavily dominated by **identifier search**, where
-  any reasonable dense model finds the right file because the symbol
-  name is in both the query and the chunk.
-- You're running the benchmark on your own repo, observed a smaller
-  recall gap than this one, and have decided the speed wins.
-
-To switch:
-
-```bash
-ollama pull nomic-embed-text          # ~274 MB, 137M params, 768-dim
-export EMBED_MODEL=nomic-embed-text
-code-memory ingest /path/to/repo --full
-```
-
-The dim swap is handled automatically — `code-memory` has a known-model
-table mapping `nomic-embed-text` to 768, so you don't need to set
-`EMBED_DIM` separately (custom models still honour `EMBED_DIM=<n>`).
-
-**The real Mac unlock is the cache, not the model swap.** Cold ingest
-of 2,664 files is ~5 min with `bge-m3` and full features; subsequent
-re-ingests on the same tree are seconds. If 5 minutes once a week is
-the cost of full recall, take it.
+The ceiling-raise — same model, same recall, faster server — is TEI
+below on Linux + NVIDIA. That's the only path that takes cold ingest
+faster without compromising retrieval quality.
 
 ### Enterprise GPU path: text-embeddings-inference (TEI)
 
@@ -533,11 +502,11 @@ slow-ingest problem with full features.
 
 ### Honest limits today
 
-- **On Mac, ingest throughput depends on the model.** `bge-m3` caps at
-  ~21 chunks/sec via the Metal-tuned llama.cpp path. `nomic-embed-text`
-  is ~55 chunks/sec on the same hardware (the recommended Mac default).
-  The cache makes everything after the first ingest cheap regardless.
-  The enterprise unlock is the TEI backend above on a real GPU.
+- **On Mac, `bge-m3` caps at ~21 chunks/sec via the Metal-tuned
+  llama.cpp path.** That's the cold-ingest floor for full recall on
+  laptop work. The cache makes everything after the first ingest
+  cheap. The enterprise ceiling-raise — same model, same recall — is
+  the TEI backend above on Linux + NVIDIA.
 - **Resolver is a full-graph scan after every delta ingest.** Watch
   mode doesn't trigger it; only `code-memory ingest`. Stings on a CI
   ingest of a hub-symbol-heavy repo (~5-30 s). Incremental resolver
@@ -737,7 +706,7 @@ sqlite3 ./data/<slug>/claims.db \
 | **Python**          | 3.11                           | Used to build the orchestrator, CLI, and extractor.                |
 | **Docker**          | 20.x (Compose v2)              | Runs FalkorDB and Qdrant locally.                                  |
 | **Ollama**          | latest                         | Default embedding backend (long-running daemon keeps `bge-m3` warm across CLI hooks). |
-| **Embedding model** | `bge-m3`                       | `ollama pull bge-m3` (~1.2 GB). Opt-ins: `EMBED_MODEL=nomic-embed-text` (~3× faster cold ingest but **measurably lower retrieval recall** — see [Performance & scale](#performance--scale) for the trade-off table); `EMBED_BACKEND=flagembed` for in-process dense+sparse via FlagEmbedding (~2.3 GB); `EMBED_BACKEND=tei` for HuggingFace `text-embeddings-inference` (5-10× cold ingest on Linux + NVIDIA with same recall). |
+| **Embedding model** | `bge-m3`                       | `ollama pull bge-m3` (~1.2 GB). The default; recall champion on the benchmark. Opt-in same-recall paths: `EMBED_BACKEND=flagembed` for in-process dense+sparse via FlagEmbedding (~2.3 GB); `EMBED_BACKEND=tei` for HuggingFace `text-embeddings-inference` (5-10× cold ingest on Linux + NVIDIA, **same `bge-m3` weights**). |
 | **Claims model**    | `gemma2:9b` *(optional)*       | `ollama pull gemma2:9b` (~5.4 GB). Only needed when `CLAIMS_EXTRACTION=true`. See [User-claim extraction](#user-claim-extraction-graphiti-style). |
 | **Disk**            | ~3 GB                          | Ollama model (~1.2 GB) + Docker volumes + Python deps. Add ~5.4 GB if you opt into claim extraction. |
 | **RAM**             | 8 GB+                          | 16 GB+ recommended for large repos.                                |
@@ -877,9 +846,10 @@ code-memory ingest-status /path/to/repo
 > - Large repo (100k+ symbols): tens of minutes to an hour+
 >
 > Subsequent runs use the git delta described above, so they finish in
-> seconds even on large repos. GPU-accelerated Ollama, fewer files (tune
-> ignore globs), or a smaller embedding model (`nomic-embed-text`) all cut
-> the first-run cost too.
+> seconds even on large repos. GPU-accelerated Ollama and tighter ignore
+> globs both cut the first-run cost; the [TEI backend](#enterprise-gpu-path-text-embeddings-inference-tei)
+> on Linux + NVIDIA is the only path that takes cold ingest 5-10× faster
+> without changing the model or losing retrieval quality.
 
 ### Query the memory
 
