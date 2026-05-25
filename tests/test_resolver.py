@@ -41,6 +41,7 @@ class _FakeGraph:
         project_assemblies: list[tuple[str, str]] | None = None,  # (project_key, asm_key)
         type_index: list[tuple[str, str, str]] | None = None,  # (type_name, type_key, asm_key)
         inject_edges: list[tuple[str, str]] | None = None,  # (file, placeholder_key)
+        reference_edges: list[tuple[str, str]] | None = None,  # (file, placeholder_key)
     ) -> None:
         self.defines = list(defines)
         self.imports = list(imports)
@@ -50,6 +51,7 @@ class _FakeGraph:
         self.project_assemblies = list(project_assemblies or [])
         self.type_index = list(type_index or [])
         self.inject_edges = list(inject_edges or [])
+        self.reference_edges = list(reference_edges or [])
         self.writes: list[tuple[str, dict[str, Any]]] = []
 
     def query(self, q: str, params: dict[str, Any] | None = None) -> _QueryResult:
@@ -84,6 +86,12 @@ class _FakeGraph:
             and "RETURN f.key, s.key" in q
         ):
             return _QueryResult([list(r) for r in self.inject_edges])
+        if (
+            "(f:File)-[:REFERENCES]" in q
+            and "STARTS WITH $p" in q
+            and "RETURN f.key, s.key" in q
+        ):
+            return _QueryResult([list(r) for r in self.reference_edges])
 
         # Write paths — apply the rewrite to the in-memory tables.
         if "UNWIND $rows" in q and "MERGE (f)-[r:CALLS]->(t)" in q:
@@ -102,10 +110,20 @@ class _FakeGraph:
                     if not (e[0] == row["file"] and e[1] == row["placeholder"])
                 ]
             return _QueryResult([])
+        if "UNWIND $rows" in q and "MERGE (f)-[r:REFERENCES]->(t)" in q:
+            for row in params["rows"]:
+                self.writes.append(("rewrite_reference", row))
+                self.reference_edges = [
+                    e for e in self.reference_edges
+                    if not (e[0] == row["file"] and e[1] == row["placeholder"])
+                ]
+            return _QueryResult([])
         if "NOT ( ()-[:CALLS]->(s) )" in q:
-            referenced = {e[1] for e in self.calls} | {
-                e[1] for e in self.inject_edges
-            }
+            referenced = (
+                {e[1] for e in self.calls}
+                | {e[1] for e in self.inject_edges}
+                | {e[1] for e in self.reference_edges}
+            )
             deleted = 0
             new_placeholders = []
             for key, name in self.placeholders:
@@ -208,6 +226,44 @@ def test_resolver_falls_back_to_project_unique() -> None:
     stats = resolve_graph(_FakeStore(fake))
     assert stats.edges_resolved_unique == 1
     assert fake.writes[0][1]["conf"] == "medium"
+
+
+def test_resolver_rewrites_reference_edges() -> None:
+    """REFERENCES placeholders (type-position refs) resolve like CALLS.
+
+    Regression: ``code-memory callers IFoo`` returned 0 on a C# repo
+    because no graph edge connected `class X : IFoo` to `IFoo`. The
+    extractor now emits REFERENCES; the resolver must rewrite them
+    to point at the real defined symbol.
+    """
+    iface = "/a/IFoo.cs"
+    impl = "/a/Foo.cs"
+    fake = _FakeGraph(
+        defines=[(iface, "IFoo", f"{iface}::IFoo#1")],
+        imports=[],
+        placeholders=[(f"{PLACEHOLDER_PREFIX}IFoo", "IFoo")],
+        calls=[],
+        reference_edges=[(impl, f"{PLACEHOLDER_PREFIX}IFoo")],
+    )
+    stats = resolve_graph(_FakeStore(fake))
+    assert stats.edges_resolved_unique == 1
+    rewrites = [w for w in fake.writes if w[0] == "rewrite_reference"]
+    assert len(rewrites) == 1
+    assert rewrites[0][1]["target"] == f"{iface}::IFoo#1"
+
+
+def test_resolver_keeps_reference_only_placeholder_alive() -> None:
+    """Cleanup must not delete a placeholder when only REFERENCES point at it."""
+    fake = _FakeGraph(
+        defines=[],
+        imports=[],
+        placeholders=[(f"{PLACEHOLDER_PREFIX}IFoo", "IFoo")],
+        calls=[],
+        reference_edges=[("/a/x.cs", f"{PLACEHOLDER_PREFIX}IFoo")],
+    )
+    resolve_graph(_FakeStore(fake))
+    deletes = [w for w in fake.writes if w[0] == "delete"]
+    assert deletes == []
 
 
 def test_resolver_leaves_ambiguous_unresolved() -> None:

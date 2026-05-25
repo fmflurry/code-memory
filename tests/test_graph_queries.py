@@ -57,9 +57,9 @@ def test_callers_returns_decoded_rows() -> None:
 def test_callers_clamps_depth_into_range() -> None:
     store, fake = _store_with([])
     store.callers("x", depth=99)
-    assert "CALLS*1..3" in fake.queries[0][0]
+    assert "CALLS|REFERENCES*1..3" in fake.queries[0][0]
     store.callers("x", depth=0)
-    assert "CALLS*1..1" in fake.queries[1][0]
+    assert "CALLS|REFERENCES*1..1" in fake.queries[1][0]
 
 
 def test_callers_passes_symbol_name_param() -> None:

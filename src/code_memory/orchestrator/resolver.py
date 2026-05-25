@@ -122,6 +122,11 @@ class _GraphState:
     # list of (file_path, placeholder_key) INJECTS edges to resolve
     # alongside CALLS — same resolution rules, different edge type.
     inject_edges: list[tuple[str, str]] = field(default_factory=list)
+    # list of (file_path, placeholder_key) REFERENCES edges (type-position
+    # name refs: base lists, parameter/field/property types, generic args,
+    # constraints). Same resolution rules as CALLS / INJECTS; arity is
+    # always unknown (type references carry no call-site arity).
+    reference_edges: list[tuple[str, str]] = field(default_factory=list)
 
     @classmethod
     def load(cls, graph: FalkorStore) -> _GraphState:
@@ -178,6 +183,14 @@ class _GraphState:
         ).result_set
         inject_edges: list[tuple[str, str]] = [(f, s) for f, s in rows]
 
+        rows = graph.graph.query(
+            "MATCH (f:File)-[:REFERENCES]->(s:Symbol) "
+            "WHERE s.key STARTS WITH $p "
+            "RETURN f.key, s.key",
+            {"p": PLACEHOLDER_PREFIX},
+        ).result_set
+        reference_edges: list[tuple[str, str]] = [(f, s) for f, s in rows]
+
         # File→Project containment (only emitted for .NET files).
         rows = graph.graph.query(
             "MATCH (f:File)-[:CONTAINED_IN]->(p:Project) RETURN f.key, p.key"
@@ -213,6 +226,7 @@ class _GraphState:
             project_assemblies=dict(project_assemblies),
             type_index=dict(type_index),
             inject_edges=inject_edges,
+            reference_edges=reference_edges,
         )
 
 
@@ -225,12 +239,15 @@ def _resolve_all(state: _GraphState, stats: ResolverStats) -> list[ResolvedEdge]
     import_cache: dict[str, dict[str, list[tuple[str, str, int | None]]]] = {}
 
     # Normalise call_edges to (file, placeholder, arity); inject_edges
-    # don't carry call-site arity (DI is by type, not by call arity).
+    # and reference_edges don't carry call-site arity (DI is by type;
+    # type refs have no call site at all).
     norm_calls = [(f, p, a) for f, p, a in state.call_edges]
     norm_injects = [(f, p, -1) for f, p in state.inject_edges]
+    norm_references = [(f, p, -1) for f, p in state.reference_edges]
     edge_specs: list[tuple[str, list[tuple[str, str, int]]]] = [
         ("CALLS", norm_calls),
         ("INJECTS", norm_injects),
+        ("REFERENCES", norm_references),
     ]
 
     for edge_type, edges in edge_specs:
@@ -556,6 +573,30 @@ def _apply_resolutions(
             """,
             _bucket("INJECTS", "Type"),
         ),
+        (
+            """
+            UNWIND $rows AS row
+            MATCH (f:File {key: row.file})-[old:REFERENCES]->(:Symbol {key: row.placeholder})
+            MATCH (t:Symbol {key: row.target})
+            DELETE old
+            MERGE (f)-[r:REFERENCES]->(t)
+            SET r.confidence = row.conf, r.resolved = true
+            """,
+            _bucket("REFERENCES", "Symbol"),
+        ),
+        (
+            """
+            UNWIND $rows AS row
+            MATCH (f:File {key: row.file})-[old:REFERENCES]->(:Symbol {key: row.placeholder})
+            MATCH (t:Type {key: row.target})
+            DELETE old
+            MERGE (f)-[r:REFERENCES]->(t)
+            SET r.confidence = row.conf,
+                r.resolved = true,
+                r.via_assembly = row.via
+            """,
+            _bucket("REFERENCES", "Type"),
+        ),
     ]
     for query, rows in queries:
         if rows:
@@ -567,11 +608,12 @@ def _cleanup_orphans(
     state: _GraphState,
     resolutions: list[ResolvedEdge],
 ) -> int:
-    """Delete placeholder nodes whose CALLS *and* INJECTS edges are gone.
+    """Delete placeholder nodes whose CALLS, INJECTS and REFERENCES edges are gone.
 
-    A placeholder is orphan only when nothing points at it via either
-    relation — a Razor file injecting an unresolved interface keeps
-    its placeholder alive even when no source calls it.
+    A placeholder is orphan only when nothing points at it via any of
+    the three placeholder-producing relations — a Razor file injecting
+    an unresolved interface, or any file type-referencing it, keeps
+    the placeholder alive even when no source calls it.
     """
     if not state.placeholders:
         return 0
@@ -582,6 +624,7 @@ def _cleanup_orphans(
         WHERE s.key STARTS WITH $p
           AND NOT ( ()-[:CALLS]->(s) )
           AND NOT ( ()-[:INJECTS]->(s) )
+          AND NOT ( ()-[:REFERENCES]->(s) )
         WITH s, count(s) AS c
         DELETE s
         RETURN c

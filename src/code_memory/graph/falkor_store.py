@@ -405,7 +405,7 @@ class FalkorStore:
               AND s.first_seen_ord IS NOT NULL
               AND s.first_seen_ord <= $ord
               AND (s.invalid_ord IS NULL OR s.invalid_ord > $ord)
-            MATCH (caller:File)-[c:CALLS]->(s)
+            MATCH (caller:File)-[c:CALLS|REFERENCES]->(s)
             WHERE caller.first_seen_ord <= $ord
               AND (caller.invalid_ord IS NULL OR caller.invalid_ord > $ord)
               AND c.first_seen_ord <= $ord
@@ -469,10 +469,13 @@ class FalkorStore:
     # ``depth`` is capped at 3 to keep traversal bounded.
 
     def callers(self, symbol_name: str, depth: int = 1) -> list[dict[str, Any]]:
-        """Files (and their symbols) that call ``symbol_name``.
+        """Files (and their symbols) that call or reference ``symbol_name``.
 
-        Returns one row per direct caller file; symbol coordinates of
-        the called definition are included so the user can jump to it.
+        Unions ``CALLS`` and ``REFERENCES`` edges so an interface like
+        ``IFooService`` surfaces both the call sites of its members *and*
+        the files that declare a parameter / field / base list of that
+        type. Returns one row per direct caller file; symbol coordinates
+        of the called definition are included so the user can jump to it.
         """
         depth = max(1, min(depth, 3))
         # Tombstoned symbols / files filtered out by default so callers
@@ -483,7 +486,7 @@ class FalkorStore:
         q = (
             "MATCH (s:Symbol {name: $name}) "
             "WHERE s.unresolved IS NULL AND s.invalid_sha IS NULL "
-            "MATCH (caller:File)-[c:CALLS*1.." + str(depth) + "]->(s) "
+            "MATCH (caller:File)-[c:CALLS|REFERENCES*1.." + str(depth) + "]->(s) "
             "WHERE caller.invalid_sha IS NULL "
             "RETURN DISTINCT caller.key, s.file, s.start, s.end, s.kind "
             "LIMIT 500"

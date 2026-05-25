@@ -89,6 +89,7 @@ class IngestStats:
     symbols: int = 0
     imports: int = 0
     calls: int = 0
+    references: int = 0
     chunks: int = 0
     deleted: int = 0
     skipped: int = 0
@@ -228,6 +229,7 @@ class Pipeline:
             stats.symbols += len(ex.symbols)
             stats.imports += len(ex.imports)
             stats.calls += len(ex.calls)
+            stats.references += len(ex.references)
             stats.chunks += len(ex.symbols) or 1
             sanity.record(ex)
             if not dry_run:
@@ -690,6 +692,7 @@ class Pipeline:
                 stats.symbols += len(ex.symbols)
                 stats.imports += len(ex.imports)
                 stats.calls += len(ex.calls)
+                stats.references += len(ex.references)
                 stats.chunks += len(ex.symbols) or 1
                 sanity.record(ex)
                 continue
@@ -702,6 +705,7 @@ class Pipeline:
             stats.symbols += len(ex.symbols)
             stats.imports += len(ex.imports)
             stats.calls += len(ex.calls)
+            stats.references += len(ex.references)
             stats.chunks += len(ex.symbols) or 1
             sanity.record(ex)
             hb.tick(stats)
@@ -870,6 +874,34 @@ class Pipeline:
                     label="Symbol",
                     key=f"name::{call.name}",
                     props={"name": call.name, "unresolved": True},
+                )
+            )
+
+        # Type-position references (base lists, parameter types, field/
+        # property types, generics, type constraints, cast/is/as/typeof
+        # targets). Emitted as a separate REFERENCES edge type so the
+        # graph keeps the semantic distinction from CALLS (`X invokes Y`)
+        # while letting "who touches type X" queries union them.
+        seen_refs: set[str] = set()
+        for ref in ex.references:
+            if ref in seen_refs:
+                continue
+            seen_refs.add(ref)
+            edges.append(
+                GraphEdge(
+                    type="REFERENCES",
+                    src_label="File",
+                    src_key=ex.path,
+                    dst_label="Symbol",
+                    dst_key=f"name::{ref}",
+                    props={"unresolved": True},
+                )
+            )
+            nodes.append(
+                GraphNode(
+                    label="Symbol",
+                    key=f"name::{ref}",
+                    props={"name": ref, "unresolved": True},
                 )
             )
 
