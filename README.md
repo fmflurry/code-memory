@@ -49,11 +49,11 @@ _Full tables + methodology in [Benchmarks](#benchmarks)._
 
 **Decent ingest on a Mac, full semantic + graph, no features dropped:**
 
-- Swap to a fast Mac-friendly embedder: **20.4 s cold ingest** on this repo (`EMBED_MODEL=nomic-embed-text`, 2.6× faster than `bge-m3`).
-- **Persistent content-hash embedding cache** makes a re-ingest of an unchanged tree a 3-second op: **55.7 s → 2.9 s = 19× faster** on re-ingest with `bge-m3` (or ~3 s with `nomic-embed-text`).
-- **Linux + NVIDIA** unlock: `EMBED_BACKEND=tei` for 5-10× cold ingest vs Ollama.
+- **Persistent content-hash embedding cache** makes a re-ingest of an unchanged tree a 3-second op: **55.7 s → 2.9 s = 19× faster** on re-ingest. Default model (`bge-m3`), full Recall@10.
+- **Linux + NVIDIA** unlock: `EMBED_BACKEND=tei` for 5-10× cold ingest vs Ollama, same model + recall.
+- Opt-in **`nomic-embed-text`** for 3× faster cold ingest at the cost of measured ~42% lower Recall@10 — speed-vs-recall trade, not a free win.
 
-Every `retrieve` / `callers` / `definitions` / `importers` answer unchanged. See [Performance & scale](#performance--scale).
+`retrieve` / `callers` / `definitions` / `importers` all stay on. See [Performance & scale](#performance--scale).
 
 </div>
 
@@ -427,13 +427,43 @@ Per-file Ollama HTTP calls had a ~75 ms fixed overhead. Buffering
 chunks across files (flush at 64) and pushing them in one call cuts
 that to a per-batch overhead.
 
-### Mac fast path: switch the embedding model
+### Mac speed-vs-recall trade: `nomic-embed-text` as opt-in
 
 `bge-m3` is the recall champion but a heavy model — on Apple Silicon
 it runs at ~21 chunks/sec, which is the dominant cost of the default
-ingest. For local Mac development where you want a fast cold ingest
-**without** standing up a GPU server, swap to a lighter model that
-Ollama serves much faster:
+ingest. A lighter model (`nomic-embed-text`, 137M params, 768-dim) is
+~3× faster but **measurably worse on retrieval recall** for the
+Angular code-search benchmark this repo ships. Honest A/B on a real
+2,664-file TypeScript codebase using
+[`scripts/benchmark_queries.json`](scripts/benchmark_queries.json)
+(30 hand-crafted natural-language queries with gold paths):
+
+| Metric | `bge-m3` (default) | `nomic-embed-text` |
+|--------|-------------------:|-------------------:|
+| Cold ingest wall time | 5 min 5 s | **1 min 37 s** (3.15× faster) |
+| Recall@5 | **0.967** | 0.533 |
+| Recall@10 | **0.967** | 0.567 |
+| MRR | **0.782** | 0.315 |
+| nDCG@10 | **0.828** | 0.377 |
+| Query p50 latency | 87 ms | **31 ms** (3× faster) |
+
+`nomic-embed-text` is **42% lower Recall@10** here. That's not a
+margin you can hand-wave away — it changes what the agent finds.
+Don't switch on it as a default-mode speedup unless you've decided
+you can live with that recall drop on your corpus.
+
+Where it does make sense:
+
+- You only use the **graph layer** (`callers` / `definitions` /
+  `importers`) and rarely call `retrieve` — semantic recall is
+  irrelevant.
+- Your corpus is heavily dominated by **identifier search**, where
+  any reasonable dense model finds the right file because the symbol
+  name is in both the query and the chunk.
+- You're running the benchmark on your own repo, observed a smaller
+  recall gap than this one, and have decided the speed wins.
+
+To switch:
 
 ```bash
 ollama pull nomic-embed-text          # ~274 MB, 137M params, 768-dim
@@ -441,29 +471,14 @@ export EMBED_MODEL=nomic-embed-text
 code-memory ingest /path/to/repo --full
 ```
 
-**Measured on this repo (117 files, ~480 chunks), cold ingest:**
-
-| Model | Time | Embed throughput |
-|-------|-----:|-----------------:|
-| `bge-m3` (default, 1024-d) | 53.5 s | ~21 chunks/s |
-| `nomic-embed-text` (768-d) | **20.4 s** | ~55 chunks/s |
-
-**~2.6× faster** end-to-end. Extrapolated to a 17k-file C# monorepo:
-**~50 min instead of ~2 h**. Re-ingest (warm cache) stays a few
-seconds regardless of model.
-
 The dim swap is handled automatically — `code-memory` has a known-model
 table mapping `nomic-embed-text` to 768, so you don't need to set
 `EMBED_DIM` separately (custom models still honour `EMBED_DIM=<n>`).
 
-Quality trade-off, honest version: `bge-m3` is the recall champion on
-multilingual / mixed-domain corpora. `nomic-embed-text` is competitive
-on code search specifically (it was trained with code + technical text
-in the mix) but I haven't published apples-to-apples Recall@k numbers
-on the same gold set. If retrieval quality is critical, run both with
-the existing benchmark and pick. If "good enough" is the bar — and for
-most agent workflows on a single language it is — `nomic-embed-text`
-is the right Mac default.
+**The real Mac unlock is the cache, not the model swap.** Cold ingest
+of 2,664 files is ~5 min with `bge-m3` and full features; subsequent
+re-ingests on the same tree are seconds. If 5 minutes once a week is
+the cost of full recall, take it.
 
 ### Enterprise GPU path: text-embeddings-inference (TEI)
 
@@ -722,7 +737,7 @@ sqlite3 ./data/<slug>/claims.db \
 | **Python**          | 3.11                           | Used to build the orchestrator, CLI, and extractor.                |
 | **Docker**          | 20.x (Compose v2)              | Runs FalkorDB and Qdrant locally.                                  |
 | **Ollama**          | latest                         | Default embedding backend (long-running daemon keeps `bge-m3` warm across CLI hooks). |
-| **Embedding model** | `bge-m3`                       | `ollama pull bge-m3` (~1.2 GB). Fast Mac alternative: `ollama pull nomic-embed-text` + `EMBED_MODEL=nomic-embed-text` (~2.6× faster cold ingest, 768-d). Opt-ins: `EMBED_BACKEND=flagembed` for in-process dense+sparse via FlagEmbedding (~2.3 GB); `EMBED_BACKEND=tei` for HuggingFace `text-embeddings-inference` (5-10× cold ingest on Linux + NVIDIA — see [Performance & scale](#performance--scale)). |
+| **Embedding model** | `bge-m3`                       | `ollama pull bge-m3` (~1.2 GB). Opt-ins: `EMBED_MODEL=nomic-embed-text` (~3× faster cold ingest but **measurably lower retrieval recall** — see [Performance & scale](#performance--scale) for the trade-off table); `EMBED_BACKEND=flagembed` for in-process dense+sparse via FlagEmbedding (~2.3 GB); `EMBED_BACKEND=tei` for HuggingFace `text-embeddings-inference` (5-10× cold ingest on Linux + NVIDIA with same recall). |
 | **Claims model**    | `gemma2:9b` *(optional)*       | `ollama pull gemma2:9b` (~5.4 GB). Only needed when `CLAIMS_EXTRACTION=true`. See [User-claim extraction](#user-claim-extraction-graphiti-style). |
 | **Disk**            | ~3 GB                          | Ollama model (~1.2 GB) + Docker volumes + Python deps. Add ~5.4 GB if you opt into claim extraction. |
 | **RAM**             | 8 GB+                          | 16 GB+ recommended for large repos.                                |
