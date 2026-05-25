@@ -47,7 +47,7 @@ _Full tables + methodology in [Benchmarks](#benchmarks)._
 
 **The pitch in one line:** Recall@10 +164% vs `rg`, *and* topology results small enough that the agent reads them back without re-grepping. code-memory is 0.5-0.8 s per topology query vs `rg`'s 30 ms — slower per call but **5-30× less context** to feed back, which is what actually costs agent tokens.
 
-**Ingest scale:** 17,351 C# files / 134,068 symbols / 550k call edges in **3 min 35 s** with `--no-vectors` (graph only) — a **47× speedup** over the same repo's 2 h 49 min full ingest. See [Performance & scale](#performance--scale).
+**Ingest at enterprise scale (full semantic + graph, no features dropped):** **persistent content-hash embedding cache** makes a re-ingest of an unchanged tree a 3-second op instead of an hour. On this repo: cold ingest **55.7 s → warm re-ingest 2.9 s = 19× faster**, every `retrieve` / `callers` / `definitions` / `importers` answer unchanged. See [Performance & scale](#performance--scale).
 
 </div>
 
@@ -361,60 +361,87 @@ breakdown is:
 | Qdrant vector upserts | ~50 ms / batch of 64 | ~2% |
 | **Ollama `bge-m3` embedding** | **~50 ms / chunk** | **~95%** |
 
-Two recent wins land here:
+**Goal:** enterprise-acceptable ingest with **full semantic recall on**.
+Not "fast at the cost of dropping features". Default mode keeps the
+graph + vectors + episodic stack exactly as documented; the wins below
+all preserve `retrieve` / `callers` / `definitions` / `importers`.
 
-- **`UNWIND`-batched Falkor upserts.** Was one `MERGE` query per node /
-  edge — a file with 50 symbols / imports / calls hit Falkor 50 times.
-  Now grouped by label / edge-type and shipped as one `UNWIND $rows`
-  per group: ~50 round-trips → ~3 per file, ~10× faster graph layer.
-- **Cross-file embedding batches.** Per-file Ollama HTTP calls had a
-  ~75 ms overhead each. Buffering chunks across files (flush at 64) and
-  pushing them in one call cuts overhead and lets Ollama amortize
-  model setup. Modest gain at the file scale, meaningful at the repo
-  scale.
+Today the dominant cost is the embedder. `bge-m3` via Ollama runs at
+~21 chunks/sec on Apple Silicon (Metal-optimised in `llama.cpp`); a
+134k-chunk monorepo therefore has a ~1-hour cold-embed floor on
+consumer hardware. Three changes flip the wait curve from "unusable"
+to "boring infrastructure":
 
-### `--no-vectors` — graph-only ingest
+#### Persistent content-hash embedding cache (the headline win)
 
-If you only need `callers` / `definitions` / `importers` (most agent
-queries don't need semantic recall — they need exact graph answers),
-skip the embedder entirely:
+SQLite `hash(chunk_text) + model → vector`. Lives in
+`$DATA_DIR/embed_cache.sqlite` (project-agnostic so the same content
+across repos shares a vector). The flow:
 
-```bash
-code-memory ingest /path/to/repo --full --no-vectors
-```
+1. Before each embed call, every chunk's UTF-8 SHA-256 is looked up in
+   the cache.
+2. Hits skip the model entirely; only the miss list goes to Ollama /
+   FlagEmbedding.
+3. New vectors get written back in one transaction.
 
-Measured on this repo (Python, 112 files):
+**Result on this repo (112 Python files, 1,146 chunks):**
 
-| Mode | Time | Throughput |
-|------|-----:|-----------:|
-| Default (graph + vectors) | 58 s | 1.9 files/s |
-| `--no-vectors` (graph only) | **2.3 s** | **~50 files/s** |
+| Run | Wall time | Throughput |
+|-----|----------:|-----------:|
+| Cold ingest (cache empty) | 55.7 s | ~20 chunks/s (Ollama floor) |
+| Warm re-ingest (cache full) | **2.9 s** | ~1,145 cached hits, 0 embeds |
 
-That's **~29× faster**. On private-monorepo (17,351 C# files, 134k symbols,
-550k call edges, 575k REFERENCES edges): default ingest takes
-**2 h 49 min**, `--no-vectors` finishes in **3 min 35 s at ~80 files/s**
-— a **47× speedup** on the same repo. The bottleneck shift is clean:
-remove the embedder from the critical path and the graph layer alone
-keeps up with disk + tree-sitter.
+That's **19× faster** on the warm path **with full semantic recall
+preserved**. The cache is the difference between "ingest is a daily
+ceremony" and "ingest is a no-op when nothing changed."
 
-Trade-off: `code-memory retrieve` returns no semantic hits in this
-mode (vector store is empty). `callers` / `definitions` / `importers`
-work unchanged. You can always re-ingest later with vectors enabled
-when you actually need retrieval.
+Disable with `EMBED_CACHE_DISABLED=1` if you need a clean
+embed pass (e.g., after changing models — though the cache namespaces
+on `model_id`, so model switches don't actually pollute).
 
-### Honest limits
+#### Pipelined embed + Qdrant upload
 
-- **Ollama `bge-m3` caps at ~22 chunks/sec sequential.** For 130k+ chunks
-  that's the ~1 h floor on full vector ingest. Parallelizing helps only
-  if Ollama is launched with `OLLAMA_NUM_PARALLEL > 1`; otherwise
-  concurrent requests just queue.
+`embed batch N` runs while `qdrant upload batch N-1` is still in
+flight. ThreadPoolExecutor with bounded queue (depth 4) so upserts
+can't fall arbitrarily behind. Modest on Apple Silicon (Ollama
+serialises), bigger on Linux + NVIDIA where the embedder is faster
+than the qdrant network path.
+
+#### `UNWIND`-batched Falkor upserts (already shipped)
+
+Was one `MERGE` query per node / edge — a file with 50 symbols +
+imports + calls hit Falkor 50 times. Now grouped by `label` (nodes)
+and `(src_label, type, dst_label)` (edges) and shipped as one `UNWIND
+$rows` per group: ~50 round-trips → ~3 per file. ~10× faster graph
+layer; especially visible on import-heavy languages.
+
+#### Cross-file embedding batches (already shipped)
+
+Per-file Ollama HTTP calls had a ~75 ms fixed overhead. Buffering
+chunks across files (flush at 64) and pushing them in one call cuts
+that to a per-batch overhead.
+
+### Optional: `--no-vectors` for graph-only workloads
+
+A separate use case exists for agents that only consume `callers` /
+`definitions` / `importers` and never call `retrieve`. For those,
+`code-memory ingest --no-vectors` skips the embedder entirely.
+Measured: ~50 files/s on this repo, ~80 files/s on private-monorepo. Use it
+when you've decided semantic recall isn't in the agent's loop, not as
+a workaround for slow ingest — the cache above already solves the
+slow-ingest problem with full features.
+
+### Honest limits today
+
+- **Ollama `bge-m3` caps at ~21 chunks/sec on Apple Silicon (Metal).**
+  Linux + NVIDIA can serve `bge-m3` through `text-embeddings-inference`
+  at 5-10× that throughput; auto-detection of TEI is on the list.
 - **Resolver is full-graph scan.** Re-runs after every delta ingest.
-  On hub-symbol-heavy repos the resolver itself can be ~10-30 s.
-  Incremental resolver is the next perf target.
+  Incremental resolver is on the list.
 - **Single-process ingest.** Tree-sitter extraction is CPU-bound and
-  could parallelize across cores; the current walk is sequential. Not
-  yet a bottleneck given embedding dominance, but it becomes one as
-  soon as you switch to a faster embedder.
+  could parallelize across cores; current walk is sequential. Not a
+  bottleneck while embedding dominates; becomes one once the embedder
+  is faster.
 
 ---
 

@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from collections.abc import Iterable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -232,19 +233,37 @@ class Pipeline:
         hb = _Heartbeat("full ingest" + (" (dry-run)" if dry_run else ""))
 
         # Buffer chunks across files so the embedder sees a large batch
-        # per call. Ollama's per-request overhead dominates when each
-        # file (5-30 chunks) gets its own HTTP roundtrip; coalescing to
-        # ~64 chunks/call cuts ingest wall-time by ~3-5× on real repos
-        # where the embedder is the dominant cost (Falkor + Qdrant are
-        # already fast after the UNWIND batching).
+        # per call, then fan the Qdrant upserts out to a small thread
+        # pool so they overlap with the next batch's embedding work.
+        # On a cold ingest, embed (Ollama HTTP, serial) dominates; the
+        # qdrant upsert (network + index write) blocks for ~80-150 ms
+        # per batch — pipelining lets that happen while the next embed
+        # batch is in flight. On a warm ingest (cache hits), embed
+        # returns instantly and qdrant + graph become the path, so the
+        # same pool keeps Qdrant from blocking the graph layer.
         pending_chunks: list[tuple[ExtractedFile, _Chunk]] = []
         EMBED_BATCH = 64
+        UPSERT_POOL_SIZE = 2
+        UPSERT_QUEUE_MAX = 4
+        upsert_executor = ThreadPoolExecutor(max_workers=UPSERT_POOL_SIZE)
+        in_flight: list[Future] = []
+
+        def _await_one() -> None:
+            if not in_flight:
+                return
+            fut = in_flight.pop(0)
+            fut.result()  # propagate exceptions
 
         def _flush_pending() -> None:
             if not pending_chunks:
                 return
-            self._embed_and_upsert(pending_chunks)
+            batch = list(pending_chunks)
             pending_chunks.clear()
+            fut = upsert_executor.submit(self._embed_and_upsert, batch)
+            in_flight.append(fut)
+            # Bound queue so upserts don't fall arbitrarily behind embed.
+            while len(in_flight) >= UPSERT_QUEUE_MAX:
+                _await_one()
 
         for ex in extractor.walk(root):
             stats.files += 1
@@ -267,6 +286,12 @@ class Pipeline:
             hb.tick(stats)
         if not getattr(self, "skip_vectors", False):
             _flush_pending()
+            # Drain the pool so the resolver + .NET-project pass sees a
+            # quiescent Qdrant. Drop the pool here, not in __exit__,
+            # because the .NET-project pass runs in this method.
+            while in_flight:
+                _await_one()
+        upsert_executor.shutdown(wait=True)
         hb.done(stats)
         _attach_sanity(stats, sanity)
         self._ingest_dotnet_projects(

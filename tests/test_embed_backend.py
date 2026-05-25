@@ -59,8 +59,26 @@ def test_resolve_backend_falls_back_to_ollama(
 
 def test_get_embedder_returns_ollama_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(embed_pkg.ENV_BACKEND, raising=False)
+    # Disable the cache wrapper so the test sees the raw Ollama backend.
+    monkeypatch.setenv(embed_pkg.ENV_DISABLE_CACHE, "1")
     e = get_embedder()
     assert isinstance(e, _OllamaEmbedderCls)
+
+
+def test_get_embedder_wraps_in_cache_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Default config wraps the backend in CachedEmbedder; inner is Ollama."""
+    monkeypatch.delenv(embed_pkg.ENV_BACKEND, raising=False)
+    monkeypatch.delenv(embed_pkg.ENV_DISABLE_CACHE, raising=False)
+    # Redirect the cache file into a temp dir so the test doesn't write
+    # into the user's real data dir.
+    monkeypatch.setattr(
+        embed_pkg, "_cache_db_path", lambda: tmp_path / "embed_cache.sqlite"
+    )
+    e = get_embedder()
+    assert isinstance(e, embed_pkg.CachedEmbedder)
+    assert isinstance(e._inner, _OllamaEmbedderCls)
 
 
 def test_set_embedder_for_tests_overrides_factory() -> None:
