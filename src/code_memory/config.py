@@ -41,6 +41,62 @@ def _git_toplevel(start: Path) -> Path | None:
     return Path(top) if top else None
 
 
+# Vector dimensionality of the embedding models we ship recipes for.
+# Used to default ``EMBED_DIM`` when the operator only sets
+# ``EMBED_MODEL``. Saves the silent-mismatch footgun where the model
+# emits 768-d vectors but the Qdrant collection was created for 1024.
+# Keys are matched case-insensitively against the leading model name
+# (anything before ``:``), so ``bge-m3:latest``, ``bge-m3:567m-fp16``,
+# and ``BAAI/bge-m3`` all resolve to the same dim.
+_KNOWN_MODEL_DIMS: dict[str, int] = {
+    # bge family
+    "bge-m3": 1024,
+    "baai/bge-m3": 1024,
+    "bge-large-en": 1024,
+    "bge-base-en": 768,
+    "bge-small-en": 384,
+    # nomic — fast Mac default for code search
+    "nomic-embed-text": 768,
+    "nomic-embed-text-v1": 768,
+    "nomic-embed-text-v1.5": 768,
+    # mixedbread
+    "mxbai-embed-large": 1024,
+    # snowflake
+    "snowflake-arctic-embed:s": 384,
+    "snowflake-arctic-embed:m": 768,
+    "snowflake-arctic-embed:l": 1024,
+}
+
+
+def resolve_embed_dim(model_name: str, override: int = 0) -> int:
+    """Return the vector dim for ``model_name``, honouring ``override``.
+
+    ``override > 0`` wins (operators with a custom model still in
+    control). Otherwise look up the model's base name in the known
+    table. Falls back to ``1024`` (bge-m3 default) with a print to
+    stderr so the operator notices we're guessing.
+    """
+    if override > 0:
+        return override
+    lower = model_name.strip().lower()
+    # Try the full name (so ``snowflake-arctic-embed:s`` matches its
+    # own dim, not the parent family's). Fall back to the bare base
+    # name (so ``bge-m3:latest`` still resolves via ``bge-m3``).
+    if lower in _KNOWN_MODEL_DIMS:
+        return _KNOWN_MODEL_DIMS[lower]
+    base = lower.split(":", 1)[0]
+    if base in _KNOWN_MODEL_DIMS:
+        return _KNOWN_MODEL_DIMS[base]
+    # Unknown model — fall back to the bge-m3 default but warn so the
+    # operator notices a mismatch before it produces broken vectors.
+    import sys as _sys
+    _sys.stderr.write(
+        f"[code-memory] WARNING: embed model {model_name!r} not in "
+        f"known-dim table; defaulting to 1024. Set EMBED_DIM=<n> to silence.\n"
+    )
+    return 1024
+
+
 def detect_project_slug(root: str | Path | None = None) -> str:
     """Resolve project slug.
 
@@ -74,7 +130,10 @@ class Config:
     # is faster — leave on the default backend there.
     tei_url: str = _env("TEI_URL", "http://localhost:8080")
     embed_model: str = _env("EMBED_MODEL", "bge-m3")
-    embed_dim: int = int(_env("EMBED_DIM", "1024"))
+    # ``embed_dim`` defaults to the dimension of the configured model
+    # so users don't have to keep two env vars in sync. Override with
+    # ``EMBED_DIM`` when running a model not in the known-dim table.
+    embed_dim: int = int(_env("EMBED_DIM", "0"))
 
     qdrant_url: str = _env("QDRANT_URL", "http://localhost:6333")
     qdrant_code: str = _env("QDRANT_COLLECTION_CODE", "code_chunks")

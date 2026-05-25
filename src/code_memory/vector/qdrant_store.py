@@ -44,9 +44,20 @@ class QdrantStore:
         url: str | None = None,
         dim: int | None = None,
     ) -> None:
+        from ..config import resolve_embed_dim
+
         self.url = url or CONFIG.qdrant_url
         self.client = QdrantClient(url=self.url)
-        self.dim = dim or CONFIG.embed_dim
+        # ``CONFIG.embed_dim`` is 0 by default (sentinel for "auto").
+        # Resolve via the known-model table so ``EMBED_MODEL=nomic-embed-text``
+        # automatically picks 768 without the operator setting
+        # ``EMBED_DIM=768``. Explicit ``dim`` arg or ``EMBED_DIM`` env
+        # still wins.
+        self.dim = (
+            dim
+            if dim is not None
+            else resolve_embed_dim(CONFIG.embed_model, CONFIG.embed_dim)
+        )
 
     # --------------------------------------------------------- collection
 
