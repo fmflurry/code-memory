@@ -10,6 +10,199 @@ explains intent.
 
 ## Unreleased
 
+### Fixed — Pipeline now actually writes temporal stamps
+
+**What:** every call site in `orchestrator/pipeline.py` that touches
+`upsert_nodes` / `upsert_edges` / `delete_file` now forwards
+`head_sha` and `head_ord`. A new module-level `_resolve_head(root)`
+resolves the git HEAD + first-parent ordinal once per ingest and
+threads them through `_ingest_full`, `_ingest_delta`, `ingest_file`,
+`reingest_file`, `_upsert_graph`, and all four `_index_*` helpers
+(csproj projects, referenced assemblies, file containment, .sln
+solutions). `reingest_file` auto-resolves head from the file's
+enclosing repo when the caller (e.g. a save-file hook) doesn't
+supply one.
+
+**Reason:** the storage-layer temporal work shipped in a separate
+slice and the pipeline integration regressed during the .NET trust
+pass merge — the `head_sha=` kwarg got dropped from every upsert
+call site. `FalkorStore.upsert_nodes` treats `head_sha=None` as
+"skip stamping" (intentional legacy fallback), so every ingest
+silently wrote zero `first_seen_sha` / `last_seen_sha` values. The
+`at_sha` / `drift` / `callers_at_sha` MCP tools queried a graph that
+had no temporal data to query and returned empty by design.
+
+Verified empirically: a freshly ingested project on the fixed
+pipeline now writes stamps on every File, Symbol, CALLS, IMPORTS,
+DEFINES, CONTAINED_IN, USES_ASSEMBLY, EXPOSES_TYPE, MEMBER_OF, and
+INJECTS edge.
+
+**Reason for the auto-resolve in `reingest_file`:** the Claude Code
+/ OpenCode plugins fire `code-memory reingest <path>` per save hook
+without computing the SHA themselves. A single `git rev-parse HEAD`
+per hook call is cheap enough that requiring callers to pass it
+would just produce empty stamps in practice. Non-git directories
+fall through cleanly (`(None, None)`) and keep the legacy unstamped
+path.
+
+### Added — .NET production-grade trust pass
+
+**What:** four layers built on top of the basic .NET language
+support, in order of dependency:
+
+1. **Ingest-time sanity check.** Every plain-identifier Symbol's
+   snippet must contain its own name as a whole word
+   (`extractor/sanity.py`). The check uses regex word-boundary
+   matching, not bare substring, so a truncated `mmandeRules` no
+   longer slips through inside a real `CommandeRules` snippet.
+   Failure rate lands on `IngestStats.sanity` with sample
+   violations; rates above 2% append a loud `notes` entry so the
+   ingest stops being silently wrong.
+
+2. **Partial class merge.** `partial class` / `struct` / `interface`
+   / `record` across N files now collapse to a single graph node
+   keyed `partial::{namespace}.{Name}` with N `DEFINES` edges from
+   each contributing file. Detection covers block-scoped and C# 10
+   file-scoped namespaces.
+
+3. **Project topology** — `extractor/csproj.py` parses SDK-style
+   and legacy `.csproj` / `.fsproj` / `.vbproj`. Pipeline emits
+   `Project` nodes, `PROJECT_REFERENCES` (Project → Project), and
+   `PACKAGE_REFERENCES` (Project → Package). Unparseable XML and
+   refs pointing outside the repo are dropped — no dead nodes.
+
+4. **Assembly metadata** — `extractor/dll.py` (pure-Python via
+   `dnfile`, no .NET runtime needed) reads PE/CLR metadata. Pipeline
+   resolves `<PackageReference>` against the NuGet global cache via
+   `extractor/nuget.py` (TFM fallback chain net8.0 → net6.0 →
+   netstandard2.1 → …) plus project `bin/{config}/{tfm}` outputs,
+   and emits `Assembly` + public `Type` nodes with `USES_ASSEMBLY`
+   (Project → Assembly) and `EXPOSES_TYPE` (Assembly → Type) edges.
+
+5. **File → Project containment.** Every .NET source file gets a
+   `CONTAINED_IN` edge to the deepest `.csproj` whose directory
+   prefixes the file path. Files outside any csproj stay unowned
+   rather than getting misattributed.
+
+6. **Cross-assembly call resolution.** The resolver gained a fifth
+   tier: a call name whose owning project references an `Assembly`
+   that uniquely exposes a `Type` with that name becomes a resolved
+   `(:File)-[:CALLS]->(:Type)` edge with `confidence="external"`
+   and a `via_assembly` property. Ambiguous matches (multiple
+   referenced assemblies exposing the same name) stay unresolved by
+   design — no coin-flipping.
+
+7. **Solution grouping.** `extractor/sln.py` parses `.sln` files
+   (SDK-era + legacy with xmlns). Pipeline emits `Solution` nodes
+   and `MEMBER_OF` edges (Project → Solution). Solution-folder
+   pseudo-entries (type GUID `2150E333…`) are dropped.
+
+8. **Razor `@inject` DI graph.** `.razor` / `.cshtml` `@inject`
+   directives emit `INJECTS` edges from the view file to the
+   injected interface or class. The resolver runs the same four-tier
+   resolution on `INJECTS` as it does on `CALLS`, so an
+   `@inject IUserService` in a Razor view resolves to either the
+   in-project interface or a `Type` from a referenced assembly.
+
+9. **Member-level DLL access on demand.** New MCP tool
+   `codememory_assembly_members(type, project, assembly?)` reads
+   public methods (with parameter counts) directly from the DLL at
+   query time. Members aren't bulk-indexed because a single NuGet
+   package can expose 10k+ members; on-demand keeps the graph small
+   while still answering "what's on this type" for overload
+   disambiguation.
+
+10. **Overload disambiguation by call-site arity.** `Symbol` gains
+    `param_count`; every `CALLS` edge carries an `args` arity. The
+    resolver's project-unique and imported tiers gained an arity
+    tiebreak — when N candidates share a name, pick the one whose
+    `params` matches the call's `args`. Mismatch or tie stays
+    ambiguous.
+
+**Reason:** before this pass, the .NET grade was a generous C on
+core features and F on cross-assembly resolution / DI / solution
+grouping / member access / overloads. A coding agent asking "who
+calls `JsonConvert.SerializeObject`" got nothing because the call
+landed on an orphan placeholder. After this pass, the graph
+answers cross-assembly with attribution, .NET 10's file-scoped
+namespaces parse cleanly, partial classes show as one logical
+entity, and the agent can list type members without ballooning
+graph size.
+
+### Fixed — UTF-8 byte/char offset chop in tree-sitter slicing
+
+**What:** `extractor/treesitter.py` now reads source as bytes,
+strips a UTF-8 BOM if present, parses bytes through tree-sitter,
+slices bytes via `_slice(source: bytes, node)`, and decodes UTF-8
+only at the very end. Every helper (`_symbol_name`, `_callee_name`,
+`_import_module`, `_first_identifier_deep`) takes bytes.
+
+**Reason:** the old code passed bytes to tree-sitter but indexed a
+Python `str` with the byte offsets tree-sitter returned. For any
+file with non-ASCII content above a symbol (French comments,
+identifiers with accents, German Python docstrings) the offsets
+drift once and stay drifted — every subsequent identifier was
+chopped from the front. Real example caught on a French C# repo:
+`class_declaration -> "mmandeRules<T"` instead of `CommandeRules`,
+`imports -> "stem;\\n"` instead of `System`, every callee truncated
+to a noise prefix. The graph stored those garbled names, so
+queries for `CommandeRules` or `DocumentService.Sauver` returned
+nothing.
+
+Symptom severity scaled with the volume of non-ASCII content above
+each symbol; English codebases sometimes appeared fine for hundreds
+of symbols before failing on the first file with an accented
+comment. The bug was invisible until someone tried to use the graph.
+
+### Added — BGE-M3 hybrid embed backend (opt-in)
+
+**What:** `code_memory.embed` now supports two backends behind a
+shared `HybridVec` (dense + sparse) shape:
+
+- **Ollama** (default) — dense-only via the Ollama daemon. Stays
+  warm across short-lived processes (per-save reingest hooks, git
+  hooks) so cold-load doesn't tax the user.
+- **FlagEmbedding** (`EMBED_BACKEND=flagembed`, requires
+  `[hybrid]` extra) — in-process BGE-M3 producing dense + sparse
+  from one forward pass. Heavy (~2.3 GB weights, ~5-15 s cold load)
+  but enables true hybrid retrieval.
+
+`QdrantStore` collections use named-vector layout (`dense` +
+`sparse` slots) with IDF modifier on the sparse side, so flipping
+between backends doesn't require schema changes. Search supports
+`mode={dense, hybrid, hybrid_dbsf}`; hybrid falls through to dense
+when the query vector has no sparse component (Ollama path).
+
+Hybrid retrieval is **opt-in** via `CODEMEMORY_HYBRID=1`. Benchmarks
+on a 2.6k-file Angular corpus showed pure dense outperforming
+hybrid (RRF and DBSF) on natural-language queries — m3's dense
+head is strong enough that adding sparse tends to surface
+generated API stubs and `.spec.ts` files that share identifier
+vocabulary with the query without bringing new wins. The opt-in
+exists for symbol-heavy corpora; re-run `scripts/benchmark.py`
+before flipping.
+
+**Reason:** Ollama by default keeps per-file save-hook reingests
+viable — the alternative (in-process model load per CLI
+invocation) added 5-15 s startup to every Write/Edit. Keeping the
+collection layout hybrid-ready means users can later opt in to the
+sparse signal without re-ingesting.
+
+### Added — Retrieval benchmark harness
+
+**What:** `scripts/benchmark.py` runs a fixed query set through six
+modes (dense, hybrid RRF, hybrid DBSF, each with and without
+cross-encoder rerank) against a populated Qdrant collection and
+reports Recall@5 / Recall@10 / MRR / nDCG@10 / p50 / p95 latency.
+Output is markdown (`docs/BENCHMARK.md`) + raw JSON
+(`docs/benchmark-raw.json`). 30 hand-crafted gold queries against
+a sample Angular corpus ship as a baseline.
+
+**Reason:** retrieval-quality regressions were invisible until an
+agent complained. A reproducible benchmark lets future model /
+chunk-text / fusion changes be evaluated against the same gold set
+before they ship.
+
 ### Added — Topological SHA ordinals + time-travel queries
 
 **What:** every temporal stamp (`first_seen_sha`, `last_seen_sha`,
