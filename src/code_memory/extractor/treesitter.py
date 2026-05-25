@@ -503,12 +503,22 @@ def _symbol_name(node: Node, source: bytes) -> str | None:
 
 
 def _import_module(node: Node, source: bytes) -> str | None:
+    # Python ``from X import Y`` and ``from .X import Y`` expose the
+    # module via a ``module_name`` field. Without this branch the first
+    # ``dotted_name`` child wins — which for ``from ..pkg.mod import Sym``
+    # is ``Sym`` (the imported name), not the module. Result: the graph
+    # files the import under the wrong key and ``importers <module>``
+    # misses every relative caller.
+    module_name_field = node.child_by_field_name("module_name") or node.child_by_field_name("name")
+    if module_name_field is not None:
+        return _slice(source, module_name_field).strip("'\"")
     for child in node.children:
         if child.type in {
             "string",
             "string_fragment",
             "dotted_name",
             "module_name",
+            "relative_import",  # Python ``..pkg.mod``
             "qualified_name",
             "namespace_name",  # VB
             "long_identifier",  # F#

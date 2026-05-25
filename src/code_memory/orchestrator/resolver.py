@@ -68,6 +68,7 @@ class ResolverStats:
     edges_left_ambiguous: int = 0
     edges_left_external: int = 0
     placeholders_deleted: int = 0
+    import_aliases_added: int = 0
     notes: list[str] = field(default_factory=list)
 
 
@@ -88,6 +89,7 @@ def resolve_graph(graph: FalkorStore) -> ResolverStats:
     _apply_resolutions(graph, resolutions)
     deleted = _cleanup_orphans(graph, state, resolutions)
     stats.placeholders_deleted = deleted
+    stats.import_aliases_added = _emit_import_aliases(graph, state)
     return stats
 
 
@@ -467,14 +469,138 @@ def _imported_symbols(
     return out
 
 
+def _derive_import_aliases(target_file: str) -> list[str]:
+    """Compute alternative IMPORTS-target keys for ``target_file``.
+
+    Used to bridge the gap between *how a file says it imports* (relative:
+    ``from ..graph.falkor_store import X``) and *how an agent queries it*
+    (canonical: ``importers code_memory.graph.falkor_store``).
+
+    Emits three forms whenever possible:
+
+    1. The absolute file path — for ``importers /abs/path/to/file.py``.
+    2. The bare basename without extension — for ``importers falkor_store``.
+    3. The Python dotted package path, derived by climbing ``__init__.py``
+       parents up to the package root. For ``…/src/code_memory/graph/
+       falkor_store.py`` that's ``code_memory.graph.falkor_store``. Skipped
+       for files that aren't inside a Python package (no ``__init__.py``
+       chain), which covers TS/JS/C# where relative-path keys are already
+       unambiguous.
+    """
+    p = Path(target_file)
+    aliases: list[str] = [str(p), p.stem]
+
+    parts: list[str] = [p.stem]
+    current = p.parent
+    # Climb until we hit a directory without __init__.py. ``current.parent
+    # == current`` is the filesystem root sentinel.
+    while (current / "__init__.py").exists():
+        parts.append(current.name)
+        if current.parent == current:
+            break
+        current = current.parent
+    if len(parts) > 1:
+        aliases.append(".".join(reversed(parts)))
+    return aliases
+
+
+def _emit_import_aliases(graph: FalkorStore, state: _GraphState) -> int:
+    """Add alias IMPORTS edges so canonical-name lookups find every importer.
+
+    Without this, ``importers code_memory.graph.falkor_store`` only matches
+    Python files that wrote the absolute form; relative ``from ..graph.
+    falkor_store import X`` callers stay invisible because the graph stores
+    a different Module key for that text. Resolves each relative import to
+    its project file, derives the canonical alias(es), and emits
+    ``File → Module{key: alias}`` IMPORTS edges via ``MERGE`` so reruns
+    don't duplicate.
+
+    Returns the number of new alias edges committed.
+    """
+    rows: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for file_path, imports in state.file_imports.items():
+        file_dir = Path(file_path).parent
+        for mod_key, kind in imports:
+            if kind != "relative":
+                continue
+            target = _resolve_relative_import(
+                file_dir, mod_key, state.project_files
+            )
+            if target is None:
+                continue
+            for alias in _derive_import_aliases(target):
+                if alias == mod_key:
+                    continue  # original edge already covers this key
+                key = (file_path, alias)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append({"file": file_path, "alias": alias})
+    if not rows:
+        return 0
+    graph.graph.query(
+        """
+        UNWIND $rows AS row
+        MERGE (m:Module {key: row.alias})
+        WITH row, m
+        MATCH (f:File {key: row.file})
+        MERGE (f)-[r:IMPORTS]->(m)
+        SET r.derived = true
+        """,
+        {"rows": rows},
+    )
+    return len(rows)
+
+
 def _resolve_relative_import(
     file_dir: Path, mod_key: str, project_files: set[str]
 ) -> str | None:
     """Resolve a relative import specifier to an actual project file path.
 
-    Probes common TS/JS/Python extensions and ``/index.*`` variants.
+    Handles two grammars:
+
+    1. **TS / JS path-style** — ``./bar``, ``../svc/auth``. Joined with
+       ``file_dir`` and probed against extensions + ``/index.*``.
+    2. **Python dotted-relative** — ``..graph.falkor_store`` from a file
+       in ``code_memory.orchestrator``. Each leading dot strips one
+       package level off the import side; the remaining dots split the
+       subpath. Probes ``.py`` and ``/__init__.py``.
+
     Returns ``None`` if no candidate matches a known project file.
     """
+    # Python dotted-relative: ``.foo`` / ``..pkg.sub.leaf`` — dots come
+    # in a contiguous prefix, then dotted segments. TS path-style uses
+    # ``./`` or ``../`` (a slash directly after the dots).
+    if mod_key.startswith(".") and "/" not in mod_key and len(mod_key) > 1:
+        # Strip the leading dots; first dot means "current package", each
+        # additional dot climbs one level. file_dir IS the current package
+        # for `from .foo`, so dot count - 1 = directories to climb.
+        i = 0
+        while i < len(mod_key) and mod_key[i] == ".":
+            i += 1
+        dots, tail = i, mod_key[i:]
+        base = file_dir
+        for _ in range(dots - 1):
+            base = base.parent
+        sub_segments = tail.split(".") if tail else []
+        candidate_dir = base
+        for seg in sub_segments[:-1]:
+            candidate_dir = candidate_dir / seg
+        last = sub_segments[-1] if sub_segments else ""
+        candidates = []
+        if last:
+            candidates.append(candidate_dir / f"{last}.py")
+            candidates.append(candidate_dir / last / "__init__.py")
+        else:
+            # bare ``from .`` / ``from ..`` — points at the package
+            candidates.append(candidate_dir / "__init__.py")
+        for cand in candidates:
+            cand_str = str(cand.resolve())
+            if cand_str in project_files:
+                return cand_str
+        return None
+
     base = (file_dir / mod_key).resolve()
     base_str = str(base)
 

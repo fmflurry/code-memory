@@ -264,6 +264,7 @@ class Pipeline:
             "ambiguous": r.edges_left_ambiguous,
             "external": r.edges_left_external,
             "placeholders_deleted": r.placeholders_deleted,
+            "import_aliases_added": r.import_aliases_added,
         }
 
     def _ingest_dotnet_projects(

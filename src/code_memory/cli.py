@@ -435,6 +435,7 @@ def resolve(
             "ambiguous": r.edges_left_ambiguous,
             "external": r.edges_left_external,
             "placeholders_deleted": r.placeholders_deleted,
+            "import_aliases_added": r.import_aliases_added,
         },
         as_json=as_json,
     )

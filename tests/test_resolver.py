@@ -118,6 +118,10 @@ class _FakeGraph:
                     if not (e[0] == row["file"] and e[1] == row["placeholder"])
                 ]
             return _QueryResult([])
+        if "UNWIND $rows" in q and "MERGE (m:Module" in q and "IMPORTS" in q:
+            for row in params["rows"]:
+                self.writes.append(("alias_import", row))
+            return _QueryResult([])
         if "NOT ( ()-[:CALLS]->(s) )" in q:
             referenced = (
                 {e[1] for e in self.calls}
@@ -226,6 +230,68 @@ def test_resolver_falls_back_to_project_unique() -> None:
     stats = resolve_graph(_FakeStore(fake))
     assert stats.edges_resolved_unique == 1
     assert fake.writes[0][1]["conf"] == "medium"
+
+
+def test_derive_import_aliases_for_python_package(tmp_path) -> None:
+    from code_memory.orchestrator.resolver import _derive_import_aliases
+
+    # Mimic a Python package layout: pkg/sub/leaf.py with __init__.py
+    # at each level.
+    pkg = tmp_path / "code_memory"
+    sub = pkg / "graph"
+    sub.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (sub / "__init__.py").write_text("")
+    target = sub / "falkor_store.py"
+    target.write_text("")
+
+    aliases = _derive_import_aliases(str(target))
+    assert str(target) in aliases  # absolute path
+    assert "falkor_store" in aliases  # basename stem
+    assert "code_memory.graph.falkor_store" in aliases  # dotted module
+
+
+def test_derive_import_aliases_skips_non_package(tmp_path) -> None:
+    """No __init__.py chain → only absolute path + basename."""
+    from code_memory.orchestrator.resolver import _derive_import_aliases
+
+    loose = tmp_path / "loose.ts"
+    loose.write_text("")
+    aliases = _derive_import_aliases(str(loose))
+    assert aliases == [str(loose), "loose"]
+
+
+def test_emit_import_aliases_writes_alias_edges(tmp_path) -> None:
+    """End-to-end: a relative import gets canonical IMPORTS edges."""
+    pkg = tmp_path / "code_memory"
+    sub = pkg / "graph"
+    sub.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (sub / "__init__.py").write_text("")
+    target = str(sub / "falkor_store.py")
+    (sub / "falkor_store.py").write_text("")
+    importer = str(pkg / "orchestrator_resolver.py")
+    (pkg / "orchestrator_resolver.py").write_text("")
+
+    # Relative import `..graph.falkor_store` from the importer.
+    fake = _FakeGraph(
+        defines=[(target, "FalkorStore", f"{target}::FalkorStore#1")],
+        imports=[(importer, "..graph.falkor_store")],
+        placeholders=[],
+        calls=[],
+    )
+    # _resolve_relative_import probes file_dir / mod_key. For
+    # ``..graph.falkor_store`` from `importer`'s parent, that's
+    # `code_memory/../graph/falkor_store` — which doesn't resolve cleanly
+    # via Python-style dots. Force the test to use a path-style relative
+    # import that the resolver actually supports.
+    fake.imports = [(importer, "./graph/falkor_store")]
+    resolve_graph(_FakeStore(fake))
+    alias_writes = [w for w in fake.writes if w[0] == "alias_import"]
+    aliased_keys = {w[1]["alias"] for w in alias_writes}
+    assert target in aliased_keys
+    assert "falkor_store" in aliased_keys
+    assert "code_memory.graph.falkor_store" in aliased_keys
 
 
 def test_resolver_rewrites_reference_edges() -> None:

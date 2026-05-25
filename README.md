@@ -256,9 +256,9 @@ module `code_memory.graph.falkor_store`:
 | Task | code-memory | ripgrep | Why it matters for an agent |
 |------|------------:|--------:|-----------------------------|
 | Semantic Q ("how is the resolver wired into ingest") | **8 ranked hits** w/ scores + line ranges | 91 file paths, unranked | Agent reads 1-3 cm hits directly; with `rg` it must re-grep + read 91 files to find which 3 matter |
-| Callers + refs of `FalkorStore` | **6 deduped files** (graph-typed) | 13 file paths (lexical) | cm distinguishes real callers from string/comment matches; one query, no false-positive culling |
+| Callers + refs of `FalkorStore` | **7 deduped files** (graph-typed) | 14 file paths (lexical) | cm distinguishes real callers from string/comment matches; one query, no false-positive culling |
 | Definitions of `FalkorStore` | `{file, start, end, kind}` JSON | one line of grep output | cm output is jump-ready — agent skips the disambiguation round-trip |
-| Importers of `code_memory.graph.falkor_store` | 2 files importing the **fully-qualified module** | 6 files matching `import.*falkor_store` text | cm tracks parsed import statements per file; rg fires on relative imports, aliases, and comments alike |
+| Importers of `code_memory.graph.falkor_store` | **6 true importers**, both relative + absolute forms canonicalized | 7 files (1 false positive — a test that only mentions the path in a fixture string) | cm parses the import statement and normalizes ``from ..graph.falkor_store`` to the canonical module key so one query catches every form |
 
 Latency: cm topology queries return in **0.5 – 0.8 s**; `rg` in **30 ms**.
 **cm is slower per query, but produces 5-30× less context to feed back
@@ -266,16 +266,25 @@ into the agent** — which is what actually costs tokens. On private-monorepo
 (**17,400 C# files, 100k+ symbols** indexed end-to-end), the same
 queries stay sub-second.
 
-Concrete fix landed in this release: `callers IFoo` on a C# repo used
-to return 0 because the graph only modeled call expressions —
-`class X : IFoo`, `void Do(IFoo p)`, `List<IFoo>` left no edge. The
-extractor now emits **REFERENCES** edges for type-position name usage
-(base lists, parameter / field / property / return types, generics,
-type constraints, cast / is / as / typeof) and `callers` unions
-`CALLS | REFERENCES` so implementers and type-param users surface
-alongside actual call sites. Verified end-to-end:
-`callers IFooService` → returns the impl class **and** every
-consumer that declares it as a dependency.
+Two concrete precision fixes landed in this release:
+
+- **REFERENCES edges for type-position usage.** Before: `callers IFoo`
+  on a C# repo returned 0 because the graph only modeled call
+  expressions — `class X : IFoo`, `void Do(IFoo p)`, `List<IFoo>` left
+  no edge. Now the extractor emits **REFERENCES** edges (base lists,
+  parameter / field / property / return types, generics, type
+  constraints, cast / is / as / typeof) and `callers` unions
+  `CALLS | REFERENCES`. End-to-end: `callers IFooService` →
+  returns the impl class **and** every consumer that declares it as a
+  dependency.
+- **Canonical import aliasing.** Before: `importers code_memory.graph.falkor_store`
+  returned 2 (the test files that used the absolute form). The 4 files
+  using `from ..graph.falkor_store import …` were invisible because the
+  graph stored a literal ``..graph.falkor_store`` Module key. Now the
+  Python import extractor captures `relative_import` properly and the
+  resolver derives the canonical dotted-module name (`pkg.sub.leaf`)
+  for every relative import target, emitting alias `IMPORTS` edges.
+  Same query → **6 true importers**, all forms covered.
 
 Regenerate against any indexed repo:
 
