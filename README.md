@@ -325,6 +325,92 @@ ingest](#git-aware-incremental-ingest) below.
 
 ---
 
+## User-claim extraction (Graphiti-style)
+
+Code chunks and episodes are great for *code-shaped* memory, but the user
+also drops **factual claims** in prose: "we use Postgres", "deploy goes
+through Cloud Run", "the auth module is owned by Bob". Today those facts
+get buried inside opaque episode blobs. Code-memory can extract them as
+structured `(subject, predicate, object)` triples and store them on a
+**bi-temporal timeline** — exactly the trick Graphiti uses, minus the
+Neo4j and the cloud LLM.
+
+### How it works
+
+1. The Claude Code / OpenCode **Stop hook** fires at the end of every
+   turn (already in place to record episodes).
+2. It calls the new CLI subcommand `code-memory extract-claims --prompt
+   "..."` in a **detached fire-and-forget process** so the user's session
+   ends immediately.
+3. The CLI spawns a local **Ollama** model (`gemma2:9b` by default) in
+   JSON-mode with a constrained output schema and pulls out claims.
+4. Claims are validated:
+   - `evidence_span` must be a literal substring of the prompt
+     (anti-hallucination guard).
+   - `confidence` below `CLAIMS_MIN_CONFIDENCE` (default `0.6`) is
+     dropped.
+   - Duplicates are deduplicated case-insensitively.
+5. The store applies **contradiction handling**: single-valued
+   predicates (`uses`, `prefers`, `deployed-to`, `owns`, …) automatically
+   close the prior assertion's `valid_to` when a new conflicting one
+   arrives.
+6. Each row carries `valid_at` (when you said it), `valid_to` (NULL
+   while current), `recorded_at` (system clock), and `head_sha` (git
+   HEAD at extraction time) — so you can ask "what did the user say
+   about X **as of commit Y**?".
+
+### Enabling it
+
+```bash
+# one-time: pull the model (~5.4 GB)
+ollama pull gemma2:9b
+# or: ./scripts/install.sh --with-claims
+
+# turn it on
+export CLAIMS_EXTRACTION=true
+```
+
+You can override the model with `CLAIMS_LLM_MODEL` (any chat-capable
+Ollama model that honors `format: <json-schema>`).
+
+### Reading claims back
+
+Via the MCP server:
+
+```
+codememory_claims(project="<slug>")                  # all currently-valid
+codememory_claims(project="<slug>", subject="user")  # filter by subject
+codememory_claims(project="<slug>", as_of=1717286400) # point-in-time
+```
+
+Via the CLI, query the SQLite store directly:
+
+```sql
+sqlite3 ./data/<slug>/claims.db \
+  "SELECT subject, predicate, object, datetime(valid_at, 'unixepoch')
+   FROM claims WHERE valid_to IS NULL ORDER BY valid_at DESC LIMIT 20"
+```
+
+### Costs
+
+- **Disk**: ~5.4 GB for `gemma2:9b`. The model is shared across all
+  projects on the host.
+- **Latency**: ~1.5–3 s per prompt on Apple Silicon. Runs in a detached
+  process post-turn, so this never adds to a session's wall-clock.
+- **Privacy**: prompts never leave the host — Ollama is local, claims are
+  stored in per-project SQLite under `./data/<slug>/claims.db`.
+
+### When to skip it
+
+- You don't share much factual context in prose (everything is in code
+  comments / commit messages already).
+- You're on a CPU-only host where 9B inference is too slow.
+- You prefer a smaller, faster model — set
+  `CLAIMS_LLM_MODEL=qwen2.5:7b-instruct` or `llama3.2:3b`. Quality drops
+  on negation / hypotheticals, but extraction is 2-4x faster.
+
+---
+
 ## Requirements
 
 | Component           | Minimum version                | Notes                                                              |
@@ -333,7 +419,8 @@ ingest](#git-aware-incremental-ingest) below.
 | **Docker**          | 20.x (Compose v2)              | Runs FalkorDB and Qdrant locally.                                  |
 | **Ollama**          | latest                         | Default embedding backend (long-running daemon keeps `bge-m3` warm across CLI hooks). |
 | **Embedding model** | `bge-m3`                       | `ollama pull bge-m3` (~1.2 GB). Optional opt-in: `EMBED_BACKEND=flagembed` for in-process dense+sparse via FlagEmbedding (~2.3 GB). |
-| **Disk**            | ~3 GB                          | Ollama model (~1.2 GB) + Docker volumes + Python deps.             |
+| **Claims model**    | `gemma2:9b` *(optional)*       | `ollama pull gemma2:9b` (~5.4 GB). Only needed when `CLAIMS_EXTRACTION=true`. See [User-claim extraction](#user-claim-extraction-graphiti-style). |
+| **Disk**            | ~3 GB                          | Ollama model (~1.2 GB) + Docker volumes + Python deps. Add ~5.4 GB if you opt into claim extraction. |
 | **RAM**             | 8 GB+                          | 16 GB+ recommended for large repos.                                |
 | **OS**              | macOS / Linux / Windows (WSL2) | Tested on Apple Silicon (M-series) and Linux x86_64.               |
 

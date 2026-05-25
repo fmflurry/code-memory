@@ -10,6 +10,53 @@ explains intent.
 
 ## Unreleased
 
+### Added — Graphiti-style user-claim extraction
+
+**What:** a new `src/code_memory/claims/` subpackage that turns
+substantive user prompts into structured `(subject, predicate, object)`
+claims with bi-temporal validity (`valid_at`, `valid_to`,
+`recorded_at`, `head_sha`). Pieces:
+
+- `claims.extractor.ClaimExtractor` — thin Ollama `/api/chat` client
+  with JSON-schema-constrained output (default model `gemma2:9b`),
+  literal-substring `evidence_span` anti-hallucination guard,
+  configurable `min_confidence` filter, and case-insensitive dedup.
+- `claims.store.ClaimsStore` — SQLite store mirroring the episodic
+  store's idempotent-migration pattern. Single-valued predicate
+  registry (`uses`, `prefers`, `deployed-to`, `owns`, `is-located-at`,
+  `is-a`, `assigned-to`, `depends-on`) auto-closes prior conflicting
+  assertions on upsert. Read paths: `current()`, `as_of(when)`,
+  `by_id()`.
+- New CLI subcommand `code-memory extract-claims --prompt "..."` plus
+  detached `extractClaimsDetached` helper in the Claude Code plugin so
+  the Stop hook fires extraction without blocking session end.
+- New MCP tools `codememory_extract_claims` and `codememory_claims` so
+  agents (and the OpenCode plugin) can drive extraction and read claims
+  through the same surface as everything else.
+- `Config` now carries `claims_enabled`, `claims_llm_model`,
+  `claims_llm_timeout`, `claims_min_confidence`, and a per-project
+  `claims_db` path under `data/<slug>/claims.db`.
+- `scripts/install.sh` gains a `--with-claims` flag and an interactive
+  prompt to pull `gemma2:9b` (~5.4 GB) alongside `bge-m3`.
+
+**Reason:** episodes store the whole prompt as opaque text, which means
+"what did the user say about X last Tuesday?" requires re-reading every
+prompt. Graphiti showed that a bi-temporal claim graph closes that gap
+cheaply. Three constraints kept us from copy-pasting their stack:
+
+1. **No cloud LLM.** We already require Ollama for embeddings — adding
+   a chat model on the same daemon is one `ollama pull` away. Local
+   keeps prompts off the network.
+2. **No new database.** SQLite is already in the stack for episodes;
+   bi-temporal columns are just four extra fields. The graph store
+   (FalkorDB) stays focused on code topology.
+3. **No latency budget on the hot path.** Extraction is detached from
+   the on-stop hook and only runs when `CLAIMS_EXTRACTION=true`, so a
+   default install never pays the inference cost.
+
+Disabled by default. Opt in with `CLAIMS_EXTRACTION=true` after
+`ollama pull gemma2:9b`.
+
 ### Fixed — Pipeline now actually writes temporal stamps
 
 **What:** every call site in `orchestrator/pipeline.py` that touches

@@ -62,5 +62,14 @@ function gitDiff(cwd) {
     patch: patch || undefined,
     verdict: "idle",
   });
+
+  // Fire-and-forget claim extraction. Detached on purpose: the CLI may
+  // spend tens of seconds in gemma2:9b inference and we don't want to
+  // block the Stop hook. When CLAIMS_EXTRACTION is off the CLI no-ops
+  // cheaply, so the spawn cost is bounded even on disabled deployments.
+  mem.extractClaimsDetached({
+    prompts: [state.firstUserMessage],
+    sessionId,
+  });
   done();
 })();

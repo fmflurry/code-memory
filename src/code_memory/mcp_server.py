@@ -14,6 +14,8 @@ Tools:
   - codememory_drift(head_sha, project?)                   — temporal
   - codememory_at_sha(sha, sha_ord, label?, limit?, project?)
   - codememory_callers_at_sha(symbol, sha, sha_ord, project?)
+  - codememory_extract_claims(prompts, project, session_id?) — Graphiti-style
+  - codememory_claims(subject?, as_of?, project)
 
 Transport: stdio. Register via `code-memory-mcp` script entrypoint.
 """
@@ -385,6 +387,66 @@ _TOOLS: list[Tool] = [
             "required": ["symbol", "sha", "sha_ord", "project"],
         },
     ),
+    Tool(
+        name="codememory_extract_claims",
+        description=(
+            "Graphiti-style: extract bi-temporal (subject, predicate, object) "
+            "claims from user prompts via a local LLM (gemma2:9b by default) "
+            "and store them with valid_at = prompt timestamp, recorded_at = "
+            "now, head_sha = current HEAD. Single-valued predicates ('uses', "
+            "'prefers', 'deployed-to', ...) close prior conflicting "
+            "assertions. Requires `claims_enabled=true` (env "
+            "CLAIMS_EXTRACTION=true). Fire-and-forget — call from a Stop "
+            "hook, not inline in a turn."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "prompts": {
+                    "type": "array",
+                    "description": (
+                        "List of user prompts to extract from. Each item "
+                        "is either a raw string or "
+                        "{text: string, ts?: number, id?: string}."
+                    ),
+                    "items": {"type": ["string", "object"]},
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Originating session for provenance.",
+                },
+                "project": _project_schema(),
+            },
+            "required": ["prompts", "project"],
+        },
+    ),
+    Tool(
+        name="codememory_claims",
+        description=(
+            "Read currently-valid user claims (or claims as of a given "
+            "world-time). Use to surface user preferences and stated facts "
+            "in retrieve packs or to answer 'what did the user say about X?'."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "subject": {
+                    "type": "string",
+                    "description": "Filter by subject (exact match).",
+                },
+                "as_of": {
+                    "type": "number",
+                    "description": (
+                        "Optional unix epoch seconds; returns claims valid "
+                        "at that world-time. Omit for current state."
+                    ),
+                },
+                "limit": {"type": "integer", "default": 50},
+                "project": _project_schema(),
+            },
+            "required": ["project"],
+        },
+    ),
 ]
 
 
@@ -714,6 +776,168 @@ def _callers_at_sha(args: dict[str, Any]) -> list[TextContent]:
     )
 
 
+def _extract_claims(args: dict[str, Any]) -> list[TextContent]:
+    """Run claim extraction over user prompts and persist results.
+
+    Fire-and-forget contract from the caller's perspective: we never
+    raise on a malformed prompt or a model glitch. Infra failures
+    (Ollama unreachable) are returned as ``{"error": ...}`` so the
+    hook can log and move on.
+    """
+    project = _require_project(args)
+    if not CONFIG.claims_enabled:
+        return _text(
+            {
+                "status": "disabled",
+                "hint": "set CLAIMS_EXTRACTION=true after `ollama pull gemma2:9b`.",
+            }
+        )
+
+    raw_prompts = args.get("prompts") or []
+    if not isinstance(raw_prompts, list):
+        return _text({"error": "ValueError", "message": "`prompts` must be a list."})
+
+    normalized: list[tuple[str, float, str | None]] = []
+    for item in raw_prompts:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                normalized.append((text, _now(), None))
+        elif isinstance(item, dict):
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            ts = item.get("ts")
+            ts_val = float(ts) if isinstance(ts, (int, float)) else _now()
+            pid = item.get("id")
+            pid_val = str(pid) if isinstance(pid, str) and pid else None
+            normalized.append((text, ts_val, pid_val))
+
+    if not normalized:
+        return _text({"project": project, "claims_added": 0, "claims": []})
+
+    session_id = args.get("session_id")
+    session_val = str(session_id) if isinstance(session_id, str) and session_id else None
+
+    repo = Path(os.environ.get("CODE_MEMORY_REPO") or os.getcwd()).resolve()
+    head_sha = _head_sha_safe(repo)
+
+    from .claims import ClaimExtractor, ClaimRecord, ClaimsStore
+    from .claims.extractor import ExtractionError
+
+    cfg = CONFIG.for_project(project)
+    store = ClaimsStore(path=cfg.claims_db)
+    extractor = ClaimExtractor()
+    added = 0
+    samples: list[dict[str, Any]] = []
+    try:
+        for text, ts, pid in normalized:
+            try:
+                claims = extractor.extract(text)
+            except ExtractionError as exc:
+                return _text(
+                    {
+                        "project": project,
+                        "error": "ExtractionError",
+                        "message": str(exc),
+                        "claims_added": added,
+                    }
+                )
+            for c in claims:
+                rec = ClaimRecord(
+                    subject=c.subject,
+                    predicate=c.predicate,
+                    object=c.object,
+                    polarity=c.polarity,
+                    confidence=c.confidence,
+                    evidence_span=c.evidence_span,
+                    valid_at=ts,
+                    head_sha=head_sha,
+                    session_id=session_val,
+                    source_prompt_id=pid,
+                )
+                store.upsert(rec)
+                added += 1
+                if len(samples) < 5:
+                    samples.append(
+                        {
+                            "subject": rec.subject,
+                            "predicate": rec.predicate,
+                            "object": rec.object,
+                            "confidence": rec.confidence,
+                        }
+                    )
+    finally:
+        extractor.close()
+        store.close()
+
+    return _text(
+        {
+            "project": project,
+            "claims_added": added,
+            "sample": samples,
+        }
+    )
+
+
+def _read_claims(args: dict[str, Any]) -> list[TextContent]:
+    project = _require_project(args)
+    from .claims import ClaimsStore
+
+    cfg = CONFIG.for_project(project)
+    store = ClaimsStore(path=cfg.claims_db)
+    try:
+        subject = args.get("subject")
+        subject_val = str(subject) if isinstance(subject, str) and subject else None
+        as_of = args.get("as_of")
+        rows = (
+            store.as_of(float(as_of), subject=subject_val)
+            if isinstance(as_of, (int, float))
+            else store.current(subject=subject_val)
+        )
+        limit = int(args.get("limit", 50))
+        rows = rows[:limit]
+    finally:
+        store.close()
+
+    return _text(
+        {
+            "project": project,
+            "count": len(rows),
+            "claims": [
+                {
+                    "subject": r.subject,
+                    "predicate": r.predicate,
+                    "object": r.object,
+                    "polarity": r.polarity,
+                    "confidence": r.confidence,
+                    "valid_at": r.valid_at,
+                    "valid_to": r.valid_to,
+                    "head_sha": r.head_sha,
+                }
+                for r in rows
+            ],
+        }
+    )
+
+
+def _now() -> float:
+    import time
+
+    return time.time()
+
+
+def _head_sha_safe(repo: Path) -> str | None:
+    if not (repo / ".git").exists():
+        return None
+    try:
+        from .orchestrator import git_delta
+
+        return git_delta.head_sha(repo)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 _HANDLERS = {
     "codememory_retrieve": _retrieve,
     "codememory_record": _record,
@@ -728,6 +952,8 @@ _HANDLERS = {
     "codememory_drift": _drift,
     "codememory_at_sha": _at_sha,
     "codememory_callers_at_sha": _callers_at_sha,
+    "codememory_extract_claims": _extract_claims,
+    "codememory_claims": _read_claims,
 }
 
 

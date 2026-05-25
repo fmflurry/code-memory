@@ -197,6 +197,111 @@ def record(
     _emit({"project": pipe.slug, "id": ep_id}, as_json=as_json)
 
 
+@app.command("extract-claims")
+def extract_claims(
+    prompt: list[str] = typer.Option(
+        [],
+        "--prompt",
+        "-p",
+        help="User prompt text. Repeat for multiple prompts.",
+    ),
+    session_id: str = typer.Option("", "--session-id"),
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """Run Graphiti-style claim extraction over user prompts.
+
+    Honors ``CLAIMS_EXTRACTION`` env var: when disabled, emits a
+    ``{"status": "disabled"}`` payload and exits 0 (callers can treat
+    this as a no-op).
+    """
+    from .claims import ClaimExtractor, ClaimRecord, ClaimsStore
+    from .claims.extractor import ExtractionError
+    from .config import CONFIG
+    from .orchestrator import git_delta
+    import time as _t
+
+    if not CONFIG.claims_enabled:
+        _emit(
+            {
+                "status": "disabled",
+                "hint": (
+                    "set CLAIMS_EXTRACTION=true after "
+                    "`ollama pull gemma2:9b`."
+                ),
+            },
+            as_json=as_json,
+        )
+        raise typer.Exit(code=0)
+
+    prompts = [p.strip() for p in prompt if p and p.strip()]
+    if not prompts:
+        _emit({"claims_added": 0, "claims": []}, as_json=as_json)
+        raise typer.Exit(code=0)
+
+    slug = detect_project_slug() if project is None else project
+    cfg = CONFIG.for_project(slug)
+
+    repo = Path.cwd()
+    head = None
+    if git_delta.is_git_repo(repo):
+        try:
+            head = git_delta.head_sha(repo)
+        except git_delta.GitError:
+            head = None
+
+    store = ClaimsStore(path=cfg.claims_db)
+    extractor = ClaimExtractor()
+    added = 0
+    samples: list[dict[str, object]] = []
+    try:
+        for text in prompts:
+            try:
+                claims = extractor.extract(text)
+            except ExtractionError as exc:
+                _emit(
+                    {
+                        "error": "ExtractionError",
+                        "message": str(exc),
+                        "claims_added": added,
+                    },
+                    as_json=as_json,
+                )
+                raise typer.Exit(code=0)
+            now = _t.time()
+            for c in claims:
+                rec = ClaimRecord(
+                    subject=c.subject,
+                    predicate=c.predicate,
+                    object=c.object,
+                    polarity=c.polarity,
+                    confidence=c.confidence,
+                    evidence_span=c.evidence_span,
+                    valid_at=now,
+                    head_sha=head,
+                    session_id=session_id or None,
+                )
+                store.upsert(rec)
+                added += 1
+                if len(samples) < 5:
+                    samples.append(
+                        {
+                            "subject": rec.subject,
+                            "predicate": rec.predicate,
+                            "object": rec.object,
+                            "confidence": rec.confidence,
+                        }
+                    )
+    finally:
+        extractor.close()
+        store.close()
+
+    _emit(
+        {"project": slug, "claims_added": added, "sample": samples},
+        as_json=as_json,
+    )
+
+
 @app.command()
 def project(
     root: Path | None = typer.Argument(None, exists=True, file_okay=False, dir_okay=True),

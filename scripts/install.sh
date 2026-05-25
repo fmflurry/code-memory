@@ -7,6 +7,8 @@
 #   ./scripts/install.sh --no-docker     # skip docker compose
 #   ./scripts/install.sh --no-ollama     # skip ollama pull
 #   ./scripts/install.sh --no-tests      # skip smoke tests
+#   ./scripts/install.sh --with-claims   # also pull gemma2:9b for Graphiti-style
+#                                        # user-claim extraction (~5.4 GB)
 #   ./scripts/install.sh --with-rerank   # install [rerank] extra (sentence-transformers + torch, ~1.5 GB)
 #   ./scripts/install.sh --with-hybrid   # install [hybrid] extra (FlagEmbedding + torch, m3 dense+sparse)
 #   ./scripts/install.sh --with-dotnet   # install [dotnet] extra (dnfile, ~200 KB; .NET DLL metadata indexing)
@@ -48,6 +50,7 @@ SKIP_MCP=0
 WITH_RERANK=0
 WITH_HYBRID=0
 WITH_DOTNET=0
+WITH_CLAIMS=0
 EXTRAS_ARG=""        # empty = interactive; "none" = skip extras prompt; other ignored
 PLUGINS_ARG=""       # empty = interactive; explicit value bypasses prompt
 PLUGINS_SCOPE="global"  # global | project
@@ -60,6 +63,7 @@ for arg in "$@"; do
     --with-rerank) WITH_RERANK=1 ;;
     --with-hybrid) WITH_HYBRID=1 ;;
     --with-dotnet) WITH_DOTNET=1 ;;
+    --with-claims) WITH_CLAIMS=1 ;;
     --extras=*)         EXTRAS_ARG="${arg#--extras=}" ;;
     --plugins=*)        PLUGINS_ARG="${arg#--plugins=}" ;;
     --plugins-scope=*)  PLUGINS_SCOPE="${arg#--plugins-scope=}" ;;
@@ -277,10 +281,30 @@ if [ "$SKIP_OLLAMA" -eq 0 ]; then
       ollama pull bge-m3
       ok "bge-m3 pulled"
     fi
+
+    # Optional: claim-extraction model (Graphiti-style user-prompt facts).
+    # Off by default — runtime is gated on CLAIMS_EXTRACTION=true anyway,
+    # so pulling 5+ GB without consent would be rude.
+    if [ "$WITH_CLAIMS" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
+      if prompt_yes_no "Also pull gemma2:9b for user-claim extraction? (~5.4 GB)" "n"; then
+        WITH_CLAIMS=1
+      fi
+    fi
+    if [ "$WITH_CLAIMS" -eq 1 ]; then
+      if ollama list 2>/dev/null | awk '{print $1}' | grep -q '^gemma2:9b$'; then
+        ok "gemma2:9b already present"
+      else
+        ollama pull gemma2:9b \
+          && ok "gemma2:9b pulled" \
+          || warn "gemma2:9b pull failed (you can retry: ollama pull gemma2:9b)"
+      fi
+      printf "${DIM}  Enable claim extraction at runtime with:\n    export CLAIMS_EXTRACTION=true${RST}\n"
+    fi
   else
     warn "Ollama daemon did not become reachable within 30s — skipping model pull."
     warn "  Start Ollama manually (open the app on macOS, or 'sudo systemctl start ollama' on Linux),"
     warn "  then run: ollama pull bge-m3"
+    [ "$WITH_CLAIMS" -eq 1 ] && warn "  Also: ollama pull gemma2:9b   (for user-claim extraction)"
   fi
 else
   warn "Ollama step skipped (remember to pull a model before ingesting)"
@@ -393,4 +417,7 @@ cat <<EOF
     EMBED_BACKEND=flagembed    # opt-in in-process BGE-M3 (needs --with-hybrid)
     CODEMEMORY_HYBRID=1        # dense+sparse RRF (only with flagembed backend)
     CODEMEMORY_RERANK=auto     # CE rerank (needs --with-rerank; auto on MPS/CUDA)
+    CLAIMS_EXTRACTION=true     # Graphiti-style user-claim extraction
+                               #   (needs --with-claims or `ollama pull gemma2:9b`)
+    CLAIMS_LLM_MODEL=gemma2:9b # override the extraction model
 EOF

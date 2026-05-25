@@ -78,7 +78,20 @@ class Config:
     falkor_graph: str = _env("FALKOR_GRAPH", "code_graph")
 
     episodic_db: Path = Path(_env("EPISODIC_DB", "./data/episodic.db"))
+    claims_db: Path = Path(_env("CLAIMS_DB", "./data/claims.db"))
     data_dir: Path = Path(_env("DATA_DIR", "./data"))
+
+    # Claim extraction (Graphiti-style user-prompt facts).
+    # Disabled by default — opt in once the Ollama model is pulled.
+    claims_enabled: bool = _env("CLAIMS_EXTRACTION", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    claims_llm_model: str = _env("CLAIMS_LLM_MODEL", "gemma2:9b")
+    claims_llm_timeout: float = float(_env("CLAIMS_LLM_TIMEOUT", "30"))
+    claims_min_confidence: float = float(_env("CLAIMS_MIN_CONFIDENCE", "0.6"))
 
     def for_project(self, slug: str) -> Config:
         slug = slugify(slug)
@@ -88,6 +101,7 @@ class Config:
             qdrant_episodes=f"{self.qdrant_episodes}__{slug}",
             falkor_graph=f"{self.falkor_graph}__{slug}",
             episodic_db=self.data_dir / slug / "episodic.db",
+            claims_db=self.data_dir / slug / "claims.db",
         )
 
 
