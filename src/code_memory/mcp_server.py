@@ -10,6 +10,10 @@ Tools:
   - codememory_importers(target, project?)
   - codememory_dependencies(file, depth?, project?)
   - codememory_definitions(symbol, project?)
+  - codememory_assembly_members(type, assembly?, project?) — .NET DLL surface
+  - codememory_drift(head_sha, project?)                   — temporal
+  - codememory_at_sha(sha, sha_ord, label?, limit?, project?)
+  - codememory_callers_at_sha(symbol, sha, sha_ord, project?)
 
 Transport: stdio. Register via `code-memory-mcp` script entrypoint.
 """
@@ -296,6 +300,90 @@ _TOOLS: list[Tool] = [
             "required": ["type", "project"],
         },
     ),
+    Tool(
+        name="codememory_drift",
+        description=(
+            "List symbols whose last_seen_sha doesn't match the supplied "
+            "git HEAD — either tombstoned (deleted) or drifted (the most "
+            "recent ingest didn't confirm them at HEAD). Use to sanity-check "
+            "a long-running watcher or to find stale references in comments."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "head_sha": {
+                    "type": "string",
+                    "description": (
+                        "Git HEAD to compare against. Pass the SHA you consider "
+                        "'current' (usually the HEAD of the repo associated "
+                        "with this project)."
+                    ),
+                },
+                "project": _project_schema(),
+            },
+            "required": ["head_sha", "project"],
+        },
+    ),
+    Tool(
+        name="codememory_at_sha",
+        description=(
+            "Time-travel query: list Symbol (default) or File nodes that were "
+            "alive at the supplied commit. Requires the graph to carry "
+            "topological ordinals — anything ingested before the temporal "
+            "upgrade is invisible to this tool by design (we can't reason "
+            "about lifecycles for un-stamped rows). Combine with "
+            "codememory_callers_at_sha for 'what called X back then'."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "sha": {
+                    "type": "string",
+                    "description": "Full git SHA to query the graph state at.",
+                },
+                "sha_ord": {
+                    "type": "integer",
+                    "description": (
+                        "Topological ordinal of sha. Compute on the caller "
+                        "side with `git rev-list --count --first-parent <sha>` "
+                        "so the MCP server doesn't shell out."
+                    ),
+                },
+                "label": {
+                    "type": "string",
+                    "enum": ["Symbol", "File"],
+                    "default": "Symbol",
+                    "description": "Which node label to enumerate.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 200,
+                    "description": "Maximum rows to return.",
+                },
+                "project": _project_schema(),
+            },
+            "required": ["sha", "sha_ord", "project"],
+        },
+    ),
+    Tool(
+        name="codememory_callers_at_sha",
+        description=(
+            "Callers of a symbol as the graph looked at the supplied commit. "
+            "Answers 'what used to call X before commit Y deleted it' without "
+            "a worktree checkout. Requires temporal ordinals (see "
+            "codememory_at_sha for caveats)."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "sha": {"type": "string"},
+                "sha_ord": {"type": "integer"},
+                "project": _project_schema(),
+            },
+            "required": ["symbol", "sha", "sha_ord", "project"],
+        },
+    ),
 ]
 
 
@@ -562,6 +650,69 @@ def _assembly_members(args: dict[str, Any]) -> list[TextContent]:
     )
 
 
+def _drift(args: dict[str, Any]) -> list[TextContent]:
+    g, slug = _graph_for(_require_project(args))
+    head = args.get("head_sha")
+    if not isinstance(head, str) or not head:
+        return _text({"error": "ValueError", "message": "head_sha is required"})
+    rows = g.drift(head)
+    return _text(
+        {"project": slug, "head_sha": head, "count": len(rows), "items": rows}
+    )
+
+
+def _at_sha(args: dict[str, Any]) -> list[TextContent]:
+    g, slug = _graph_for(_require_project(args))
+    sha = args.get("sha")
+    sha_ord = args.get("sha_ord")
+    if not isinstance(sha, str) or not sha:
+        return _text({"error": "ValueError", "message": "sha is required"})
+    if not isinstance(sha_ord, int):
+        return _text(
+            {"error": "ValueError", "message": "sha_ord must be an integer"}
+        )
+    label = args.get("label", "Symbol")
+    if label not in {"Symbol", "File"}:
+        return _text(
+            {"error": "ValueError", "message": "label must be 'Symbol' or 'File'"}
+        )
+    limit = int(args.get("limit", 200))
+    rows = g.at_sha(sha, sha_ord, label=label, limit=limit)
+    return _text(
+        {
+            "project": slug,
+            "sha": sha,
+            "sha_ord": sha_ord,
+            "label": label,
+            "count": len(rows),
+            "items": rows,
+        }
+    )
+
+
+def _callers_at_sha(args: dict[str, Any]) -> list[TextContent]:
+    g, slug = _graph_for(_require_project(args))
+    sha = args.get("sha")
+    sha_ord = args.get("sha_ord")
+    if not isinstance(sha, str) or not sha:
+        return _text({"error": "ValueError", "message": "sha is required"})
+    if not isinstance(sha_ord, int):
+        return _text(
+            {"error": "ValueError", "message": "sha_ord must be an integer"}
+        )
+    rows = g.callers_at_sha(args["symbol"], sha, sha_ord)
+    return _text(
+        {
+            "project": slug,
+            "symbol": args["symbol"],
+            "sha": sha,
+            "sha_ord": sha_ord,
+            "count": len(rows),
+            "items": rows,
+        }
+    )
+
+
 _HANDLERS = {
     "codememory_retrieve": _retrieve,
     "codememory_record": _record,
@@ -573,6 +724,9 @@ _HANDLERS = {
     "codememory_dependencies": _dependencies,
     "codememory_definitions": _definitions,
     "codememory_assembly_members": _assembly_members,
+    "codememory_drift": _drift,
+    "codememory_at_sha": _at_sha,
+    "codememory_callers_at_sha": _callers_at_sha,
 }
 
 

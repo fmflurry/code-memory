@@ -540,17 +540,38 @@ tool-selection loop — no shell parsing, no slash command.
 
 Tools advertised:
 
+**Core**
+
 | Tool                      | Purpose                                                                                          |
 | ------------------------- | ------------------------------------------------------------------------------------------------ |
 | `codememory_retrieve`     | Semantic + graph + episodic recall (returns a Context Pack).                                     |
 | `codememory_record`       | Log a finished task (prompt / plan / patch / verdict).                                           |
 | `codememory_reingest`     | Re-index a single file after edits.                                                              |
 | `codememory_ingest`       | Full / incremental repo ingest (long-running; requires explicit `confirmed=true`).               |
+
+**Topology (call/import graph)**
+
+| Tool                      | Purpose                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------ |
 | `codememory_callers`      | Files that call a symbol (impact analysis: "what breaks if I rename X?").                        |
 | `codememory_callees`      | Symbols called from the file that defines a given symbol (outgoing dependencies).                |
 | `codememory_definitions`  | All files + line ranges that define a given symbol name (disambiguate before callers/callees).   |
 | `codememory_dependencies` | Modules imported by a file (forward import graph).                                               |
 | `codememory_importers`    | Files that import a module / package / path (reverse import graph).                              |
+
+**.NET assembly surface**
+
+| Tool                          | Purpose                                                                                       |
+| ----------------------------- | --------------------------------------------------------------------------------------------- |
+| `codememory_assembly_members` | List public methods of an indexed .NET Type, read on-demand from the referenced DLL (~tens of ms). Members aren't bulk-indexed to keep the graph small. |
+
+**Temporal (time-travel queries)**
+
+| Tool                            | Purpose                                                                                       |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `codememory_drift`              | Symbols whose `last_seen_sha` ≠ supplied HEAD — classified `tombstoned` / `drifted`.          |
+| `codememory_at_sha`             | Nodes (Symbol or File) alive at a past commit. Caller passes `sha_ord` from `git rev-list --count --first-parent <sha>`. |
+| `codememory_callers_at_sha`     | Callers of a symbol as the graph looked at a past commit ("what called X before commit Y deleted it"). |
 
 Every tool requires an explicit `project` argument — the silent cwd-fallback
 was hiding namespace bugs (see commit `3663772`). Pass the slug printed by
