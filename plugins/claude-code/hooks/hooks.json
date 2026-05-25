@@ -22,6 +22,18 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Bash|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/on-pre-tool.js",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
@@ -30,6 +42,16 @@
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/on-post-tool.js",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__code-memory__codememory_(retrieve|definitions|callers|callees|importers|dependencies|at_sha|callers_at_sha|drift|assembly_members)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/on-retrieve-seen.js",
+            "timeout": 3
           }
         ]
       }

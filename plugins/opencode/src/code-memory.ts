@@ -38,13 +38,48 @@ const DEDUP_WINDOW_MS = 60 * 1000; // 60 s
 // resolver. Keeps high-frequency edit storms from spawning N resolver runs.
 const RESOLVER_DEBOUNCE_MS = 1500;
 const WRITE_TOOLS: ReadonlySet<string> = new Set(["write", "edit", "patch"]);
+const GATED_READ_TOOLS: ReadonlySet<string> = new Set([
+  "read",
+  "bash",
+  "grep",
+  "glob",
+]);
+const MEMORY_TOOL_PREFIXES: readonly string[] = [
+  "codememory_",
+  "code-memory_",
+  "code_memory_",
+  "mcp__code-memory__",
+];
 const SERVICE = "code-memory";
+
+const GATE_NUDGE = [
+  "## code-memory gate",
+  "",
+  "Your previous tool calls hit the filesystem / shell without first",
+  "querying code-memory. For codebase questions (where is X, how does Y",
+  "work, who calls Z, where are the docs) the local index gives a precise",
+  "answer in one call:",
+  "",
+  "- `codememory_retrieve` — semantic + episodic recall",
+  "- `codememory_definitions` — exact symbol locations",
+  "- `codememory_callers` / `codememory_callees` — call graph",
+  "- `codememory_importers` / `codememory_dependencies` — imports",
+  "",
+  "Default to one targeted MCP call before scanning the filesystem.",
+].join("\n");
 
 interface SessionMemory {
   pack: ContextPack | null;
   query: string | null;
   fetchedAt: number;
   firstUserMessage: string | null;
+  retrieveSeen: boolean;
+  pendingGateNudge: boolean;
+}
+
+function isMemoryTool(tool: string): boolean {
+  const lower = tool.toLowerCase();
+  return MEMORY_TOOL_PREFIXES.some((p) => lower.includes(p));
 }
 
 interface ToolInput {
@@ -238,7 +273,14 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
     if (!id) return null;
     let s = stateBySession.get(id);
     if (!s) {
-      s = { pack: null, query: null, fetchedAt: 0, firstUserMessage: null };
+      s = {
+        pack: null,
+        query: null,
+        fetchedAt: 0,
+        firstUserMessage: null,
+        retrieveSeen: false,
+        pendingGateNudge: false,
+      };
       stateBySession.set(id, s);
     }
     return s;
@@ -260,6 +302,9 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
       const sid = input.sessionID;
       const session = getSession(sid);
       if (!session) return;
+
+      // New turn: clear the gate flag before any retrieve/exploration runs.
+      session.retrieveSeen = false;
 
       const text = extractText(output.parts);
       if (text && !session.firstUserMessage) {
@@ -294,6 +339,8 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
         session.pack = pack;
         session.query = query;
         session.fetchedAt = Date.now();
+        // Auto-retrieve satisfies the gate for this turn.
+        session.retrieveSeen = true;
         log(
           "info",
           `retrieved ${pack.code.length} code / ${pack.episodes.length} episodes for "${query.slice(0, 80)}"`,
@@ -307,7 +354,17 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
     ) => {
       if (!Array.isArray(output.system)) return;
       const session = sessionLookup(stateBySession, input.sessionID);
-      if (!session || !session.pack) return;
+      if (!session) return;
+
+      // Drain a pending gate nudge from the previous turn (the agent ran a
+      // shell/read tool without first hitting code-memory). The nudge is
+      // one-shot — surfaced exactly once at the next turn's system prompt.
+      if (session.pendingGateNudge) {
+        session.pendingGateNudge = false;
+        output.system.push(GATE_NUDGE);
+      }
+
+      if (!session.pack) return;
       if (Date.now() - session.fetchedAt > PACK_TTL_MS) return;
 
       const isEmpty =
@@ -317,9 +374,33 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
       output.system.push(formatPack(session.pack));
     },
 
-    "tool.execute.after": async (input: ToolInput, output: ToolOutput) => {
-      if (!memory.available) return;
+    "tool.execute.before": async (input: ToolInput, _output: ToolOutput) => {
       const tool = (input.tool ?? "").toLowerCase();
+      if (!GATED_READ_TOOLS.has(tool)) return;
+
+      const session = sessionLookup(stateBySession, input.sessionID);
+      if (!session || session.retrieveSeen || session.pendingGateNudge) return;
+
+      // Soft nudge: never block. Flag the session so the next system
+      // transform surfaces a one-shot reminder, and log a warning the
+      // user sees in the OpenCode UI right away.
+      session.pendingGateNudge = true;
+      log(
+        "warn",
+        `gate: ${tool} called without prior codememory_retrieve this turn — consider memory.retrieve first`,
+      );
+    },
+
+    "tool.execute.after": async (input: ToolInput, output: ToolOutput) => {
+      const tool = (input.tool ?? "").toLowerCase();
+
+      // Any code-memory MCP call satisfies the gate for this turn.
+      if (isMemoryTool(tool)) {
+        const session = sessionLookup(stateBySession, input.sessionID);
+        if (session) session.retrieveSeen = true;
+      }
+
+      if (!memory.available) return;
       if (!WRITE_TOOLS.has(tool)) return;
 
       const path = pickToolPath(output.args) ?? pickToolPath(output.metadata);

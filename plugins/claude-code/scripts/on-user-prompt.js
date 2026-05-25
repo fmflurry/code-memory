@@ -25,7 +25,7 @@
 const { readEvent, done } = require("./lib/io");
 const { createMemoryClient } = require("./lib/memory");
 const { isSubstantiveCodeIntent, extractQueryFromMessage } = require("./lib/intent");
-const { loadSession, saveSession } = require("./lib/state");
+const { loadSession, saveSession, resetTurn, markRetrieveSeen } = require("./lib/state");
 const { formatPack } = require("./lib/format");
 
 const DEDUP_WINDOW_MS = 60 * 1000;
@@ -35,6 +35,9 @@ const DEDUP_WINDOW_MS = 60 * 1000;
   const cwd = ev.cwd || process.cwd();
   const sessionId = ev.session_id || ev.sessionID || "unknown";
   const prompt = String(ev.prompt || "");
+
+  // New turn: clear gate flags before any retrieve/exploration begins.
+  resetTurn(sessionId);
 
   const state = loadSession(sessionId);
   if (!state.firstUserMessage && prompt.trim()) {
@@ -77,6 +80,8 @@ const DEDUP_WINDOW_MS = 60 * 1000;
   state.lastQuery = query;
   state.lastFetchedAt = Date.now();
   saveSession(sessionId, state);
+  // Auto-retrieve fired — the gate is satisfied for this turn.
+  markRetrieveSeen(sessionId);
 
   if (isEmpty) {
     done();

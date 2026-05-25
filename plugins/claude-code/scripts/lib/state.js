@@ -74,6 +74,8 @@ function loadSession(sessionId) {
       lastQuery: null,
       lastFetchedAt: 0,
       bootstrapped: false,
+      retrieveSeen: false,
+      turnGateNudged: false,
     };
   }
   return {
@@ -81,7 +83,28 @@ function loadSession(sessionId) {
     lastQuery: data.lastQuery || null,
     lastFetchedAt: Number(data.lastFetchedAt || 0),
     bootstrapped: Boolean(data.bootstrapped),
+    retrieveSeen: Boolean(data.retrieveSeen),
+    turnGateNudged: Boolean(data.turnGateNudged),
   };
+}
+
+function markRetrieveSeen(sessionId) {
+  const s = loadSession(sessionId);
+  s.retrieveSeen = true;
+  saveSession(sessionId, s);
+}
+
+function resetTurn(sessionId) {
+  const s = loadSession(sessionId);
+  s.retrieveSeen = false;
+  s.turnGateNudged = false;
+  saveSession(sessionId, s);
+}
+
+function markTurnGateNudged(sessionId) {
+  const s = loadSession(sessionId);
+  s.turnGateNudged = true;
+  saveSession(sessionId, s);
 }
 
 function saveSession(sessionId, state) {
@@ -144,4 +167,7 @@ module.exports = {
   touchResolverMarker,
   readResolverMarker,
   resolverMarkerFile,
+  markRetrieveSeen,
+  resetTurn,
+  markTurnGateNudged,
 };
