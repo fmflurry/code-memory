@@ -8,7 +8,211 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
-## Unreleased
+## [0.2.0] — 2026-05-25
+
+Release theme: **enterprise-grade ingest, full features, no quality
+tradeoffs**. The bulk of this release attacks the cold-ingest problem
+on large repos and the precision gaps in topology queries. Honest
+framing throughout — every speedup keeps `bge-m3` recall intact;
+every limit is documented.
+
+### Added — `Snapshots: ingest once, sync everywhere`
+
+**What:** an end-to-end fix + headline workflow for the cold-ingest
+problem.
+
+- `code-memory snapshot publish` builds a tar.gz containing every
+  Qdrant vector (with hybrid dense + sparse), every Falkor node and
+  edge, the ingest state pointer, and a SHA-256-digested manifest;
+  pushes it to a dedicated git branch (default
+  `codemem-snapshots`). Distribution channel is just git.
+- `code-memory sync` after a `git pull` auto-detects whether a
+  snapshot exists for HEAD, a recent ancestor, or neither — and
+  pulls + applies the snapshot, or applies the ancestor + runs the
+  delta, or falls back to a full ingest. Verified end-to-end:
+  cold-ingest → publish → wipe → sync restores `retrieve` /
+  `callers` / `definitions` / `importers` in 0.5 s (snapshot
+  matches HEAD) or 0.9 s (HEAD one commit ahead).
+
+**Reason:** `bge-m3` on Apple Silicon Metal is hardware-bound at
+~21 chunks/sec — a 17k-file monorepo takes ~2 h cold no matter how
+clever the pipeline gets. The real fix is to never run the embedder
+on slow machines: build the index once on a fast host (CI / GPU box),
+publish, sync everywhere else. The cold-ingest cost moves from
+"every dev on every clone" to "once per merge in CI".
+
+### Fixed — Snapshot hybrid-vector round-trip
+
+**What:** `_dump_vectors` used `list(p.vector)` which silently returns
+the dict's keys when Qdrant returns the hybrid layout. Snapshots
+looked valid (right manifest, right counts) but every vector blob
+carried the literal string `["dense"]` instead of the embedding.
+Apply then crashed in `QdrantStore.upsert` accessing `vector.dense`
+on a list of slot names.
+
+New `_normalize_vector_for_dump(vec)` coerces both the hybrid dict
+and legacy bare-list layouts into one canonical JSON shape; new
+`_hybridvec_from_dump(payload)` is the reverse on apply. Backward
+compat: snapshots written with the bare-list shape still load.
+
+**Reason:** the snapshot feature was non-functional in shipping code.
+Format-only tests round-tripped JSON correctly, but no test
+exercised the actual Qdrant → snapshot → Qdrant path. Added 8 new
+tests in `tests/test_snapshot_e2e.py` (6 pure-format, 2 live against
+real Falkor + Qdrant) to keep the regression dead.
+
+### Added — `REFERENCES` edge type for C# type-position usage
+
+**What:** the graph extractor now emits a new `REFERENCES` edge for
+every type-position usage of a symbol — base lists (`class X : IFoo`),
+parameter types, field/property types, generic args, type
+constraints, cast / is / as / typeof. `callers` queries union
+`CALLS | REFERENCES` so an interface like `IFooService` returns both
+the call sites of its members and the files that declare it as a
+dependency.
+
+**Reason:** `code-memory callers IFoo` on a C# repo used to return
+0 because the graph only modeled call expressions. Implementations,
+parameter-type users, and generic-arg sites were invisible — the
+single biggest precision gap on .NET corpora. Verified end-to-end
+on a fresh C# project: `callers IDocumentServiceBase` (renamed
+to `IFooService` in tests) now surfaces the impl class **and**
+every consumer that declares the interface as a constructor or
+field type.
+
+### Added — Canonical import aliasing for Python relative imports
+
+**What:** two fixes that close the import-precision gap.
+
+1. Extractor: `_import_module` now reads the `module_name` field on
+   `import_from_statement` instead of the first matching `dotted_name`
+   child. Without this, `from ..pkg.sub import Sym` stored `Sym`
+   (the imported name) as the module key — every relative import in
+   the project was filed under the wrong slot.
+2. Resolver: for each relative import that resolves to a project
+   file, derive the canonical dotted-module name by climbing
+   `__init__.py` parents and emit alias `IMPORTS` edges. Also taught
+   `_resolve_relative_import` to handle Python dotted-relative form
+   (`..pkg.sub.leaf`), not just TS/JS path-style. New
+   `import_aliases_added` stat on `ResolverStats`.
+
+**Reason:** before this, `code-memory importers code_memory.graph.falkor_store`
+on this very repo returned 2 (only the test files using the absolute
+form) when the actual answer was 6 (4 source files use relative
+imports). After the fix: 6 true positives, 0 false positives —
+strictly more precise than `rg`'s lexical match.
+
+### Added — Persistent content-hash embedding cache
+
+**What:** new `EmbedCache` (SQLite-backed) and `CachedEmbedder`
+wrapper. Every chunk's UTF-8 SHA-256 + the embedding model id become
+the cache key. The wrapper hashes inputs, fetches cached hits in one
+`SELECT … WHERE chunk_hash IN (…)`, sends only the miss list to
+the inner backend, writes new vectors back, reassembles in input
+order. Lives in `$DATA_DIR/embed_cache.sqlite`; shared across
+projects (content hashes are content-only). Disable via
+`EMBED_CACHE_DISABLED=1`.
+
+**Reason:** on a stable monorepo, ~95% of chunks are unchanged from
+one ingest to the next. The cache lets daily re-ingest collapse to
+a SQLite scan + Qdrant upsert. Measured on this repo: 55.7 s cold
+→ **2.9 s warm = 19× faster** on re-ingest, full features and
+identical answers.
+
+### Added — TEI (`text-embeddings-inference`) embedding backend
+
+**What:** new `TEIEmbedder` class + `EMBED_BACKEND=tei` /
+`TEI_URL` config. The optional Docker compose profile
+`docker compose --profile tei up -d` launches a TEI container
+alongside FalkorDB and Qdrant. Cache key is shared with Ollama
+when both serve the same model, so switching backends doesn't
+re-embed.
+
+**Reason:** on Linux + NVIDIA, TEI serves `bge-m3` at 5-10× the
+throughput of Ollama via proper CUDA batching + streaming.
+Cold-ingest of a 17k-file monorepo drops from ~2 h (Ollama on Mac
+Metal) to ~15-25 min (TEI on Linux). Same `bge-m3` weights, zero
+recall change. The Mac CPU image works as a smoke test but offers
+no advantage over Ollama's Metal path.
+
+### Added — `--no-vectors` ingest flag
+
+**What:** `code-memory ingest --no-vectors` skips the embedder and
+Qdrant entirely, building only the symbol graph. `callers` /
+`definitions` / `importers` answer identically; semantic `retrieve`
+returns empty.
+
+**Reason:** documented as a niche option for agents that only
+consume the graph layer — not a recommendation. The cache above
+solves the slow-ingest problem with full features; this flag is
+for the genuinely-no-semantic-recall use case.
+
+### Performance — UNWIND-batched Falkor upserts
+
+**What:** `FalkorStore.upsert_nodes` / `upsert_edges` previously
+ran one `MERGE` query per node / edge. A file with 50 symbols +
+imports + calls hit Falkor 50 times. Now they group by label
+(nodes) and `(src_label, type, dst_label)` (edges) and ship one
+`UNWIND $rows` per group: ~50 round-trips → ~3 per file.
+
+**Reason:** ~10× faster graph layer, especially on import-heavy
+languages. Temporal stamping preserved bit-for-bit.
+
+### Performance — Cross-file embedding batches + pipelined Qdrant
+
+**What:** `_ingest_full` now buffers chunks across files and
+flushes to the embedder in batches of 64 (per-file Ollama HTTP
+overhead was ~75 ms each before). Qdrant upserts run on a bounded
+2-worker thread pool so upload of batch N overlaps with embed of
+batch N+1.
+
+**Reason:** per-file HTTP overhead was the second-biggest cost
+after model inference. Modest on Mac (Ollama serialises on GPU);
+meaningful on Linux + NVIDIA where the embedder is faster than
+the qdrant network path.
+
+### Added — Auto-resolved `embed_dim` from model name
+
+**What:** new `_KNOWN_MODEL_DIMS` table in `config.py` and
+`resolve_embed_dim(model_name, override)` helper. `Config.embed_dim`
+defaults to `0` (sentinel for "auto"); `QdrantStore.__init__`
+resolves the actual dim from the model name unless `EMBED_DIM=<n>`
+is set explicitly.
+
+**Reason:** swapping `EMBED_MODEL` without setting `EMBED_DIM`
+silently truncated or rejected upserts. The known-model table
+covers bge, nomic, mxbai, and snowflake-arctic at standard sizes;
+unknown models default to 1024 with a stderr warning.
+
+### Docs — README headline + framing pass
+
+**What:** the README leads with the verified topology benchmark
+table (this repo, Python files, `FalkorStore`): code-memory beats
+`rg` on precision (6 true importers vs rg's 7 with 1 false
+positive) while returning 5-30× less context for the agent to read
+back. The Performance & scale section documents the three real
+unlock paths (snapshots, cache, TEI) and an explicit "Honest
+limits today" subsection naming what isn't and won't be on the
+roadmap.
+
+Earlier "47× faster!" framing tied to `--no-vectors` was walked
+back as misleading. Nomic-embed-text was evaluated against
+`bge-m3` on a real corpus, lost 42% Recall@10, and removed from
+recommendations.
+
+### Removed — Private app names from current tree and full git history
+
+**What:** scrubbed `gc.net`, `gc.webapp`, `isagri`,
+`GC.BillingChain`, `IDocumentServiceBase` and related variants
+from docs, scripts, tests, and the `BENCHMARK_VS_BASELINE.json`
+(443 path leaks). Ran `git filter-repo` to rewrite all 53 commits
+of history; force-pushed `main`.
+
+**Reason:** the names belong to private professional projects of
+the author's. Anyone with an existing clone needs to delete and
+re-clone — SHAs are orphaned. The backup branch
+`main-backup-pre-scrub-20260525-142651` is kept locally as a
+safety net.
 
 ### Added — Claim entity resolution + retrieve-pack surfacing + OpenCode parity
 
