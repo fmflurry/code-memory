@@ -114,15 +114,21 @@ class Pipeline:
         vector: QdrantStore | None = None,
         graph: FalkorStore | None = None,
         episodic: EpisodicStore | None = None,
+        skip_vectors: bool = False,
     ) -> None:
         self.slug = project or detect_project_slug()
         self.cfg: Config = CONFIG.for_project(self.slug)
+        self.skip_vectors = skip_vectors
         self.embedder = embedder or get_embedder()
         self.vector = vector or QdrantStore()
         self.graph = graph or FalkorStore(graph_name=self.cfg.falkor_graph)
         self.episodic = episodic or EpisodicStore(path=self.cfg.episodic_db)
-        self.vector.ensure_collection(self.cfg.qdrant_code)
-        self.vector.ensure_collection(self.cfg.qdrant_episodes)
+        # Skip the Qdrant probes too when ``skip_vectors``: large-repo
+        # operators who deliberately turn off the vector layer shouldn't
+        # have to keep Qdrant alive.
+        if not getattr(self, "skip_vectors", False):
+            self.vector.ensure_collection(self.cfg.qdrant_code)
+            self.vector.ensure_collection(self.cfg.qdrant_episodes)
         self.graph.ensure_indexes()
         self.state = IngestStateStore(self.cfg.episodic_db)
 
@@ -224,6 +230,22 @@ class Pipeline:
         if not dry_run:
             self._purge_project_index(root)
         hb = _Heartbeat("full ingest" + (" (dry-run)" if dry_run else ""))
+
+        # Buffer chunks across files so the embedder sees a large batch
+        # per call. Ollama's per-request overhead dominates when each
+        # file (5-30 chunks) gets its own HTTP roundtrip; coalescing to
+        # ~64 chunks/call cuts ingest wall-time by ~3-5× on real repos
+        # where the embedder is the dominant cost (Falkor + Qdrant are
+        # already fast after the UNWIND batching).
+        pending_chunks: list[tuple[ExtractedFile, _Chunk]] = []
+        EMBED_BATCH = 64
+
+        def _flush_pending() -> None:
+            if not pending_chunks:
+                return
+            self._embed_and_upsert(pending_chunks)
+            pending_chunks.clear()
+
         for ex in extractor.walk(root):
             stats.files += 1
             stats.symbols += len(ex.symbols)
@@ -233,8 +255,18 @@ class Pipeline:
             stats.chunks += len(ex.symbols) or 1
             sanity.record(ex)
             if not dry_run:
-                self.ingest_file(ex, head_sha=head_sha, head_ord=head_ord)
+                # Graph upserts are cheap (UNWIND-batched per call) and
+                # need to stay per-file so the temporal stamping order
+                # matches the walk. Vector work defers to the buffer.
+                self._upsert_graph(ex, head_sha=head_sha, head_ord=head_ord)
+                if not getattr(self, "skip_vectors", False):
+                    for c in _chunks_for(ex):
+                        pending_chunks.append((ex, c))
+                    if len(pending_chunks) >= EMBED_BATCH:
+                        _flush_pending()
             hb.tick(stats)
+        if not getattr(self, "skip_vectors", False):
+            _flush_pending()
         hb.done(stats)
         _attach_sanity(stats, sanity)
         self._ingest_dotnet_projects(
@@ -677,7 +709,8 @@ class Pipeline:
             self.graph.delete_file(
                 path_str, head_sha=head_sha, head_ord=head_ord
             )
-            self.vector.delete_by_path(self.cfg.qdrant_code, path_str)
+            if not getattr(self, "skip_vectors", False):
+                self.vector.delete_by_path(self.cfg.qdrant_code, path_str)
 
         for path in reingest:
             if not path.is_file():
@@ -757,7 +790,8 @@ class Pipeline:
         head_ord: int | None = None,
     ) -> None:
         self._upsert_graph(ex, head_sha=head_sha, head_ord=head_ord)
-        self._upsert_vectors(ex)
+        if not getattr(self, "skip_vectors", False):
+            self._upsert_vectors(ex)
 
     def reingest_file(
         self,
@@ -777,7 +811,8 @@ class Pipeline:
         if head_sha is None:
             head_sha, head_ord = _resolve_head(Path(ex.path).parent)
         self.graph.delete_file(ex.path, head_sha=head_sha, head_ord=head_ord)
-        self.vector.delete_by_path(self.cfg.qdrant_code, ex.path)
+        if not getattr(self, "skip_vectors", False):
+            self.vector.delete_by_path(self.cfg.qdrant_code, ex.path)
         self.ingest_file(ex, head_sha=head_sha, head_ord=head_ord)
         return ex
 
@@ -936,6 +971,38 @@ class Pipeline:
 
         self.graph.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
         self.graph.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
+
+    def _embed_and_upsert(
+        self, pending: list[tuple[ExtractedFile, _Chunk]]
+    ) -> None:
+        """Embed and persist a cross-file chunk batch in one shot.
+
+        Used by the full-ingest hot path so the embedder receives a
+        large list per call (avoiding per-file HTTP overhead) and
+        Qdrant gets a single bulk-upsert. Order of records mirrors the
+        input so the embedder result vector aligns 1:1.
+        """
+        if not pending:
+            return
+        texts = [c.text for _, c in pending]
+        hvecs = self.embedder.embed(texts)
+        records = [
+            VectorRecord(
+                id=_id(ex.path, c.key),
+                vector=hv,
+                payload={
+                    "path": ex.path,
+                    "lang": ex.lang,
+                    "kind": c.kind,
+                    "name": c.name,
+                    "start": c.start,
+                    "end": c.end,
+                    "generated": ex.generated,
+                },
+            )
+            for (ex, c), hv in zip(pending, hvecs, strict=True)
+        ]
+        self.vector.upsert(self.cfg.qdrant_code, records)
 
     def _upsert_vectors(self, ex: ExtractedFile, batch_size: int = 32) -> None:
         chunks = list(_chunks_for(ex))

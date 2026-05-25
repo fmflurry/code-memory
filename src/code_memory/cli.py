@@ -78,6 +78,17 @@ def ingest(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would be ingested; don't write."
     ),
+    no_vectors: bool = typer.Option(
+        False,
+        "--no-vectors",
+        help=(
+            "Skip embedding + vector store writes. Builds only the symbol "
+            "graph (callers/definitions/importers still work; semantic "
+            "retrieve will be empty). Drops Ollama from the critical path "
+            "— large repos that don't need semantic recall finish in a "
+            "fraction of the time."
+        ),
+    ),
     as_json: bool = JsonOpt,
 ) -> None:
     """Ingest a repository.
@@ -85,7 +96,7 @@ def ingest(
     Default: git-aware incremental — diff prior state to HEAD.
     """
     slug = project or detect_project_slug(root)
-    pipe = Pipeline(project=slug)
+    pipe = Pipeline(project=slug, skip_vectors=no_vectors)
     stats = pipe.ingest_repo(
         root,
         mode="full" if full else "auto",

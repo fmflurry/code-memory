@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -78,8 +79,14 @@ class FalkorStore:
         head_sha: str | None = None,
         head_ord: int | None = None,
     ) -> None:
-        """Upsert nodes and stamp their temporal lifecycle when ``head_sha``
-        is provided.
+        """Bulk-upsert nodes via ``UNWIND``; stamps temporal lifecycle when
+        ``head_sha`` is provided.
+
+        Previously this looped one ``MERGE`` query per node — a single
+        ingested file with 50 symbols + imports + calls triggered 50
+        Falkor round-trips. The UNWIND form collapses each label group
+        into one query, cutting ingest wall time by an order of
+        magnitude on real repos.
 
         Stamping rules (per ``CHANGELOG`` "Temporal model"):
 
@@ -93,16 +100,27 @@ class FalkorStore:
           cleared on a successful upsert — the node is alive again at
           this SHA.
         """
+        by_label: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for n in nodes:
+            by_label[n.label].append({"key": n.key, "props": n.props})
+        if not by_label:
+            return
+
+        for label, rows in by_label.items():
             if head_sha is None:
                 self.graph.query(
-                    f"MERGE (n:{n.label} {{key: $key}}) SET n += $props",
-                    {"key": n.key, "props": n.props},
+                    f"""
+                    UNWIND $rows AS row
+                    MERGE (n:{label} {{key: row.key}})
+                    SET n += row.props
+                    """,
+                    {"rows": rows},
                 )
                 continue
             self.graph.query(
                 f"""
-                MERGE (n:{n.label} {{key: $key}})
+                UNWIND $rows AS row
+                MERGE (n:{label} {{key: row.key}})
                 ON CREATE SET n.first_seen_sha = $head,
                               n.last_seen_sha = $head,
                               n.first_seen_ord = $ord,
@@ -111,17 +129,12 @@ class FalkorStore:
                               n.last_seen_sha = $head,
                               n.first_seen_ord = COALESCE(n.first_seen_ord, $ord),
                               n.last_seen_ord = $ord
-                SET n += $props
+                SET n += row.props
                 SET n.invalid_sha = NULL,
                     n.invalid_ord = NULL,
                     n.invalid_at = NULL
                 """,
-                {
-                    "key": n.key,
-                    "props": n.props,
-                    "head": head_sha,
-                    "ord": head_ord,
-                },
+                {"rows": rows, "head": head_sha, "ord": head_ord},
             )
 
     def upsert_edges(
@@ -131,24 +144,39 @@ class FalkorStore:
         head_sha: str | None = None,
         head_ord: int | None = None,
     ) -> None:
-        """Upsert edges with the same temporal stamping as :meth:`upsert_nodes`."""
+        """Bulk-upsert edges via ``UNWIND``; same temporal stamping as nodes.
+
+        Edges group by ``(src_label, type, dst_label)`` because Cypher
+        can't parameterize labels or relationship types. Each group
+        becomes one query batch instead of one query per edge.
+        """
+        by_key: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
         for e in edges:
+            by_key[(e.src_label, e.type, e.dst_label)].append(
+                {"src": e.src_key, "dst": e.dst_key, "props": e.props}
+            )
+        if not by_key:
+            return
+
+        for (src_label, etype, dst_label), rows in by_key.items():
             if head_sha is None:
                 self.graph.query(
                     f"""
-                    MERGE (a:{e.src_label} {{key: $src}})
-                    MERGE (b:{e.dst_label} {{key: $dst}})
-                    MERGE (a)-[r:{e.type}]->(b)
-                    SET r += $props
+                    UNWIND $rows AS row
+                    MERGE (a:{src_label} {{key: row.src}})
+                    MERGE (b:{dst_label} {{key: row.dst}})
+                    MERGE (a)-[r:{etype}]->(b)
+                    SET r += row.props
                     """,
-                    {"src": e.src_key, "dst": e.dst_key, "props": e.props},
+                    {"rows": rows},
                 )
                 continue
             self.graph.query(
                 f"""
-                MERGE (a:{e.src_label} {{key: $src}})
-                MERGE (b:{e.dst_label} {{key: $dst}})
-                MERGE (a)-[r:{e.type}]->(b)
+                UNWIND $rows AS row
+                MERGE (a:{src_label} {{key: row.src}})
+                MERGE (b:{dst_label} {{key: row.dst}})
+                MERGE (a)-[r:{etype}]->(b)
                 ON CREATE SET r.first_seen_sha = $head,
                               r.last_seen_sha = $head,
                               r.first_seen_ord = $ord,
@@ -157,18 +185,12 @@ class FalkorStore:
                               r.last_seen_sha = $head,
                               r.first_seen_ord = COALESCE(r.first_seen_ord, $ord),
                               r.last_seen_ord = $ord
-                SET r += $props
+                SET r += row.props
                 SET r.invalid_sha = NULL,
                     r.invalid_ord = NULL,
                     r.invalid_at = NULL
                 """,
-                {
-                    "src": e.src_key,
-                    "dst": e.dst_key,
-                    "props": e.props,
-                    "head": head_sha,
-                    "ord": head_ord,
-                },
+                {"rows": rows, "head": head_sha, "ord": head_ord},
             )
 
     def neighbors(
