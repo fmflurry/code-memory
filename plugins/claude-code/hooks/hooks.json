@@ -46,7 +46,7 @@
         ]
       },
       {
-        "matcher": "mcp__code-memory__codememory_(retrieve|definitions|callers|callees|importers|dependencies|at_sha|callers_at_sha|drift|assembly_members)",
+        "matcher": "mcp__code-memory__codememory_.*",
         "hooks": [
           {
             "type": "command",

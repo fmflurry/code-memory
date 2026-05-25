@@ -84,7 +84,8 @@ _TOOLS: list[Tool] = [
         name="codememory_retrieve",
         description=(
             "Retrieve a context pack (code chunks, past episodes, graph neighbors) "
-            "for a natural-language query. Use before editing unfamiliar code."
+            "for a natural-language query. Use first for codebase/repo/docs "
+            "orientation before grep/glob/read, and before editing unfamiliar code."
         ),
         inputSchema={
             "type": "object",

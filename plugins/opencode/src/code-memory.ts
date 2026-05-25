@@ -55,10 +55,11 @@ const SERVICE = "code-memory";
 const GATE_NUDGE = [
   "## code-memory gate",
   "",
-  "Your previous tool calls hit the filesystem / shell without first",
-  "querying code-memory. For codebase questions (where is X, how does Y",
-  "work, who calls Z, where are the docs) the local index gives a precise",
-  "answer in one call:",
+  "Your previous tool calls hit the filesystem / shell without first making",
+  "an explicit code-memory MCP call. The auto-injected Context Pack is",
+  "orientation only; it does not satisfy this gate. For codebase questions",
+  "(where is X, how does Y work, who calls Z, where are the docs) call",
+  "`codememory_retrieve` first, then use filesystem tools only to verify:",
   "",
   "- `codememory_retrieve` — semantic + episodic recall",
   "- `codememory_definitions` — exact symbol locations",
@@ -73,7 +74,8 @@ interface SessionMemory {
   query: string | null;
   fetchedAt: number;
   firstUserMessage: string | null;
-  retrieveSeen: boolean;
+  autoRetrieveSeen: boolean;
+  explicitMemorySeen: boolean;
   pendingGateNudge: boolean;
 }
 
@@ -103,6 +105,15 @@ interface ChatMessageOutput {
 
 interface SystemTransformOutput {
   system?: string[];
+}
+
+interface ToolDefinitionInput {
+  readonly toolID: string;
+}
+
+interface ToolDefinitionOutput {
+  description: string;
+  parameters: unknown;
 }
 
 interface EventEnvelope {
@@ -156,9 +167,18 @@ function formatPack(pack: ContextPack): string {
     "",
     "### Next-step tools (call these autonomously when applicable)",
     "",
+    "Auto-injected Context Packs are orientation only. They do not replace an",
+    "explicit code-memory MCP call when repo/code/docs orientation is needed.",
+    "",
     "The Code hits above are **orientation only** — they do not answer topology",
     "questions. Before reading files, decide if a graph query would give you a",
     "precise answer in one call.",
+    "",
+    "**Docs / repo orientation:**",
+    "",
+    "- Docs inventory, repo documentation, or 'where do docs live?' → call",
+    "  `codememory_retrieve` first, then `glob` / `read` to verify an exhaustive",
+    "  list.",
     "",
     "**Topology (call graph + imports):**",
     "",
@@ -278,7 +298,8 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
         query: null,
         fetchedAt: 0,
         firstUserMessage: null,
-        retrieveSeen: false,
+        autoRetrieveSeen: false,
+        explicitMemorySeen: false,
         pendingGateNudge: false,
       };
       stateBySession.set(id, s);
@@ -303,8 +324,10 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
       const session = getSession(sid);
       if (!session) return;
 
-      // New turn: clear the gate flag before any retrieve/exploration runs.
-      session.retrieveSeen = false;
+      // New turn: auto-retrieve may run below, but only explicit MCP tool use
+      // satisfies the filesystem/search/shell gate.
+      session.autoRetrieveSeen = false;
+      session.explicitMemorySeen = false;
 
       const text = extractText(output.parts);
       if (text && !session.firstUserMessage) {
@@ -339,8 +362,7 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
         session.pack = pack;
         session.query = query;
         session.fetchedAt = Date.now();
-        // Auto-retrieve satisfies the gate for this turn.
-        session.retrieveSeen = true;
+        session.autoRetrieveSeen = true;
         log(
           "info",
           `retrieved ${pack.code.length} code / ${pack.episodes.length} episodes for "${query.slice(0, 80)}"`,
@@ -379,7 +401,7 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
       if (!GATED_READ_TOOLS.has(tool)) return;
 
       const session = sessionLookup(stateBySession, input.sessionID);
-      if (!session || session.retrieveSeen || session.pendingGateNudge) return;
+      if (!session || session.explicitMemorySeen || session.pendingGateNudge) return;
 
       // Soft nudge: never block. Flag the session so the next system
       // transform surfaces a one-shot reminder, and log a warning the
@@ -387,8 +409,22 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
       session.pendingGateNudge = true;
       log(
         "warn",
-        `gate: ${tool} called without prior codememory_retrieve this turn — consider memory.retrieve first`,
+        `gate: ${tool} called without explicit code-memory MCP use this turn — auto Context Pack is not enough; call codememory_retrieve first`,
       );
+    },
+
+    "tool.definition": async (
+      input: ToolDefinitionInput,
+      output: ToolDefinitionOutput,
+    ) => {
+      const tool = input.toolID.toLowerCase();
+      if (!GATED_READ_TOOLS.has(tool)) return;
+
+      const prefix =
+        "For repo/code/docs orientation, call code-memory MCP first: " +
+        "use codememory_retrieve before grep/glob/read/bash, then verify exhaustively. ";
+      if (output.description.startsWith(prefix)) return;
+      output.description = `${prefix}${output.description}`;
     },
 
     "tool.execute.after": async (input: ToolInput, output: ToolOutput) => {
@@ -397,7 +433,10 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
       // Any code-memory MCP call satisfies the gate for this turn.
       if (isMemoryTool(tool)) {
         const session = sessionLookup(stateBySession, input.sessionID);
-        if (session) session.retrieveSeen = true;
+        if (session) {
+          session.explicitMemorySeen = true;
+          session.pendingGateNudge = false;
+        }
       }
 
       if (!memory.available) return;

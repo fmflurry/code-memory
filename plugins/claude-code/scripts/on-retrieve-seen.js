@@ -14,6 +14,7 @@ const { markRetrieveSeen } = require("./lib/state");
 (async () => {
   const ev = await readEvent();
   const sessionId = ev.session_id || ev.sessionID || "unknown";
+  // Explicit agent MCP/tool use satisfies the filesystem/search/shell gate.
   markRetrieveSeen(sessionId);
   done();
 })();

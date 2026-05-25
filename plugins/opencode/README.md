@@ -13,11 +13,11 @@ remains available for the agent to call manually (`codememory_retrieve`,
 | Hook                                  | Behavior                                                       |
 | ------------------------------------- | -------------------------------------------------------------- |
 | `chat.message` (first message of a session) | Kicks off a background `code-memory ingest <cwd>` (git delta) to catch edits made outside OpenCode since the last session. |
-| `chat.message`                        | Detects substantive code intent → `code-memory retrieve --json` → caches a Context Pack per session (5 min TTL, 60 s dedup). Also clears the per-turn gate flag (see `tool.execute.before`). |
-| `experimental.chat.system.transform`  | Appends a fresh Context Pack to the system prompt, with explicit affordances for the 5 topology MCP tools (callers / callees / importers / dependencies / definitions). If a gate nudge is pending from the previous turn (the agent ran a read/shell tool without first hitting code-memory), surfaces a one-shot reminder here. |
-| `tool.execute.before` (`read`/`bash`/`grep`/`glob`) | First-tool gate: if no `codememory_*` MCP call has fired this turn, logs a warning to the OpenCode log and queues a one-shot nudge to drop into the next turn's system prompt. Never blocks. |
+| `chat.message`                        | Detects substantive code intent → `code-memory retrieve --json` → caches a Context Pack per session for orientation only (5 min TTL, 60 s dedup). Also clears the per-turn gate flag (see `tool.execute.before`). |
+| `experimental.chat.system.transform`  | Appends a fresh Context Pack to the system prompt, with explicit affordances for the 5 topology MCP tools (callers / callees / importers / dependencies / definitions). If a gate nudge is pending from the previous turn (the agent ran a read/shell tool without first making an explicit code-memory MCP call), surfaces a one-shot reminder here. |
+| `tool.execute.before` (`read`/`bash`/`grep`/`glob`) | First-tool gate: if no explicit `codememory_*` MCP call has fired this turn, logs a warning to the OpenCode log and queues a one-shot nudge to drop into the next turn's system prompt. Never blocks. |
 | `tool.execute.after` (`write`/`edit`/`patch`) | (a) Fires `code-memory reingest <path>`. (b) Drops the session's cached Context Pack so the next prompt re-fetches. (c) Schedules a debounced `code-memory resolve` to re-point cross-file CALLS edges. |
-| `tool.execute.after` (`codememory_*` MCP) | Marks the gate flag as satisfied so subsequent reads / shells in the same turn stay silent. |
+| `tool.execute.after` (`codememory_*` MCP) | Marks the gate flag as satisfied so subsequent reads / shells in the same turn stay silent. Auto-retrieve Context Packs do not satisfy this gate. |
 | `event` (`session.idle`)              | Records the session as an episode via `code-memory record`.    |
 
 All backend calls are best-effort. If `code-memory` is not on PATH, every

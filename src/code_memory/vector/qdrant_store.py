@@ -44,18 +44,25 @@ class QdrantStore:
         url: str | None = None,
         dim: int | None = None,
     ) -> None:
-        self.client = QdrantClient(url=url or CONFIG.qdrant_url)
+        self.url = url or CONFIG.qdrant_url
+        self.client = QdrantClient(url=self.url)
         self.dim = dim or CONFIG.embed_dim
 
     # --------------------------------------------------------- collection
 
     def ensure_collection(self, name: str) -> None:
-        if self._collection_is_hybrid(name):
+        status = self._inspect_collection(name)
+        if status == "hybrid":
             return
-        # Either missing or legacy single-vector layout — recreate.
-        # Migration note: legacy "code_chunks__<slug>" collections from
-        # the dense-only era are NOT auto-migrated. Run a fresh full
-        # ingest to repopulate under the hybrid schema.
+        if status == "legacy":
+            # Caller is on the ingest path and explicitly asked us to make
+            # the collection ready — drop the legacy layout and recreate.
+            # Read paths never trigger this branch because they go through
+            # ``_inspect_collection`` directly.
+            try:
+                self.client.delete_collection(collection_name=name)
+            except Exception:  # noqa: BLE001
+                pass
         self._create_hybrid(name)
 
     def recreate_collection(self, name: str) -> None:
@@ -66,23 +73,23 @@ class QdrantStore:
             pass
         self._create_hybrid(name)
 
-    def _collection_is_hybrid(self, name: str) -> bool:
+    def _inspect_collection(self, name: str) -> str:
+        """Pure read of the collection's schema. No side effects.
+
+        Returns ``"missing"``, ``"legacy"`` (single-vector layout left
+        over from before the hybrid migration), or ``"hybrid"``.
+        """
         existing = {c.name for c in self.client.get_collections().collections}
         if name not in existing:
-            return False
+            return "missing"
         info = self.client.get_collection(collection_name=name)
         vectors = getattr(info.config.params, "vectors", None)
         sparse = getattr(info.config.params, "sparse_vectors", None)
         has_dense = isinstance(vectors, dict) and DENSE in vectors
         has_sparse = isinstance(sparse, dict) and SPARSE in sparse
         if has_dense and has_sparse:
-            return True
-        # Legacy layout — caller will drop + recreate.
-        try:
-            self.client.delete_collection(collection_name=name)
-        except Exception:
-            pass
-        return False
+            return "hybrid"
+        return "legacy"
 
     def _create_hybrid(self, name: str) -> None:
         self.client.create_collection(
@@ -146,6 +153,20 @@ class QdrantStore:
         the sparse slot entirely. Production callers should leave it at
         the default — query-time degradation is for measurement only.
         """
+        status = self._inspect_collection(collection)
+        if status == "missing":
+            raise LookupError(
+                f"Qdrant collection '{collection}' does not exist. "
+                f"Run `code-memory ingest <path> --project <slug>` first."
+            )
+        if status == "legacy":
+            raise RuntimeError(
+                f"Qdrant collection '{collection}' uses the legacy "
+                f"single-vector layout from before the hybrid migration. "
+                f"Drop it and re-ingest:\n"
+                f"  curl -X DELETE {self.url}/collections/{collection}\n"
+                f"  code-memory ingest <path> --full"
+            )
         qfilter = _to_filter(filt) if filt else None
 
         # Hybrid mode requires a non-empty sparse query vector. When the

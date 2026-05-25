@@ -25,7 +25,7 @@
 const { readEvent, done } = require("./lib/io");
 const { createMemoryClient } = require("./lib/memory");
 const { isSubstantiveCodeIntent, extractQueryFromMessage } = require("./lib/intent");
-const { loadSession, saveSession, resetTurn, markRetrieveSeen } = require("./lib/state");
+const { loadSession, saveSession, resetTurn, markAutoRetrieveSeen } = require("./lib/state");
 const { formatPack } = require("./lib/format");
 
 const DEDUP_WINDOW_MS = 60 * 1000;
@@ -80,8 +80,8 @@ const DEDUP_WINDOW_MS = 60 * 1000;
   state.lastQuery = query;
   state.lastFetchedAt = Date.now();
   saveSession(sessionId, state);
-  // Auto-retrieve fired — the gate is satisfied for this turn.
-  markRetrieveSeen(sessionId);
+  // Auto-retrieve fired, but only an explicit MCP tool call satisfies the gate.
+  markAutoRetrieveSeen(sessionId);
 
   if (isEmpty) {
     done();

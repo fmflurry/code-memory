@@ -2,16 +2,16 @@
 /**
  * PreToolUse gate.
  *
- * Fires before Read / Bash / Grep / Glob. If no `codememory_retrieve` has
- * happened yet this turn (auto-retrieve on UserPromptSubmit OR an explicit
- * MCP call) we inject a soft reminder into the tool's context so the agent
- * sees it BEFORE running the command. We never block — the tool still runs.
+ * Fires before Read / Bash / Grep / Glob. If no explicit code-memory MCP
+ * tool has happened yet this turn, we request a soft reminder via
+ * additionalContext. Depending on host timing, it may affect the current or
+ * next model context. We never block — the queued tool still runs.
  *
  * Single-shot per turn: once nudged, subsequent reads / greps in the same
  * turn stay quiet. Resets on the next UserPromptSubmit (see resetTurn()).
  *
- * No nudge is emitted for codememory_* MCP tools themselves, and the gate
- * silences itself if the retrieve flag is already set.
+ * Auto-retrieve on UserPromptSubmit only injects orientation. It does not
+ * satisfy this explicit-use gate.
  */
 
 const { readEvent, done } = require("./lib/io");
@@ -22,20 +22,26 @@ const GATED_TOOLS = new Set(["read", "bash", "grep", "glob"]);
 const NUDGE = [
   "## code-memory gate",
   "",
-  "You're about to run a filesystem / shell tool without first querying",
-  "code-memory this turn. For codebase questions (where is X, how does Y",
-  "work, who calls Z, where are the docs) the local index gives a precise",
-  "answer in one call:",
+  "Soft nudge: a filesystem / shell tool was queued without first making an",
+  "explicit code-memory MCP call this turn. Depending on host timing, this",
+  "may affect current or next model context; the queued tool still runs.",
+  "The auto-injected Context Pack",
+  "is orientation only; it is not enough for this gate. For codebase questions",
+  "(where is X, how does Y work, who calls Z, where are the docs) call",
+  "`codememory_retrieve` first, then use filesystem tools only to verify:",
   "",
   "- `mcp__code-memory__codememory_retrieve` — semantic + episodic recall",
   "- `mcp__code-memory__codememory_definitions` — exact symbol locations",
   "- `mcp__code-memory__codememory_callers` / `_callees` — call graph",
   "- `mcp__code-memory__codememory_importers` / `_dependencies` — imports",
   "",
-  "Consider one targeted MCP call before scanning the filesystem. The tool",
-  "you queued will still run; this is a one-time per-turn nudge.",
+  "Docs inventory / repo documentation / where docs live: call retrieve first,",
+  "then glob/read for exhaustive verification.",
   "",
-  "_Skip the nudge by querying code-memory first, or by ignoring it if the",
+  "Prefer one targeted MCP call before scanning the filesystem. This is a",
+  "one-time per-turn nudge.",
+  "",
+  "_Skip the nudge by explicitly querying code-memory first, or by ignoring it if the",
   "task genuinely needs raw shell (running tests, checking processes, etc.)._",
 ].join("\n");
 

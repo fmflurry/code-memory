@@ -32,6 +32,7 @@ If the user's phrasing matches the left column, call the right tool. Do
 | User says…                                                | First call                                                  |
 | --------------------------------------------------------- | ----------------------------------------------------------- |
 | "explain X" / "how does this work" / "where does it live" | `codememory_retrieve(query=user-text, project=…)`           |
+| "docs inventory" / "repo documentation" / "where do docs live" | `codememory_retrieve(query=user-text, project=…)`, then `glob` / `read` to verify exhaustive list |
 | "who calls X" / "what depends on X" / "impact of …"       | `codememory_callers(symbol="X", project=…)`                 |
 | "what does X call" / "outgoing dependencies of X"         | `codememory_callees(symbol="X", project=…)`                 |
 | "where is X defined" / "X is ambiguous"                   | `codememory_definitions(symbol="X", project=…)`             |

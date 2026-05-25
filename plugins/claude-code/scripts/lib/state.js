@@ -9,7 +9,9 @@
  *     "firstUserMessage": "...",
  *     "lastQuery": "...",
  *     "lastFetchedAt": 1737031234000,
- *     "bootstrapped": true
+ *     "bootstrapped": true,
+ *     "autoRetrieveSeen": true,
+ *     "retrieveSeen": false
  *   }
  *
  * The PostToolUse hook drops the "lastQuery" field via `invalidatePack()`
@@ -74,6 +76,7 @@ function loadSession(sessionId) {
       lastQuery: null,
       lastFetchedAt: 0,
       bootstrapped: false,
+      autoRetrieveSeen: false,
       retrieveSeen: false,
       turnGateNudged: false,
     };
@@ -83,9 +86,16 @@ function loadSession(sessionId) {
     lastQuery: data.lastQuery || null,
     lastFetchedAt: Number(data.lastFetchedAt || 0),
     bootstrapped: Boolean(data.bootstrapped),
+    autoRetrieveSeen: Boolean(data.autoRetrieveSeen),
     retrieveSeen: Boolean(data.retrieveSeen),
     turnGateNudged: Boolean(data.turnGateNudged),
   };
+}
+
+function markAutoRetrieveSeen(sessionId) {
+  const s = loadSession(sessionId);
+  s.autoRetrieveSeen = true;
+  saveSession(sessionId, s);
 }
 
 function markRetrieveSeen(sessionId) {
@@ -96,6 +106,7 @@ function markRetrieveSeen(sessionId) {
 
 function resetTurn(sessionId) {
   const s = loadSession(sessionId);
+  s.autoRetrieveSeen = false;
   s.retrieveSeen = false;
   s.turnGateNudged = false;
   saveSession(sessionId, s);
@@ -167,6 +178,7 @@ module.exports = {
   touchResolverMarker,
   readResolverMarker,
   resolverMarkerFile,
+  markAutoRetrieveSeen,
   markRetrieveSeen,
   resetTurn,
   markTurnGateNudged,
