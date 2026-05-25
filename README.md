@@ -185,7 +185,45 @@ uv sync --extra rerank        # or: pip install -e .[rerank]
 On a first call the model warms up (~2-5 s, ~1.1 GB from HF cache); after
 that it's a singleton (~50-200 ms per query on MPS).
 
-### Benchmark highlights — sample-webapp Angular corpus (2.6k files, 5.5k chunks)
+---
+
+## Benchmarks
+
+All benchmarks run on the same anonymized corpus — `acme/sample-webapp`,
+~2.6k files, 5.5k chunks of an Angular clean-architecture frontend — and
+the same 30 hand-crafted queries (`scripts/benchmark_queries.json`, mix of
+natural-language and PascalCase identifier searches). Hardware: Apple
+Silicon (MPS), fp16.
+
+### Benchmark 1 — code-memory vs no-code-memory baseline
+
+Does plugging code-memory into an agent actually help, vs the default
+agent fallback (ripgrep keyword search)?
+
+| Mode | Recall@10 | MRR | nDCG@10 | p50 (ms) |
+|------|----------:|----:|--------:|---------:|
+| grep (no code-memory) | 0.367 | 0.169 | 0.218 | 176 |
+| **code-memory (dense)** | **0.967** | **0.798** | **0.840** | **86** |
+| code-memory (dense + CE rerank) | 0.967 | 0.573 | 0.672 | 7855 |
+
+**Headline:** Recall@10 **+164%**, MRR **+372%**, nDCG@10 **+285%** —
+**and faster** than walking the filesystem (86 ms vs 176 ms) because
+Qdrant ANN beats `rg -l` over thousands of files. The cross-encoder
+regresses on this corpus; α=0.5 blending dampens but doesn't erase it.
+
+Full per-query breakdown, top-5 paths, and latency p95 in
+[`docs/BENCHMARK_VS_BASELINE.md`](docs/BENCHMARK_VS_BASELINE.md).
+Regenerate against your own corpus:
+
+```bash
+uv run python scripts/benchmark_vs_baseline.py \
+    --project <slug> --corpus /path/to/repo \
+    --out docs/BENCHMARK_VS_BASELINE.md
+```
+
+### Benchmark 2 — dense vs hybrid vs cross-encoder rerank
+
+Once you've decided to use code-memory, which retrieval mode wins?
 
 | Mode | Recall@5 | MRR | nDCG@10 | p50 (ms) |
 |------|---------:|----:|--------:|---------:|
@@ -194,20 +232,30 @@ that it's a singleton (~50-200 ms per query on MPS).
 | dense + CE rerank | 0.900 | 0.568 | 0.668 | 8853 |
 | hybrid + CE rerank | 0.933 | 0.787 | 0.831 | 10446 |
 
-**Read it this way:** on this corpus the m3 dense head is strong enough on
-its own that adding the sparse view via RRF surfaces spec/generated noise
-without clear wins. Cross-encoder rerank improves hybrid (closes the gap to
-~0.787 MRR) but never beats pure dense, and costs ~200× the latency. We ship
-**dense via Ollama as the default** and keep hybrid + rerank behind two env
-vars for corpora where the tradeoffs flip.
+**Read it this way:** the m3 dense head is strong enough on its own that
+adding the sparse view via RRF surfaces spec/generated noise without
+clear wins. Cross-encoder rerank improves hybrid (closes the gap to
+~0.787 MRR) but never beats pure dense, and costs ~200× the latency. We
+ship **dense via Ollama as the default** and keep hybrid + rerank behind
+opt-in env vars for corpora where the tradeoffs flip.
 
-Full breakdown — per-query top-5 lists, deltas across 30 queries (NL +
-PascalCase identifier mix), latency p50/p95 — lives in
-[`docs/BENCHMARK.md`](docs/BENCHMARK.md). Regenerate against your own corpus:
+Full breakdown in [`docs/BENCHMARK.md`](docs/BENCHMARK.md). Regenerate:
 
 ```bash
 uv run python scripts/benchmark.py --project <slug> --out docs/BENCHMARK.md
 ```
+
+### Caveats
+
+- These results reflect **one Angular codebase**. Symbol-heavy or
+  polyglot corpora may favor hybrid; LLM-style narrative corpora may
+  favor the cross-encoder. Always re-run on your own corpus before
+  changing defaults.
+- Gold paths are substring matches against `hit.payload.path`. Good for
+  A/B comparison, not absolute IR.
+- Rerank latency includes a cold model load on the first query; warm
+  calls drop to ~250 ms per query but stay dominated by N pairs ×
+  forward-pass cost.
 
 ---
 
@@ -877,6 +925,93 @@ src/code_memory/
 
 ---
 
+## Temporal model — time-aware graph queries
+
+The code graph is **bi-temporal at the SHA level**: every File, Symbol,
+and edge carries three lifecycle properties stamped at ingest time.
+
+| property | written when | answers |
+|---|---|---|
+| `first_seen_sha` | element is upserted for the first time | "when did this enter the codebase?" |
+| `last_seen_sha`  | every subsequent re-ingest of the same element | "is this still alive at HEAD?" |
+| `invalid_sha`    | element was deleted (file removed, symbol disappeared) | "when did this leave?" |
+
+Deletions don't `DETACH DELETE` anymore — they **tombstone**. The node
+stays in the graph with `invalid_sha = <removal commit>`. Topology
+queries (`callers`, `callees`, `definitions`, `dependencies`,
+`importers`) filter tombstones out by default, so the live view is
+unchanged. The history stays queryable.
+
+Each lifecycle stamp pairs a SHA string with a **topological ordinal**
+(`first_seen_ord`, `last_seen_ord`, `invalid_ord`) computed via
+`git rev-list --count --first-parent <sha>`. The ordinal is a monotonic
+integer along the main branch — parent < child, always — which makes
+range comparisons across SHAs ("alive *before* SHA X") cheap. Tombstones
+additionally carry an `invalid_at` wall-clock timestamp.
+
+### What this unlocks
+
+```python
+# Drift detection: symbols the latest ingest didn't confirm
+store.drift(head_sha=current_head)
+# -> [{'name': 'OldHelper', 'status': 'tombstoned', 'invalid_sha': '…'},
+#     {'name': 'Renamed',  'status': 'drifted',    'last_seen_sha': '…'}]
+
+# Time-travel: graph as of a past commit
+store.at_sha(sha="abc123…", sha_ord=4271, label="Symbol")
+
+# Who used to call this symbol before it was deleted?
+store.callers_at_sha("getBearerToken", sha="abc123…", sha_ord=4271)
+```
+
+```cypher
+// Pre-deletion callers of a now-removed symbol (without ordinals)
+MATCH (caller)-[c:CALLS]->(s:Symbol {name: 'getBearerToken'})
+WHERE s.invalid_sha = $deletion_sha
+RETURN caller.key
+```
+
+### CLI
+
+```bash
+# Sanity-check a long-running watcher
+code-memory drift -p my-project
+
+# Bound monotonic graph growth
+code-memory vacuum --before release/26.18      # by git ref
+code-memory vacuum --older-than 30d            # by wall-clock age
+code-memory vacuum --all --dry-run             # report counts without writing
+```
+
+### MCP tools
+
+Agents reach the same surface via three native tools:
+
+| tool | what |
+|---|---|
+| `codememory_drift(head_sha, project)` | symbols not last-seen at HEAD, classified `tombstoned` / `drifted` |
+| `codememory_at_sha(sha, sha_ord, label?, limit?, project)` | nodes alive at a past commit (caller computes `sha_ord` with `git rev-list --count --first-parent <sha>`) |
+| `codememory_callers_at_sha(symbol, sha, sha_ord, project)` | callers as the graph looked at that commit |
+
+### Episode replay
+
+`Episode.head_sha` records the git HEAD when the agent recorded the
+episode. Combined with the graph stamps, you can reconstruct "what the
+agent saw" without rewinding the working tree.
+
+### What this doesn't do (yet)
+
+- **Edge versioning is coarse.** An edge that disappears and reappears
+  collapses into one row whose `last_seen_sha` jumps over the gap.
+  Enough for "alive at SHA X" queries; not enough for "every commit
+  that toggled this edge".
+- **Vacuum is destructive and explicit.** Once you `vacuum --before X`,
+  the pre-X tombstones are gone — `at_sha` / `callers_at_sha` for SHAs
+  before X stop returning the dropped rows. Tradeoff is intentional;
+  the design favours bounded growth over unbounded history.
+
+See `CHANGELOG.md` for the design rationale.
+
 ## Roadmap
 
 - [x] Per-project namespacing (separate graphs / collections per repo)
@@ -892,7 +1027,12 @@ src/code_memory/
 - [x] OS autostart adapters (launchd / systemd / schtasks) — zero manual install
 - [x] Branch-aware index (auto re-walk on branch change)
 - [x] Cross-encoder rerank step (auto on Metal/CUDA; opt-in via `pip install code-memory[rerank]`)
-- [ ] More languages (Rust, Go, Java, C#)
+- [x] Temporal stamping (`first_seen_sha` / `last_seen_sha` / `invalid_sha`) — see [Temporal model](#temporal-model--time-aware-graph-queries)
+- [x] Topological SHA ordinals + `at_sha` / `callers_at_sha` time-travel queries
+- [x] `code-memory vacuum --before <sha>` / `--older-than` / `--all` (tombstone GC)
+- [x] MCP tools: `codememory_drift`, `codememory_at_sha`, `codememory_callers_at_sha`
+- [x] .NET ecosystem (C#, Razor, VB.NET, F#)
+- [ ] More languages (Rust, Go, Java)
 - [ ] Cursor hook recipe
 - [ ] PyPI release (drops the `--from git+…` from the `uvx` install)
 

@@ -69,6 +69,32 @@ def resolve_ref(root: str | Path, ref: str) -> str:
     return _run(Path(root), "rev-parse", "--verify", f"{ref}^{{commit}}").strip()
 
 
+def commit_ordinal(root: str | Path, sha: str) -> int | None:
+    """Return the topological ordinal of ``sha`` — first-parent ancestor count.
+
+    ``git rev-list --count --first-parent <sha>`` gives a monotonic integer
+    along the main branch: parent < child, always. We use it as a cheap
+    "before / after" comparator across SHAs without dragging full topology
+    into the graph store. Returns ``None`` if the SHA isn't reachable
+    (shallow clone, orphan, freshly initialised repo).
+    """
+    try:
+        out = _run(
+            Path(root),
+            "rev-list",
+            "--count",
+            "--first-parent",
+            sha,
+            check=True,
+        ).strip()
+    except GitError:
+        return None
+    try:
+        return int(out)
+    except ValueError:
+        return None
+
+
 @dataclass
 class Delta:
     changed: list[Path] = field(default_factory=list)

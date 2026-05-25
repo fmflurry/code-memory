@@ -306,6 +306,152 @@ def resolve(
     )
 
 
+def _parse_duration(spec: str) -> float:
+    """Parse strings like ``30d`` / ``12h`` / ``45m`` / ``900s`` into seconds."""
+    spec = spec.strip().lower()
+    if not spec:
+        raise typer.BadParameter("duration is empty")
+    unit_to_secs = {"s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0, "w": 604800.0}
+    unit = spec[-1]
+    if unit not in unit_to_secs:
+        # treat as bare seconds for ergonomics — ``--older-than 600`` works
+        try:
+            return float(spec)
+        except ValueError as e:
+            raise typer.BadParameter(
+                f"unknown duration unit in {spec!r}; use s/m/h/d/w"
+            ) from e
+    try:
+        value = float(spec[:-1])
+    except ValueError as e:
+        raise typer.BadParameter(f"could not parse duration {spec!r}") from e
+    return value * unit_to_secs[unit]
+
+
+@app.command()
+def vacuum(
+    project: str | None = ProjectOpt,
+    before: str | None = typer.Option(
+        None,
+        "--before",
+        help=(
+            "Drop tombstones invalidated at or before this git ref "
+            "(branch / tag / sha). Mutually exclusive with --older-than / --all."
+        ),
+    ),
+    older_than: str | None = typer.Option(
+        None,
+        "--older-than",
+        help=(
+            "Drop tombstones older than this duration (e.g. 30d, 12h). "
+            "Mutually exclusive with --before / --all."
+        ),
+    ),
+    drop_all: bool = typer.Option(
+        False,
+        "--all",
+        help="Drop every tombstone regardless of age. Mutually exclusive with the other modes.",
+    ),
+    repo: Path = typer.Option(
+        Path("."),
+        "--repo",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        help="Repo root used to resolve --before refs to topological ordinals.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be removed without writing.",
+    ),
+    as_json: bool = JsonOpt,
+) -> None:
+    """Drop tombstoned graph elements to bound monotonic growth.
+
+    Tombstones accumulate because temporal deletes preserve history.
+    Once a SHA is "ancient" for your workflow (released, archived, or
+    just irrelevant), vacuum reclaims the space.
+    """
+    modes_set = [
+        x is not None and x is not False
+        for x in (before, older_than, drop_all or None)
+    ]
+    if sum(modes_set) != 1:
+        raise typer.BadParameter(
+            "specify exactly one of --before / --older-than / --all"
+        )
+
+    graph = _graph_for(project)
+    kwargs: dict[str, Any] = {"dry_run": dry_run}
+    payload: dict[str, Any] = {
+        "project": project or detect_project_slug(),
+        "dry_run": dry_run,
+    }
+
+    if before is not None:
+        try:
+            sha = _git_delta.resolve_ref(repo, before)
+        except _git_delta.GitError as e:
+            raise typer.BadParameter(f"could not resolve --before {before!r}: {e}") from e
+        ord_ = _git_delta.commit_ordinal(repo, sha)
+        if ord_ is None:
+            raise typer.BadParameter(
+                f"could not compute ordinal for {sha} (shallow clone?)"
+            )
+        kwargs["before_ord"] = ord_
+        payload["mode"] = "before"
+        payload["before_sha"] = sha
+        payload["before_ord"] = ord_
+    elif older_than is not None:
+        kwargs["older_than_seconds"] = _parse_duration(older_than)
+        payload["mode"] = "older_than"
+        payload["older_than_seconds"] = kwargs["older_than_seconds"]
+    else:
+        kwargs["drop_all"] = True
+        payload["mode"] = "all"
+
+    result = graph.vacuum(**kwargs)
+    payload["removed"] = result
+    _emit(payload, as_json=as_json)
+
+
+@app.command()
+def drift(
+    project: str | None = ProjectOpt,
+    repo: Path = typer.Option(
+        Path("."),
+        "--repo",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        help="Repo root used to read HEAD.",
+    ),
+    as_json: bool = JsonOpt,
+) -> None:
+    """List symbols whose ``last_seen_sha`` doesn't match HEAD.
+
+    Useful for sanity-checking a long-running watcher and for surfacing
+    references in comments / docs that point at code the most recent
+    ingest no longer confirms.
+    """
+    try:
+        head = _git_delta.head_sha(repo)
+    except _git_delta.GitError as e:
+        raise typer.BadParameter(f"could not read HEAD from {repo}: {e}") from e
+    graph = _graph_for(project)
+    rows = graph.drift(head)
+    _emit(
+        {
+            "project": project or detect_project_slug(),
+            "head_sha": head,
+            "count": len(rows),
+            "items": rows,
+        },
+        as_json=as_json,
+    )
+
+
 @app.command()
 def callers(
     symbol: str = typer.Argument(..., help="Symbol name to look up callers for."),

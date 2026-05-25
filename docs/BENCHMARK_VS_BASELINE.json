@@ -1,0 +1,1669 @@
+{
+  "grep (no code-memory)": {
+    "mode": "grep (no code-memory)",
+    "recall_at_5": 0.36666666666666664,
+    "recall_at_10": 0.36666666666666664,
+    "mrr": 0.16944444444444445,
+    "ndcg_at_10": 0.2182057350360446,
+    "p50_ms": 175.8806875004666,
+    "p95_ms": 327.15683354763314,
+    "per_query": [
+      {
+        "query": "how does the app fetch the configuration on startup",
+        "gold": [
+          "app-config.service.ts",
+          "configuration-guard.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 168.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/CHANGELOG.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/shared/infrastructure/paginated-request/README.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/main.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/CLAUDE.md"
+        ]
+      },
+      {
+        "query": "logout flow that clears stored user state",
+        "gold": [
+          "logout-store-clearer.service.ts",
+          "logout-redirect.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 349.5,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/direct-debits/presentation/create/steps/due-date/direct-debits-due-date.component.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/direct-debits/presentation/create/steps/due-date/direct-debits-due-date.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/CLAUDE.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/README.md"
+        ]
+      },
+      {
+        "query": "where is the navigation breadcrumb built",
+        "gold": [
+          "breadcrumb.service.ts",
+          "subheader-builder.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 180.1,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/MODULES.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app.routes.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/direct-debits/application/facades/direct-debits.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/direct-debits/presentation/routes.ts"
+        ]
+      },
+      {
+        "query": "service that calls the dunning letter REST API",
+        "gold": [
+          "dunning-letter.service.ts",
+          "dunning.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 297.5,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/MODULES.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/refactoring/legacy-modules-migration-plan.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/CHANGELOG.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/CLAUDE.md"
+        ]
+      },
+      {
+        "query": "VAT facade exposed to components",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 183.4,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/README.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/APPLICATION.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/ARCHITECTURE.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/MODULES.md"
+        ]
+      },
+      {
+        "query": "fiscal year repository fetching periods",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 308.9,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/README.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/AREAS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/MODULES.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/Source_code_management.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/refactoring/legacy-modules-migration-plan.md"
+        ]
+      },
+      {
+        "query": "warehouse data access service",
+        "gold": [
+          "warehouse.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 180.6,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/AREAS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/MODULES.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/refactoring/legacy-modules-migration-plan.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/business-review/business-review/business-review.component.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/business-review/business-review/business-review.component.ts"
+        ]
+      },
+      {
+        "query": "currencies application facade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 159.5,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/refactoring/legacy-modules-migration-plan.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/sales/commissions/commissions-services.providers.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/currencies.providers.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/deb/deb-services.providers.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/deb/presentation/declaration/deb-declaration-documents-overview/deb-declaration-documents-overview.component.spec.ts"
+        ]
+      },
+      {
+        "query": "user navigation persistence in local storage",
+        "gold": [
+          "user-local-storage.service.ts",
+          "user-navigation.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 278.0,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/invalid-config/invalid-config.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md"
+        ]
+      },
+      {
+        "query": "company domain data access service",
+        "gold": [
+          "company.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 237.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/AREAS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/MODULES.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/refactoring/legacy-modules-migration-plan.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/deb/presentation/declaration/deb-declaration/deb-declaration.component.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/deb/presentation/declaration/deb-declaration/deb-declaration.component.ts"
+        ]
+      },
+      {
+        "query": "due date computation service",
+        "gold": [
+          "due-date.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 190.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/CHANGELOG.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/APPLICATION.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/AREAS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/MODULES.md"
+        ]
+      },
+      {
+        "query": "user store for the user domain",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 185.7,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/README.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/AREAS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/MODULES.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/STATE.md"
+        ]
+      },
+      {
+        "query": "dunning letter edit facade",
+        "gold": [
+          "dunning-letter-edit.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 237.5,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/APPLICATION.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/STATE.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md"
+        ]
+      },
+      {
+        "query": "monthly treatment accounting service",
+        "gold": [
+          "monthly-treatment.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 172.8,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/AREAS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/FILES.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/MODULES.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/ROUTING.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/refactoring/legacy-modules-migration-plan.md"
+        ]
+      },
+      {
+        "query": "report categories service",
+        "gold": [
+          "report-category.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 116.6,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/MODULES.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/STATE.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/accounting/monthly-treatment/monthly-visualization/monthly-visualization.component.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/accounting/monthly-treatment/monthly-visualization/monthly-visualization.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/accounting/monthly-treatment/monthly-visualization/services/stimulsoft-launcher.service.spec.ts"
+        ]
+      },
+      {
+        "query": "navigation hook that intercepts route changes",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 286.6,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/sales/customers/presentation/create/shared/base/base-step.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/sales/orders/presentation/orders-list/orders-list.component.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/CLAUDE.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts"
+        ]
+      },
+      {
+        "query": "demo mode login listener for auth",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 302.7,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app.config.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app.routes.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md"
+        ]
+      },
+      {
+        "query": "business review domain form service",
+        "gold": [
+          "business-review-form.service.ts",
+          "business-review.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 234.2,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/AREAS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/MODULES.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/refactoring/legacy-modules-migration-plan.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/tsconfig.json"
+        ]
+      },
+      {
+        "query": "product characteristics data service",
+        "gold": [
+          "product-characteristics.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 175.9,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/product/parameter/code-structure/code-structure.component.html",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/product/parameter/code-structure/code-structure.component.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/product/parameter/code-structure/code-structure.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/accounting/feature/monthly-treatment/sales-by-product-category-treatment-id-retriever-card/sales-by-product-category-treatment-id-retriever-card.component.html",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/accounting/feature/monthly-treatment/sales-by-product-category-treatment-id-retriever-card/sales-by-product-category-treatment-id-retriever-card.component.spec.ts"
+        ]
+      },
+      {
+        "query": "custom report information service",
+        "gold": [
+          "custom-report-information.service.ts",
+          "report-information.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 175.9,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/ROUTING.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/report/reports-list/reports-list.component.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/report/reports-list/reports-list.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/assets/i18n/fr-FR.json"
+        ]
+      },
+      {
+        "query": "BreadcrumbService",
+        "gold": [
+          "breadcrumb.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 55.6,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/presentation/layout/page/page.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/sales/customers/presentation/create/professional/setup-mode/mobile/setup-mode.component.spec.ts"
+        ]
+      },
+      {
+        "query": "DunningLetterService",
+        "gold": [
+          "dunning-letter.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 55.7,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/stores/dunning-parameters/effects/dunning-parameters.effects.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/stores/dunning-parameters/effects/dunning-parameters.effects.ts"
+        ]
+      },
+      {
+        "query": "FiscalYearService",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 56.1,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/business-review/business-review/business-review.component.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/data-access/services/business-review.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/data-access/services/business-review.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/feature/advanced-settings/advanced-settings.component.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/feature/companies-step/companies-step.component.spec.ts"
+        ]
+      },
+      {
+        "query": "UserStoreService",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 55.5,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/shared/user/infrastructure/adapter/get-company-adapter.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/shared/user/infrastructure/adapter/get-user-session-adapter.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/accounting/monthly-treatment/monthly-treatment.component.spec.ts"
+        ]
+      },
+      {
+        "query": "AppConfigService",
+        "gold": [
+          "app-config.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 56.7,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/AGENTS.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/docs/CODEMAPS/MODULES.md",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app-config.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app-config.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/chat/infrastructure/adapters/progress-stream.adapter.ts"
+        ]
+      },
+      {
+        "query": "VatFacade",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 54.8,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/vat/application/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/vat/application/vat.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/vat/vat.providers.ts"
+        ]
+      },
+      {
+        "query": "CurrenciesFacade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 56.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/application/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/currencies.providers.ts"
+        ]
+      },
+      {
+        "query": "LogoutStoreClearerService",
+        "gold": [
+          "logout-store-clearer.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 60.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app.config.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts"
+        ]
+      },
+      {
+        "query": "NavigationHookService",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 58.7,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/sales/customers/presentation/create/shared/base/base-step.component.ts"
+        ]
+      },
+      {
+        "query": "DemoModeLoginListenerService",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 57.2,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app.config.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/index.ts"
+        ]
+      }
+    ]
+  },
+  "code-memory (dense only)": {
+    "mode": "code-memory (dense only)",
+    "recall_at_5": 0.9666666666666667,
+    "recall_at_10": 0.9666666666666667,
+    "mrr": 0.7983333333333333,
+    "ndcg_at_10": 0.8403439542007436,
+    "p50_ms": 85.75112500693649,
+    "p95_ms": 1935.20027280465,
+    "per_query": [
+      {
+        "query": "how does the app fetch the configuration on startup",
+        "gold": [
+          "app-config.service.ts",
+          "configuration-guard.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 270.8,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app-config.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/configuration/configuration-guard.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/runtime-app-config.provider.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app-config.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app-config.service.ts"
+        ]
+      },
+      {
+        "query": "logout flow that clears stored user state",
+        "gold": [
+          "logout-store-clearer.service.ts",
+          "logout-redirect.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 1533.2,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-cache-clearer.ts"
+        ]
+      },
+      {
+        "query": "where is the navigation breadcrumb built",
+        "gold": [
+          "breadcrumb.service.ts",
+          "subheader-builder.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 1628.0,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "service that calls the dunning letter REST API",
+        "gold": [
+          "dunning-letter.service.ts",
+          "dunning.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 154.4,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/adapters-api/dunning-letter-api.adapter.ts"
+        ]
+      },
+      {
+        "query": "VAT facade exposed to components",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 85.6,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.ts"
+        ]
+      },
+      {
+        "query": "fiscal year repository fetching periods",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 500.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/models/fixture/fiscal-year.fixture.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/utils/periodicity.helper.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/utils/periodicity.helper.ts"
+        ]
+      },
+      {
+        "query": "warehouse data access service",
+        "gold": [
+          "warehouse.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 2281.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/warehouse/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/data-access/services/business-review.service.ts"
+        ]
+      },
+      {
+        "query": "currencies application facade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 85.2,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/application/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/deb/application/facades/deb.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/deb/application/facades/deb.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/sales/commissions/application/facades/commissions.facade.ts"
+        ]
+      },
+      {
+        "query": "user navigation persistence in local storage",
+        "gold": [
+          "user-local-storage.service.ts",
+          "user-navigation.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.2,
+        "ndcg@10": 0.38685280723454163,
+        "ms": 1652.1,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/a11y/run-pa11y-auth.mjs",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts"
+        ]
+      },
+      {
+        "query": "company domain data access service",
+        "gold": [
+          "company.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 73.9,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/company/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/company/data-access/services/company.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/company/data-access/services/company.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/company/data-access/services/company.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/company/data-access/services/company.service.ts"
+        ]
+      },
+      {
+        "query": "due date computation service",
+        "gold": [
+          "due-date.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "ms": 1301.2,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dueDateApi.model.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/due-date/data-access/services/due-date.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/ui/dunning-due-date-list/sort-dunning-due-dates.pipe.ts"
+        ]
+      },
+      {
+        "query": "user store for the user domain",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 71.5,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/shared/user/application/store/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts"
+        ]
+      },
+      {
+        "query": "dunning letter edit facade",
+        "gold": [
+          "dunning-letter-edit.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 81.7,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.facade.ts"
+        ]
+      },
+      {
+        "query": "monthly treatment accounting service",
+        "gold": [
+          "monthly-treatment.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 1232.5,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/accounting/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/accounting/ui/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment/models/monthly-treatment-key.constant.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment/monthly-treatment-store.module.ts"
+        ]
+      },
+      {
+        "query": "report categories service",
+        "gold": [
+          "report-category.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 83.6,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/models/fixtures/report-categories.fixture.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/report/reports-list/reports-list.component.ts"
+        ]
+      },
+      {
+        "query": "navigation hook that intercepts route changes",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 73.2,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "demo mode login listener for auth",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 83.9,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/shared/api/authentication/data-access/services/demo-mode.service.ts"
+        ]
+      },
+      {
+        "query": "business review domain form service",
+        "gold": [
+          "business-review-form.service.ts",
+          "business-review.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 1000.1,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts"
+        ]
+      },
+      {
+        "query": "product characteristics data service",
+        "gold": [
+          "product-characteristics.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 85.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/product/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/product/data-access/service/product-designation.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/product/data-access/stores/product-characteristics/models/product-characteristic.model.ts"
+        ]
+      },
+      {
+        "query": "custom report information service",
+        "gold": [
+          "custom-report-information.service.ts",
+          "report-information.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 77.7,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/models/fixtures/custom-report-information.fixture.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/fixtures/custom-report-information-api-fixture.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/index.ts"
+        ]
+      },
+      {
+        "query": "BreadcrumbService",
+        "gold": [
+          "breadcrumb.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 76.9,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/presentation/breadcrumb/index.ts"
+        ]
+      },
+      {
+        "query": "DunningLetterService",
+        "gold": [
+          "dunning-letter.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 1336.2,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/shared/api/data-access/IS-GC_Legacy_V1/model/dunningLetterResponseApi.model.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.facade.ts"
+        ]
+      },
+      {
+        "query": "FiscalYearService",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 82.5,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts"
+        ]
+      },
+      {
+        "query": "UserStoreService",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 136.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/store/user-store.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.spec.ts"
+        ]
+      },
+      {
+        "query": "AppConfigService",
+        "gold": [
+          "app-config.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 84.7,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app-config.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/navigation/feature/services/flag.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/navigation/feature/services/flag.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app-config.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/configuration/configuration-guard.service.ts"
+        ]
+      },
+      {
+        "query": "VatFacade",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 81.1,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/vat/application/vat.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/vat/application/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/application/facades/vat-situations.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/application/facades/taxes-form.facade.ts"
+        ]
+      },
+      {
+        "query": "CurrenciesFacade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 1632.1,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/application/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/direct-debits/application/facades/direct-debits.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/sales/customers/application/facades/customer-orders.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/deb/application/facades/deb.facade.ts"
+        ]
+      },
+      {
+        "query": "LogoutStoreClearerService",
+        "gold": [
+          "logout-store-clearer.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 85.9,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-cache-clearer.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/index.ts"
+        ]
+      },
+      {
+        "query": "NavigationHookService",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 334.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/navigation/feature/services/navigation.service.ts"
+        ]
+      },
+      {
+        "query": "DemoModeLoginListenerService",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 75.0,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/shared/api/authentication/data-access/services/demo-mode.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/dunning/dunning-parameters/can-deactivate-dunning-parameters.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.spec.ts"
+        ]
+      }
+    ]
+  },
+  "code-memory (dense+rerank)": {
+    "mode": "code-memory (dense+rerank)",
+    "recall_at_5": 0.9,
+    "recall_at_10": 0.9666666666666667,
+    "mrr": 0.5733333333333334,
+    "ndcg_at_10": 0.6723474741436025,
+    "p50_ms": 7854.633395996643,
+    "p95_ms": 14607.869795944134,
+    "per_query": [
+      {
+        "query": "how does the app fetch the configuration on startup",
+        "gold": [
+          "app-config.service.ts",
+          "configuration-guard.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 8024.1,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/sales/customers/presentation/create/professional/setup-mode/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app-config.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/runtime-app-config.provider.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/configuration/configuration-guard.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app-config.service.ts"
+        ]
+      },
+      {
+        "query": "logout flow that clears stored user state",
+        "gold": [
+          "logout-store-clearer.service.ts",
+          "logout-redirect.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 7053.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-cache-clearer.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts"
+        ]
+      },
+      {
+        "query": "where is the navigation breadcrumb built",
+        "gold": [
+          "breadcrumb.service.ts",
+          "subheader-builder.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 8836.4,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/presentation/breadcrumb/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/models/index.ts"
+        ]
+      },
+      {
+        "query": "service that calls the dunning letter REST API",
+        "gold": [
+          "dunning-letter.service.ts",
+          "dunning.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 8968.8,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning.service.ts"
+        ]
+      },
+      {
+        "query": "VAT facade exposed to components",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 0.0,
+        "rr": 0.0,
+        "ndcg@10": 0.0,
+        "ms": 10156.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/presentation/forms/vat-application/vat-application-form.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/presentation/forms/application-parameters/application-parameters-form.component.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/presentation/list/taxes-list.component.spec.ts"
+        ]
+      },
+      {
+        "query": "fiscal year repository fetching periods",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.2,
+        "ndcg@10": 0.38685280723454163,
+        "ms": 8303.4,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/models/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/utils/periodicity.helper.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/models/fixture/fiscal-year.fixture.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts"
+        ]
+      },
+      {
+        "query": "warehouse data access service",
+        "gold": [
+          "warehouse.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 5384.6,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/warehouse/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/warehouse/data-access/services/warehouse.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/due-date/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/warehouse/data-access/adapters/warehouse.adapter.spec.ts"
+        ]
+      },
+      {
+        "query": "currencies application facade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 9290.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/application/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/sales/commissions/application/facades/commissions.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/deb/application/facades/deb.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/deb/application/facades/deb.facade.ts"
+        ]
+      },
+      {
+        "query": "user navigation persistence in local storage",
+        "gold": [
+          "user-local-storage.service.ts",
+          "user-navigation.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 1.0,
+        "rr": 0.16666666666666666,
+        "ndcg@10": 0.3562071871080222,
+        "ms": 6169.7,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/a11y/run-pa11y-auth.mjs",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts"
+        ]
+      },
+      {
+        "query": "company domain data access service",
+        "gold": [
+          "company.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 5797.4,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/company/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/company/data-access/services/company.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/company/data-access/services/company.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/company/data-access/fixtures/company-api.fixture.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/company/data-access/services/company.service.ts"
+        ]
+      },
+      {
+        "query": "due date computation service",
+        "gold": [
+          "due-date.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 9239.8,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/due-date/data-access/services/due-date.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/due-date/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/adapters/dunning-due-date.adapter.spec.ts"
+        ]
+      },
+      {
+        "query": "user store for the user domain",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 0.0,
+        "r@10": 1.0,
+        "rr": 0.16666666666666666,
+        "ndcg@10": 0.3562071871080222,
+        "ms": 13971.1,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/models/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/guards/user-default-params/user-default-params.guard.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/shared/user/application/store/index.ts"
+        ]
+      },
+      {
+        "query": "dunning letter edit facade",
+        "gold": [
+          "dunning-letter-edit.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 6649.0,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit-filter/dunning-letter-edit-filter.component.ts"
+        ]
+      },
+      {
+        "query": "monthly treatment accounting service",
+        "gold": [
+          "monthly-treatment.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 9010.8,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/accounting/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/accounting/data-access/stores/monthly-treatment/effects/monthly-treatment.effects.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/accounting/data-access/services/monthly-treatment.service.ts"
+        ]
+      },
+      {
+        "query": "report categories service",
+        "gold": [
+          "report-category.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 6734.4,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/services/report-category.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/services/report-category.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/models/fixtures/report-categories.fixture.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/report/reports-list/reports-list.component.ts"
+        ]
+      },
+      {
+        "query": "navigation hook that intercepts route changes",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 7685.1,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "demo mode login listener for auth",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 10822.3,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/shared/api/authentication/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts"
+        ]
+      },
+      {
+        "query": "business review domain form service",
+        "gold": [
+          "business-review-form.service.ts",
+          "business-review.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 7513.0,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/feature/companies-step/companies-step.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/feature/services/business-review-form.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/pages/business-review/business-review/business-review.component.ts"
+        ]
+      },
+      {
+        "query": "product characteristics data service",
+        "gold": [
+          "product-characteristics.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 8194.0,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/product/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/product/data-access/service/product-characteristics.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/product/data-access/stores/code-structure/product-characteristic-selection.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/product/data-access/stores/code-structure/product-characteristics-fixed.service.ts"
+        ]
+      },
+      {
+        "query": "custom report information service",
+        "gold": [
+          "custom-report-information.service.ts",
+          "report-information.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 7161.8,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/models/fixtures/custom-report-information.fixture.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/services/custom-report-information.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/report/data-access/store/effects/report.effects.ts"
+        ]
+      },
+      {
+        "query": "BreadcrumbService",
+        "gold": [
+          "breadcrumb.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 7373.6,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/presentation/breadcrumb/breadcrumb.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/presentation/breadcrumb/index.ts"
+        ]
+      },
+      {
+        "query": "DunningLetterService",
+        "gold": [
+          "dunning-letter.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 9199.6,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/data-access/services/dunning-letter.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit/dunning-letter-edit.component.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/dunning/feature/dunning-letter-edit-filter/dunning-letter-edit-filter.component.ts"
+        ]
+      },
+      {
+        "query": "FiscalYearService",
+        "gold": [
+          "fiscal-year.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 6656.0,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/data-access/services/fiscal-year.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/fiscal-year/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/data-access/services/business-review.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/business-review/data-access/services/business-review.service.ts"
+        ]
+      },
+      {
+        "query": "UserStoreService",
+        "gold": [
+          "user-store.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 7322.7,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/store/user-store.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/store/user-store.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/domains/user/data-access/services/user-local-storage.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/shared/user/infrastructure/adapter/get-company-adapter.service.ts"
+        ]
+      },
+      {
+        "query": "AppConfigService",
+        "gold": [
+          "app-config.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 1.0,
+        "ndcg@10": 1.0,
+        "ms": 8973.4,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app-config.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/navigation/feature/services/flag.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/navigation/feature/services/flag.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/app-config.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/configuration/configuration-guard.service.ts"
+        ]
+      },
+      {
+        "query": "VatFacade",
+        "gold": [
+          "vat.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 15386.2,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/vat/application/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/vat/application/vat.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/application/facades/taxes-form.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/application/facades/vats.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/taxes/application/facades/index.ts"
+        ]
+      },
+      {
+        "query": "CurrenciesFacade",
+        "gold": [
+          "currencies.facade.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 2477.8,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/application/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/application/currencies.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/sales/commissions/application/facades/commissions.facade.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/currencies/application/store/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/direct-debits/application/facades/direct-debits.facade.ts"
+        ]
+      },
+      {
+        "query": "LogoutStoreClearerService",
+        "gold": [
+          "logout-store-clearer.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 7219.0,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-store-clearer.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/logout-cache-clearer.ts"
+        ]
+      },
+      {
+        "query": "NavigationHookService",
+        "gold": [
+          "navigation-hook.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "ms": 8369.0,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.spec.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/navigation-hook.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/navigation/application/breadcrumb.service.ts"
+        ]
+      },
+      {
+        "query": "DemoModeLoginListenerService",
+        "gold": [
+          "demo-mode-login-listener.service.ts"
+        ],
+        "r@5": 1.0,
+        "r@10": 1.0,
+        "rr": 0.5,
+        "ndcg@10": 0.6309297535714575,
+        "ms": 7567.8,
+        "top": [
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/shared/api/authentication/data-access/index.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/app/core/auth/demo-mode-login-listener.service.ts",
+          "/Users/fmflurry/Workspace/internal/sample-webapp/src/shared/api/authentication/data-access/services/demo-mode.service.ts"
+        ]
+      }
+    ]
+  }
+}
