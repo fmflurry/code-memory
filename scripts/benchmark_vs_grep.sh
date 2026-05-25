@@ -13,8 +13,8 @@
 #   scripts/benchmark_vs_grep.sh <repo-path> <project-slug> <symbol> <module> "<semantic query>" [ext]
 #
 # Example:
-#   scripts/benchmark_vs_grep.sh /path/to/private-monorepo private-monorepo IFooService \
-#       Acme.Billing.Business "where is billing chain document creation handled" cs
+#   scripts/benchmark_vs_grep.sh /path/to/repo my-project IFooService \
+#       Acme.Billing.Business "where is invoice generation handled" cs
 #
 # Requires: code-memory ingested for <project-slug>, ripgrep (rg), python3.
 set -u

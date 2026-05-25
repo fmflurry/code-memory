@@ -125,18 +125,24 @@ def test_parse_non_pe_returns_none(tmp_path: Path) -> None:
     assert parse_type_members(f, "Foo", "Bar") is None
 
 
-_LOCAL_DLL = Path(
-    "/Users/fmflurry/Workspace/internal/private-monorepo/PC/DotNet/Sources/bin/Debug/"
-    "netstandard2.0/Acme.Common.Rules.dll"
-)
+import os
+
+# Path to a real .NET DLL on the local machine + the namespace/type
+# inside it. Test auto-skips when either is missing. Configure via
+# ``CODEMEMORY_TEST_DLL``, ``CODEMEMORY_TEST_DLL_NAMESPACE``,
+# ``CODEMEMORY_TEST_DLL_TYPE`` to point at a real assembly you own.
+_LOCAL_DLL = Path(os.environ.get("CODEMEMORY_TEST_DLL", "/nonexistent.dll"))
+_LOCAL_DLL_NS = os.environ.get("CODEMEMORY_TEST_DLL_NAMESPACE", "")
+_LOCAL_DLL_TYPE = os.environ.get("CODEMEMORY_TEST_DLL_TYPE", "")
 
 
 @pytest.mark.skipif(
-    not _LOCAL_DLL.exists(), reason="real .NET DLL not present on this host"
+    not _LOCAL_DLL.exists() or not _LOCAL_DLL_NS or not _LOCAL_DLL_TYPE,
+    reason="real .NET DLL + namespace/type not configured on this host",
 )
 def test_parse_real_assembly_lists_methods_and_overloads() -> None:
     members = parse_type_members(
-        _LOCAL_DLL, "Acme.Common", "PostalAddressRules"
+        _LOCAL_DLL, _LOCAL_DLL_NS, _LOCAL_DLL_TYPE
     )
     assert members is not None
     assert len(members) > 0

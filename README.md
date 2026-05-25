@@ -298,9 +298,9 @@ hit (sub-second vs `rg`'s 30 ms) buys correctness + token efficiency.
 
 Latency: cm topology queries return in **0.5 – 0.8 s**; `rg` in **30 ms**.
 **cm is slower per query, but produces 5-30× less context to feed back
-into the agent** — which is what actually costs tokens. On private-monorepo
-(**17,400 C# files, 100k+ symbols** indexed end-to-end), the same
-queries stay sub-second.
+into the agent** — which is what actually costs tokens. On a large
+private .NET monorepo (~17k C# files, 100k+ symbols) the same queries
+stay sub-second.
 
 Two concrete precision fixes landed in this release:
 
@@ -310,9 +310,9 @@ Two concrete precision fixes landed in this release:
   no edge. Now the extractor emits **REFERENCES** edges (base lists,
   parameter / field / property / return types, generics, type
   constraints, cast / is / as / typeof) and `callers` unions
-  `CALLS | REFERENCES`. End-to-end: `callers IFooService` →
-  returns the impl class **and** every consumer that declares it as a
-  dependency.
+  `CALLS | REFERENCES`. End-to-end: `callers IFooService` on a C# repo
+  now returns the impl class **and** every consumer that declares the
+  interface as a dependency.
 - **Canonical import aliasing.** Before: `importers code_memory.graph.falkor_store`
   returned 2 (the test files that used the absolute form). The 4 files
   using `from ..graph.falkor_store import …` were invisible because the
@@ -351,7 +351,7 @@ scripts/benchmark_vs_grep.sh \
 ## Performance & scale
 
 Ingest cost is dominated by the embedder, not the graph store. On a
-real .NET monorepo (private-monorepo — 17,351 C# files, 134,068 symbols), the
+real private .NET monorepo (~17k C# files, 134k symbols), the
 breakdown is:
 
 | Stage | Time | Share |
@@ -426,7 +426,7 @@ that to a per-batch overhead.
 A separate use case exists for agents that only consume `callers` /
 `definitions` / `importers` and never call `retrieve`. For those,
 `code-memory ingest --no-vectors` skips the embedder entirely.
-Measured: ~50 files/s on this repo, ~80 files/s on private-monorepo. Use it
+Measured: ~50 files/s on this repo, ~80 files/s on a 17k-file C# monorepo. Use it
 when you've decided semantic recall isn't in the agent's loop, not as
 a workaround for slow ingest — the cache above already solves the
 slow-ingest problem with full features.

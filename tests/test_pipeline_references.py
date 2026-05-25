@@ -100,14 +100,14 @@ def test_pipeline_emits_references_edges(
     tmp_path: Path,
 ) -> None:
     pipe, graph = pipeline_with_capture
-    ex = _ex_with_refs(tmp_path, ["IFooService", "BusinessResult"])
+    ex = _ex_with_refs(tmp_path, ["IFooService", "BarResult"])
     pipe.ingest_file(ex)
 
     ref_edges = [e for e in graph.edges if e.type == "REFERENCES"]
     targets = {e.dst_key for e in ref_edges}
     assert targets == {
         "name::IFooService",
-        "name::BusinessResult",
+        "name::BarResult",
     }
     # Each REFERENCES edge must point at an unresolved placeholder so
     # the resolver can rewrite it later.
@@ -117,7 +117,7 @@ def test_pipeline_emits_references_edges(
         n.key for n in graph.nodes
         if n.label == "Symbol" and n.key.startswith("name::")
     }
-    assert {"name::IFooService", "name::BusinessResult"} <= placeholder_keys
+    assert {"name::IFooService", "name::BarResult"} <= placeholder_keys
 
 
 def test_pipeline_dedupes_repeated_references(

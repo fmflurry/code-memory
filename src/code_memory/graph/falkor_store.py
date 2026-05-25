@@ -43,8 +43,8 @@ class FalkorStore:
             port=port or CONFIG.falkor_port,
         )
         self.graph = self.db.select_graph(graph_name or CONFIG.falkor_graph)
-        # Two server-side tunables that bite on large graphs (private-monorepo,
-        # 200K symbols / 270K calls):
+        # Two server-side tunables that bite on large graphs (e.g.
+        # 200K-symbol / 270K-call monorepos):
         #
         # 1. RESULTSET_SIZE — default 10000. Silently truncates the
         #    resolver's full-graph snapshot, which made "all calls

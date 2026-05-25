@@ -140,10 +140,12 @@ def test_parse_missing_dnfile_returns_none(monkeypatch: pytest.MonkeyPatch) -> N
 # --------------------------------------------------------------- parse_assembly: success path (real DLL, optional)
 
 
-_LOCAL_DLL = Path(
-    "/Users/fmflurry/Workspace/internal/private-monorepo/PC/DotNet/Sources/bin/Debug/"
-    "netstandard2.0/Acme.Common.Rules.dll"
-)
+import os
+
+# Path to a real .NET DLL on the local machine. Test auto-skips when
+# absent. Set ``CODEMEMORY_TEST_DLL`` to point at any
+# ``netstandard*/*.dll`` you have lying around.
+_LOCAL_DLL = Path(os.environ.get("CODEMEMORY_TEST_DLL", "/nonexistent.dll"))
 
 
 @pytest.mark.skipif(
