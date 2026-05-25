@@ -10,7 +10,7 @@
  * user's OpenCode session.
  */
 
-import { execFile as execFileCb } from "node:child_process";
+import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCb);
@@ -43,10 +43,21 @@ export interface EpisodeHit {
   readonly score: number | null;
 }
 
+export interface ClaimHit {
+  readonly subject: string;
+  readonly predicate: string;
+  readonly object: string;
+  readonly polarity: boolean;
+  readonly confidence: number;
+  readonly valid_at: number;
+  readonly head_sha: string | null;
+}
+
 export interface ContextPack {
   readonly query: string;
   readonly code: readonly CodeHit[];
   readonly episodes: readonly EpisodeHit[];
+  readonly claims?: readonly ClaimHit[];
 }
 
 export interface MemoryClient {
@@ -56,6 +67,10 @@ export interface MemoryClient {
   resolve(): Promise<void>;
   ingest(opts?: { full?: boolean }): Promise<void>;
   record(input: { prompt: string; plan?: string; patch?: string; verdict?: string }): Promise<void>;
+  extractClaimsDetached(input: {
+    prompts: readonly string[];
+    sessionId?: string;
+  }): boolean;
 }
 
 function nullLogger(_level: LogLevel, _message: string): void {
@@ -175,6 +190,40 @@ export async function createMemoryClient(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log("warn", `record failed: ${msg}`);
+      }
+    },
+
+    /**
+     * Fire-and-forget claim extraction. The CLI honors CLAIMS_EXTRACTION
+     * — when the env knob is off it exits 0 with a "disabled" payload —
+     * so this is cheap to call unconditionally on every session.idle.
+     *
+     * Returns true if we spawned the child, false if the binary is
+     * missing or the prompt list is empty after filtering.
+     */
+    extractClaimsDetached({ prompts, sessionId }) {
+      if (!available) return false;
+      const list = (prompts ?? []).filter(
+        (p): p is string => typeof p === "string" && p.trim().length > 0,
+      );
+      if (!list.length) return false;
+      const args = ["extract-claims", "--json", ...baseArgs()];
+      for (const p of list) {
+        args.push("--prompt", p);
+      }
+      if (sessionId) args.push("--session-id", sessionId);
+      try {
+        const child = spawn(binary, args, {
+          cwd,
+          detached: true,
+          stdio: "ignore",
+        });
+        child.unref();
+        return true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log("warn", `extractClaims spawn failed: ${msg}`);
+        return false;
       }
     },
   };

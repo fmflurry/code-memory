@@ -10,6 +10,43 @@ explains intent.
 
 ## Unreleased
 
+### Added — Claim entity resolution + retrieve-pack surfacing + OpenCode parity
+
+**What:** three follow-ups to the Graphiti-style claim layer:
+
+- `claims/resolver.py` — `EntityResolver` embeds each claim's subject
+  and object via the project's Ollama embedder, searches a new
+  per-project Qdrant collection `claim_entities__<slug>`, and reuses
+  the top hit when cosine ≥ `CLAIMS_ENTITY_THRESHOLD` (default `0.85`).
+  Reused entities accumulate surface forms in a payload `aliases` list;
+  unmatched ones mint a fresh UUID. Two new nullable columns on the
+  `claims` table (`entity_subject_id`, `entity_object_id`) are added
+  via idempotent migrations — old DBs upgrade in place.
+- `Retriever.retrieve` now pulls top-K claims by query-token overlap
+  with mild recency decay (30-day half-life) and surfaces them inside
+  the `ContextPack`. The pack's `render()` / `to_dict()` outputs gain a
+  `claims` section; the Claude Code and OpenCode plugins both render
+  the new section in their auto-injected Context Pack. No-ops cleanly
+  when the project has no `claims.db`.
+- OpenCode plugin: `extractClaimsDetached` on the `MemoryClient`
+  interface, wired into the existing `session.idle` event so claim
+  extraction parity with the Claude Code plugin is automatic. `ClaimHit`
+  type added to `code-memory-lib/memory-client.ts`.
+
+**Reason:** without resolution, two surface forms of the same entity
+("Postgres", "postgres", "Postgres DB") would create three rows that
+look independent — contradiction handling and downstream aggregation
+would silently miss the connection. Qdrant + Ollama are already in the
+stack; reusing them keeps the infra footprint flat. Surfacing claims
+in retrieve packs closes the read loop: facts you've told the agent
+once now resurface automatically in the next relevant turn, without
+the agent having to know they exist. The OpenCode mirror just keeps
+the two plugins in lockstep so behavior doesn't diverge by host.
+
+15 new tests cover resolver thresholds, alias accumulation, embedder /
+Qdrant failure fallback, and claim ranking + surfacing in the
+ContextPack.
+
 ### Added — Graphiti-style user-claim extraction
 
 **What:** a new `src/code_memory/claims/` subpackage that turns

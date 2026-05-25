@@ -70,10 +70,11 @@ CREATE TABLE IF NOT EXISTS claims (
 );
 """
 
-# Indexes only — schema changes go into _MIGRATIONS too, but for v1 the
-# base schema is the full schema. Migrations exist so future columns
-# (e.g. embedding refs for entity resolution) can be added without a
-# rebuild.
+# Migrations are idempotent. Each statement runs independently; failures
+# from a re-run (duplicate column, already-existing index) are swallowed
+# so an existing DB catches up to the latest schema on open. Columns
+# referenced by an index MUST appear in the migration list before the
+# index that uses them.
 _MIGRATIONS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_claims_subject ON claims(subject)",
     "CREATE INDEX IF NOT EXISTS idx_claims_predicate ON claims(predicate)",
@@ -81,6 +82,12 @@ _MIGRATIONS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_claims_valid_to ON claims(valid_to)",
     "CREATE INDEX IF NOT EXISTS idx_claims_head_sha ON claims(head_sha)",
     "CREATE INDEX IF NOT EXISTS idx_claims_session ON claims(session_id)",
+    # Entity-resolution back-references: nullable so legacy rows that
+    # were extracted before the resolver shipped keep working.
+    "ALTER TABLE claims ADD COLUMN entity_subject_id TEXT",
+    "ALTER TABLE claims ADD COLUMN entity_object_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_claims_entity_subject ON claims(entity_subject_id)",
+    "CREATE INDEX IF NOT EXISTS idx_claims_entity_object ON claims(entity_object_id)",
 )
 
 
@@ -98,6 +105,11 @@ class ClaimRecord:
     head_sha: str | None = None
     session_id: str | None = None
     source_prompt_id: str | None = None
+    # Canonical entity IDs from the Qdrant entity resolver. NULL when
+    # resolution was skipped (claims_enabled but resolver disabled, or
+    # legacy rows from before the resolver shipped).
+    entity_subject_id: str | None = None
+    entity_object_id: str | None = None
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
 
@@ -133,8 +145,9 @@ class ClaimsStore:
             "INSERT INTO claims("
             "id, subject, predicate, object, polarity, confidence, "
             "evidence_span, valid_at, valid_to, recorded_at, "
-            "head_sha, session_id, source_prompt_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "head_sha, session_id, source_prompt_id, "
+            "entity_subject_id, entity_object_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 claim.id,
                 claim.subject,
@@ -149,6 +162,8 @@ class ClaimsStore:
                 claim.head_sha,
                 claim.session_id,
                 claim.source_prompt_id,
+                claim.entity_subject_id,
+                claim.entity_object_id,
             ),
         )
         self.conn.commit()
@@ -235,7 +250,8 @@ class ClaimsStore:
 _SELECT_ALL = (
     "SELECT id, subject, predicate, object, polarity, confidence, "
     "evidence_span, valid_at, valid_to, recorded_at, "
-    "head_sha, session_id, source_prompt_id FROM claims"
+    "head_sha, session_id, source_prompt_id, "
+    "entity_subject_id, entity_object_id FROM claims"
 )
 
 
@@ -254,4 +270,6 @@ def _row_to_claim(row: tuple[Any, ...]) -> ClaimRecord:
         head_sha=row[10],
         session_id=row[11],
         source_prompt_id=row[12],
+        entity_subject_id=row[13] if len(row) > 13 else None,
+        entity_object_id=row[14] if len(row) > 14 else None,
     )

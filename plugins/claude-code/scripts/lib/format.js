@@ -27,6 +27,15 @@ function formatPack(pack) {
     }
   }
 
+  if (Array.isArray(pack.claims) && pack.claims.length > 0) {
+    lines.push("", "### User claims");
+    for (const c of pack.claims) {
+      const neg = c.polarity === false ? " (NEGATED)" : "";
+      const conf = typeof c.confidence === "number" ? c.confidence.toFixed(2) : "?";
+      lines.push(`- ${c.subject} ${c.predicate} ${c.object}${neg} (conf=${conf})`);
+    }
+  }
+
   lines.push(
     "",
     "### Next-step tools (call these autonomously when applicable)",

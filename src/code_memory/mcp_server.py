@@ -822,12 +822,22 @@ def _extract_claims(args: dict[str, Any]) -> list[TextContent]:
     repo = Path(os.environ.get("CODE_MEMORY_REPO") or os.getcwd()).resolve()
     head_sha = _head_sha_safe(repo)
 
-    from .claims import ClaimExtractor, ClaimRecord, ClaimsStore
+    from .claims import (
+        ClaimExtractor,
+        ClaimRecord,
+        ClaimsStore,
+        EntityResolver,
+    )
     from .claims.extractor import ExtractionError
 
     cfg = CONFIG.for_project(project)
     store = ClaimsStore(path=cfg.claims_db)
     extractor = ClaimExtractor()
+    resolver: EntityResolver | None
+    try:
+        resolver = EntityResolver(project=project, cfg=cfg)
+    except Exception:  # noqa: BLE001
+        resolver = None
     added = 0
     samples: list[dict[str, Any]] = []
     try:
@@ -844,6 +854,8 @@ def _extract_claims(args: dict[str, Any]) -> list[TextContent]:
                     }
                 )
             for c in claims:
+                subj_id = _resolve_or_none(resolver, c.subject)
+                obj_id = _resolve_or_none(resolver, c.object)
                 rec = ClaimRecord(
                     subject=c.subject,
                     predicate=c.predicate,
@@ -855,6 +867,8 @@ def _extract_claims(args: dict[str, Any]) -> list[TextContent]:
                     head_sha=head_sha,
                     session_id=session_val,
                     source_prompt_id=pid,
+                    entity_subject_id=subj_id,
+                    entity_object_id=obj_id,
                 )
                 store.upsert(rec)
                 added += 1
@@ -925,6 +939,17 @@ def _now() -> float:
     import time
 
     return time.time()
+
+
+def _resolve_or_none(resolver: Any, text: str) -> str | None:
+    """Defensive entity resolution helper (see CLI counterpart)."""
+    if resolver is None:
+        return None
+    try:
+        ref = resolver.resolve(text)
+    except Exception:  # noqa: BLE001
+        return None
+    return ref.id if ref is not None else None
 
 
 def _head_sha_safe(repo: Path) -> str | None:

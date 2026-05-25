@@ -13,6 +13,7 @@ Layout:
 """
 
 from .extractor import Claim, ClaimExtractor, ExtractionError
+from .resolver import EntityRef, EntityResolver
 from .store import ClaimRecord, ClaimsStore, SINGLE_VALUED_PREDICATES
 
 __all__ = [
@@ -20,6 +21,8 @@ __all__ = [
     "ClaimExtractor",
     "ClaimRecord",
     "ClaimsStore",
+    "EntityRef",
+    "EntityResolver",
     "ExtractionError",
     "SINGLE_VALUED_PREDICATES",
 ]

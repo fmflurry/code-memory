@@ -373,6 +373,28 @@ export CLAIMS_EXTRACTION=true
 You can override the model with `CLAIMS_LLM_MODEL` (any chat-capable
 Ollama model that honors `format: <json-schema>`).
 
+### Entity resolution
+
+Each unique subject / object is canonicalised via a tiny
+**per-project Qdrant collection** (`claim_entities__<slug>`). On
+extraction, the resolver embeds the surface form, searches for nearest
+neighbours, and:
+
+- reuses the existing entity ID when cosine similarity ≥
+  `CLAIMS_ENTITY_THRESHOLD` (default `0.85`); the new surface form is
+  appended to the entity's `aliases` payload, and
+- mints a fresh UUID when no close match exists.
+
+`Postgres`, `postgres`, and `Postgres DB` therefore collapse to one
+entity even when the LLM emits them differently. The IDs land on the
+claim row as `entity_subject_id` / `entity_object_id` columns (both
+nullable — legacy rows from before the resolver shipped stay valid).
+
+Tune the threshold with `CLAIMS_ENTITY_THRESHOLD`. Lower values merge
+more aggressively (risk: false merges across distinct entities);
+higher values keep entities apart (risk: duplicates for the same
+entity).
+
 ### Reading claims back
 
 Via the MCP server:
@@ -382,6 +404,13 @@ codememory_claims(project="<slug>")                  # all currently-valid
 codememory_claims(project="<slug>", subject="user")  # filter by subject
 codememory_claims(project="<slug>", as_of=1717286400) # point-in-time
 ```
+
+Claims also surface automatically inside the `codememory_retrieve`
+Context Pack when the per-project `claims.db` has rows whose
+subject / object / evidence overlap with the query. Token-overlap
+scoring with a 30-day recency half-life keeps durable preferences
+("we use Postgres") visible across sessions while letting recent
+reassertions float to the top.
 
 Via the CLI, query the SQLite store directly:
 

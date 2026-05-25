@@ -72,6 +72,9 @@ class Config:
     qdrant_url: str = _env("QDRANT_URL", "http://localhost:6333")
     qdrant_code: str = _env("QDRANT_COLLECTION_CODE", "code_chunks")
     qdrant_episodes: str = _env("QDRANT_COLLECTION_EPISODES", "episodes")
+    qdrant_claim_entities: str = _env(
+        "QDRANT_COLLECTION_CLAIM_ENTITIES", "claim_entities"
+    )
 
     falkor_host: str = _env("FALKOR_HOST", "localhost")
     falkor_port: int = int(_env("FALKOR_PORT", "6379"))
@@ -92,6 +95,13 @@ class Config:
     claims_llm_model: str = _env("CLAIMS_LLM_MODEL", "gemma2:9b")
     claims_llm_timeout: float = float(_env("CLAIMS_LLM_TIMEOUT", "30"))
     claims_min_confidence: float = float(_env("CLAIMS_MIN_CONFIDENCE", "0.6"))
+    # Cosine similarity at or above which a freshly embedded
+    # subject/object reuses an existing entity instead of creating a new
+    # one. 0.85 is a conservative default — false-merges hurt more than
+    # extra entities (they propagate to every downstream claim).
+    claims_entity_threshold: float = float(
+        _env("CLAIMS_ENTITY_THRESHOLD", "0.85")
+    )
 
     def for_project(self, slug: str) -> Config:
         slug = slugify(slug)
@@ -99,6 +109,7 @@ class Config:
             self,
             qdrant_code=f"{self.qdrant_code}__{slug}",
             qdrant_episodes=f"{self.qdrant_episodes}__{slug}",
+            qdrant_claim_entities=f"{self.qdrant_claim_entities}__{slug}",
             falkor_graph=f"{self.falkor_graph}__{slug}",
             episodic_db=self.data_dir / slug / "episodic.db",
             claims_db=self.data_dir / slug / "claims.db",

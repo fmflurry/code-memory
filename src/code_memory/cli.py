@@ -49,6 +49,22 @@ def _emit(payload: Any, *, as_json: bool) -> None:
         rprint(payload)
 
 
+def _resolve_or_none(resolver: Any, text: str) -> str | None:
+    """Run entity resolution defensively; swallow any failure to None.
+
+    The CLI's extract-claims path runs from a detached hook process —
+    we'd rather store a claim with a NULL entity ID than crash the whole
+    extraction because Qdrant blipped or Ollama timed out.
+    """
+    if resolver is None:
+        return None
+    try:
+        ref = resolver.resolve(text)
+    except Exception:  # noqa: BLE001
+        return None
+    return ref.id if ref is not None else None
+
+
 @app.command()
 def ingest(
     root: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True),
@@ -215,7 +231,7 @@ def extract_claims(
     ``{"status": "disabled"}`` payload and exits 0 (callers can treat
     this as a no-op).
     """
-    from .claims import ClaimExtractor, ClaimRecord, ClaimsStore
+    from .claims import ClaimExtractor, ClaimRecord, ClaimsStore, EntityResolver
     from .claims.extractor import ExtractionError
     from .config import CONFIG
     from .orchestrator import git_delta
@@ -252,6 +268,15 @@ def extract_claims(
 
     store = ClaimsStore(path=cfg.claims_db)
     extractor = ClaimExtractor()
+    # Entity resolution is best-effort: a Qdrant outage shouldn't lose
+    # claims, so a None resolver means "skip resolution, persist with
+    # NULL entity IDs". The resolver itself constructs lazily and only
+    # warms on the first resolve() call.
+    resolver: EntityResolver | None
+    try:
+        resolver = EntityResolver(project=slug, cfg=cfg)
+    except Exception:  # noqa: BLE001
+        resolver = None
     added = 0
     samples: list[dict[str, object]] = []
     try:
@@ -270,6 +295,8 @@ def extract_claims(
                 raise typer.Exit(code=0)
             now = _t.time()
             for c in claims:
+                subj_id = _resolve_or_none(resolver, c.subject)
+                obj_id = _resolve_or_none(resolver, c.object)
                 rec = ClaimRecord(
                     subject=c.subject,
                     predicate=c.predicate,
@@ -280,6 +307,8 @@ def extract_claims(
                     valid_at=now,
                     head_sha=head,
                     session_id=session_id or None,
+                    entity_subject_id=subj_id,
+                    entity_object_id=obj_id,
                 )
                 store.upsert(rec)
                 added += 1
