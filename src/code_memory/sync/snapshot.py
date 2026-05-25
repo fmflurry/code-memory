@@ -29,6 +29,7 @@ from typing import Any, Iterator
 
 from ..config import CONFIG, Config
 from ..graph.falkor_store import FalkorStore, GraphEdge, GraphNode
+from ..embed.m3 import HybridVec, SparseVec
 from ..vector.qdrant_store import QdrantStore, VectorRecord
 
 FORMAT_VERSION = 1
@@ -140,7 +141,18 @@ def build_snapshot(
 
 
 def _dump_vectors(store: QdrantStore, collection: str) -> Iterator[dict[str, Any]]:
-    """Page through every point in the collection via Qdrant scroll API."""
+    """Page through every point in the collection via Qdrant scroll API.
+
+    The hybrid Qdrant layout returns ``p.vector`` as a dict keyed by
+    named vector slot (``dense`` and optionally ``sparse``). The legacy
+    layout returns a bare list of floats. We serialise both forms into
+    a single normalised JSON shape ``{"dense": [...], "sparse":
+    {"indices": [...], "values": [...]}}`` so the apply path doesn't
+    have to branch on layout era. Previously this used ``list(p.vector)``,
+    which silently turned the dict into a list of slot names —
+    discarding every actual embedding and producing snapshots that
+    couldn't round-trip.
+    """
     try:
         store.ensure_collection(collection)
     except Exception:
@@ -160,12 +172,72 @@ def _dump_vectors(store: QdrantStore, collection: str) -> Iterator[dict[str, Any
         for p in points:
             yield {
                 "id": str(p.id),
-                "vector": list(p.vector) if p.vector is not None else [],
+                "vector": _normalize_vector_for_dump(p.vector),
                 "payload": dict(p.payload or {}),
             }
         if next_offset is None:
             return
         offset = next_offset
+
+
+def _hybridvec_from_dump(payload: Any) -> HybridVec:
+    """Reverse of :func:`_normalize_vector_for_dump`.
+
+    Accepts both the new normalised dict shape (``{"dense": [...],
+    "sparse": {...}}``) and three legacy shapes that may sit in older
+    snapshots: a bare list of floats, a dict with only ``dense``, or
+    an empty dict. Always returns a :class:`HybridVec`; sparse is
+    empty when the snapshot didn't carry it (matches the Ollama /
+    TEI dense-only invariant).
+    """
+    if isinstance(payload, list):
+        return HybridVec(
+            dense=[float(x) for x in payload],
+            sparse=SparseVec(indices=[], values=[]),
+        )
+    if not isinstance(payload, dict):
+        return HybridVec(dense=[], sparse=SparseVec(indices=[], values=[]))
+    dense = [float(x) for x in payload.get("dense") or []]
+    sp = payload.get("sparse") or {}
+    sparse = SparseVec(
+        indices=[int(i) for i in sp.get("indices") or []],
+        values=[float(v) for v in sp.get("values") or []],
+    )
+    return HybridVec(dense=dense, sparse=sparse)
+
+
+def _normalize_vector_for_dump(vec: Any) -> dict[str, Any]:
+    """Coerce any Qdrant vector return shape into the dump JSON shape.
+
+    * Hybrid layout: ``{"dense": [...], "sparse": SparseVector(...)}``
+      → ``{"dense": [...], "sparse": {"indices": [...], "values": [...]}}``.
+    * Legacy single-vector layout: ``[float, ...]`` → ``{"dense": [...]}``.
+    * Missing / None: ``{}`` (downstream filters empties).
+    """
+    if vec is None:
+        return {}
+    if isinstance(vec, dict):
+        out: dict[str, Any] = {}
+        dense = vec.get("dense")
+        if dense is not None:
+            out["dense"] = [float(x) for x in dense]
+        sparse = vec.get("sparse")
+        if sparse is not None:
+            # Qdrant's SparseVector exposes ``indices`` and ``values``;
+            # some client versions return a plain dict. Handle both.
+            indices = getattr(sparse, "indices", None)
+            values = getattr(sparse, "values", None)
+            if indices is None and isinstance(sparse, dict):
+                indices = sparse.get("indices", [])
+                values = sparse.get("values", [])
+            if indices:
+                out["sparse"] = {
+                    "indices": [int(i) for i in indices],
+                    "values": [float(v) for v in (values or [])],
+                }
+        return out
+    # Legacy: bare list of floats.
+    return {"dense": [float(x) for x in vec]}
 
 
 def _dump_graph(store: FalkorStore) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -232,7 +304,11 @@ def apply_snapshot(
     vector.recreate_collection(cfg.qdrant_code)
     if snap.vectors:
         records = [
-            VectorRecord(id=v["id"], vector=v["vector"], payload=v.get("payload") or {})
+            VectorRecord(
+                id=v["id"],
+                vector=_hybridvec_from_dump(v.get("vector")),
+                payload=v.get("payload") or {},
+            )
             for v in snap.vectors
             if v.get("vector")
         ]

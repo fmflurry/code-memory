@@ -47,11 +47,11 @@ _Full tables + methodology in [Benchmarks](#benchmarks)._
 
 **The pitch in one line:** Recall@10 +164% vs `rg`, *and* topology results small enough that the agent reads them back without re-grepping. code-memory is 0.5-0.8 s per topology query vs `rg`'s 30 ms — slower per call but **5-30× less context** to feed back, which is what actually costs agent tokens.
 
-**Decent ingest on a Mac, full semantic + graph, no quality tradeoff:**
+**Ingest once, sync everywhere — full semantic + graph, no quality tradeoff:**
 
-- **Persistent content-hash embedding cache** makes a re-ingest of an unchanged tree a 3-second op: **55.7 s → 2.9 s = 19× faster** on re-ingest. Default model (`bge-m3`), full Recall@10.
-- **Linux + NVIDIA** unlock: `EMBED_BACKEND=tei` for 5-10× cold ingest vs Ollama, **same `bge-m3` weights, identical retrieval quality**.
-- Cold ingest pays the model cost **once** per repo; everything after is cache-bound.
+- **Snapshot publish/sync**: ingest once on a fast machine (CI / power dev box), `code-memory snapshot publish` to a git branch, every other machine runs `code-memory sync` after `git pull` and gets the full state — **vectors, graph, episodic — in seconds, no embedder run**. Tested end-to-end: cold ingest → publish → wipe → sync restores `retrieve` / `callers` / `definitions` / `importers` exactly. With HEAD ahead of the snapshot, sync auto-applies the snapshot + runs the incremental delta.
+- **Persistent content-hash embedding cache** makes any re-ingest on the same machine a SQLite scan: **55.7 s → 2.9 s = 19× faster** when nothing changed. Full Recall@10, default `bge-m3`.
+- **Linux + NVIDIA** unlock for the cold-once-in-CI build: `EMBED_BACKEND=tei` for 5-10× cold ingest vs Ollama, **same `bge-m3` weights, identical retrieval quality**.
 
 `retrieve` / `callers` / `definitions` / `importers` all stay on, all return the same answers they did before any of these speedups. See [Performance & scale](#performance--scale).
 
@@ -426,6 +426,71 @@ layer; especially visible on import-heavy languages.
 Per-file Ollama HTTP calls had a ~75 ms fixed overhead. Buffering
 chunks across files (flush at 64) and pushing them in one call cuts
 that to a per-batch overhead.
+
+### Snapshots: ingest once, sync everywhere ⭐
+
+The cold-ingest cost on Apple Silicon is hardware-bound: `bge-m3` on
+Metal caps at ~21 chunks/sec, full-stop. A 17k-file monorepo therefore
+takes ~2 h cold no matter how clever the rest of the pipeline gets.
+
+The fix isn't faster embedding on Mac — it's **never running the
+embedder on Mac**. Build the index once on a fast machine, publish a
+snapshot, distribute via git. Every other developer runs a single
+`code-memory sync` after `git pull` and gets the full state (vectors
++ graph + episodic state + ingest pointer) in seconds.
+
+```bash
+# On the canonical machine (CI runner, dev workstation, GPU host):
+code-memory ingest /path/to/repo --full      # paid once
+code-memory snapshot publish                 # → tar.gz on a git branch
+                                             #   (default: codemem-snapshots)
+
+# On every other machine, after `git pull`:
+code-memory sync                             # auto-detects snapshot at HEAD
+                                             #   or recent ancestor, applies
+                                             #   it, then ingests just the
+                                             #   delta since the snapshot.
+```
+
+What `sync` actually does, in order:
+
+1. `git fetch` the snapshot branch (skip with `--no-fetch`).
+2. If a snapshot exists for current HEAD → pull + apply. No embedder.
+3. If HEAD has moved past the latest snapshot → pull the ancestor
+   snapshot, apply it, then run `ingest --since=<snapshot-sha>` to
+   process only the post-snapshot delta.
+4. If HEAD matches local state already → noop.
+5. If you're sitting on the canonical branch and pass `--publish` →
+   re-publish a fresh snapshot when the sync completes.
+
+Verified end-to-end on a fresh repo (full test in
+`tests/test_snapshot_e2e.py`):
+
+| Step | Wall time |
+|------|----------:|
+| Cold ingest (2 files, 2 chunks) | ~10 s (Ollama warmup-dominated) |
+| `snapshot publish` (push tar.gz to git branch) | <1 s |
+| `sync` after wipe (snapshot matches HEAD) | **0.5 s** |
+| `sync` with HEAD one commit ahead | **0.9 s** (snapshot + 1-file incremental) |
+
+The snapshot is a single tar.gz containing `manifest.json`,
+`vectors/code.jsonl` (every Qdrant point with its dense + sparse
+vector), `graph/nodes.jsonl`, `graph/edges.jsonl`, and the ingest
+state pointer. Verified by SHA-256 digest in the manifest before
+apply; mismatched `embed_model` / `embed_dim` is a hard refuse.
+
+Distribution channel is **just git**: the snapshot lives on a
+dedicated branch (`codemem-snapshots` by default), so it inherits
+authentication, signing, ACLs from your existing git setup. No S3,
+no separate service.
+
+**Practical pattern for a team of N developers:**
+- CI runs `code-memory sync --publish` on every merge to `main`.
+- Devs run `code-memory sync` whenever they want fresh state — `git
+  pull && code-memory sync` is the canonical workflow.
+- Mac dev never pays the cold-ingest cost. Linux + NVIDIA + TEI in CI
+  does it once per merge, ~15-25 min on a 17k-file monorepo, and
+  publishes a snapshot the whole team consumes in seconds.
 
 ### Mac cold ingest: bounded by `bge-m3` on Metal
 
