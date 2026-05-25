@@ -17,7 +17,35 @@ Structural symbol graph &nbsp;·&nbsp; semantic vector recall &nbsp;·&nbsp; epi
 [![tree-sitter](https://img.shields.io/badge/parser-tree--sitter-228B22)](https://tree-sitter.github.io/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Jump to:** [Get it running](#installation) &nbsp;·&nbsp; [Plug it into your agent](#mcp-server)
+**Jump to:** [Get it running](#installation) &nbsp;·&nbsp; [Plug it into your agent](#mcp-server) &nbsp;·&nbsp; [How it scores vs `rg`](#benchmarks)
+
+</div>
+
+<div align="center">
+
+### How code-memory scores vs raw `ripgrep`
+
+_Full tables + methodology in [Benchmarks](#benchmarks)._
+
+**Semantic retrieval** _(Angular sample app, 2.6k files, 30 hand-crafted queries — [Benchmark 1](#benchmark-1--code-memory-vs-no-code-memory-baseline))_
+
+| | code-memory | ripgrep |
+|---|---:|---:|
+| **Recall@10** | **0.967** | 0.367 |
+| **MRR** | **0.798** | 0.169 |
+| **nDCG@10** | **0.840** | 0.218 |
+| **p50 latency (ms)** | **86** | 176 |
+
+**Topology queries** _(this repo, 111 Python files, symbol `FalkorStore` — [Benchmark 3](#benchmark-3--topology-queries-graph-vs-grep-)_
+
+| | code-memory | ripgrep |
+|---|---:|---:|
+| **"Who imports module M?"** | **6 true positives** | 7 (1 false positive) |
+| **"Who calls / references X?"** | **7 typed edges** | 14 lexical hits |
+| **Definitions of X** | `{file, start, end, kind}` JSON | 1 grep line |
+| **Output for the agent to read back** | **5-30× smaller** | full file dump |
+
+**The pitch in one line:** Recall@10 +164% vs `rg`, *and* topology results small enough that the agent reads them back without re-grepping. code-memory is 0.5-0.8 s per topology query vs `rg`'s 30 ms — slower per call but **5-30× less context** to feed back, which is what actually costs agent tokens.
 
 </div>
 
@@ -245,13 +273,19 @@ Full breakdown in [`docs/BENCHMARK.md`](docs/BENCHMARK.md). Regenerate:
 uv run python scripts/benchmark.py --project <slug> --out docs/BENCHMARK.md
 ```
 
-### Benchmark 3 — topology queries (graph vs grep)
+### Benchmark 3 — topology queries (graph vs grep) ⭐
 
 Retrieval is half the story. Real coding agents constantly ask **"who
 calls X?", "where is X defined?", "who imports module M?"** — graph
 questions a vector index can't answer. The other natural baseline is
 `rg`. Run on this repo (code-memory itself), symbol `FalkorStore`,
 module `code_memory.graph.falkor_store`:
+
+**Headline:** 4/4 task families where code-memory's output is either
+strictly more precise than `rg` (T4 — zero false positives where `rg`
+hits a fixture string) or **5-30× smaller in bytes for an agent to
+read back** (T1, T2, T3 — ranked + deduped + jump-ready). The latency
+hit (sub-second vs `rg`'s 30 ms) buys correctness + token efficiency.
 
 | Task | code-memory | ripgrep | Why it matters for an agent |
 |------|------------:|--------:|-----------------------------|
