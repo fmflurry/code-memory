@@ -245,6 +245,46 @@ Full breakdown in [`docs/BENCHMARK.md`](docs/BENCHMARK.md). Regenerate:
 uv run python scripts/benchmark.py --project <slug> --out docs/BENCHMARK.md
 ```
 
+### Benchmark 3 — topology queries (graph vs grep)
+
+Retrieval is half the story. Real coding agents constantly ask **"who
+calls X?", "where is X defined?", "who imports module M?"** — graph
+questions a vector index can't answer. The other natural baseline is
+`rg`. Run on this repo (code-memory itself), symbol `FalkorStore`,
+module `code_memory.graph.falkor_store`:
+
+| Task | code-memory | ripgrep | Why it matters for an agent |
+|------|------------:|--------:|-----------------------------|
+| Semantic Q ("how is the resolver wired into ingest") | **8 ranked hits** w/ scores + line ranges | 91 file paths, unranked | Agent reads 1-3 cm hits directly; with `rg` it must re-grep + read 91 files to find which 3 matter |
+| Callers + refs of `FalkorStore` | **6 deduped files** (graph-typed) | 13 file paths (lexical) | cm distinguishes real callers from string/comment matches; one query, no false-positive culling |
+| Definitions of `FalkorStore` | `{file, start, end, kind}` JSON | one line of grep output | cm output is jump-ready — agent skips the disambiguation round-trip |
+| Importers of `code_memory.graph.falkor_store` | 2 files importing the **fully-qualified module** | 6 files matching `import.*falkor_store` text | cm tracks parsed import statements per file; rg fires on relative imports, aliases, and comments alike |
+
+Latency: cm topology queries return in **0.5 – 0.8 s**; `rg` in **30 ms**.
+**cm is slower per query, but produces 5-30× less context to feed back
+into the agent** — which is what actually costs tokens. On private-monorepo
+(**17,400 C# files, 100k+ symbols** indexed end-to-end), the same
+queries stay sub-second.
+
+Concrete fix landed in this release: `callers IFoo` on a C# repo used
+to return 0 because the graph only modeled call expressions —
+`class X : IFoo`, `void Do(IFoo p)`, `List<IFoo>` left no edge. The
+extractor now emits **REFERENCES** edges for type-position name usage
+(base lists, parameter / field / property / return types, generics,
+type constraints, cast / is / as / typeof) and `callers` unions
+`CALLS | REFERENCES` so implementers and type-param users surface
+alongside actual call sites. Verified end-to-end:
+`callers IFooService` → returns the impl class **and** every
+consumer that declares it as a dependency.
+
+Regenerate against any indexed repo:
+
+```bash
+scripts/benchmark_vs_grep.sh \
+    /path/to/repo <project-slug> <Symbol> <module.path> \
+    "natural-language semantic query" [file-ext]
+```
+
 ### Caveats
 
 - These results reflect **one Angular codebase**. Symbol-heavy or
@@ -256,6 +296,10 @@ uv run python scripts/benchmark.py --project <slug> --out docs/BENCHMARK.md
 - Rerank latency includes a cold model load on the first query; warm
   calls drop to ~250 ms per query but stay dominated by N pairs ×
   forward-pass cost.
+- Benchmark 3 topology timings are warm-cache. A cold semantic query
+  pays a one-time ~8 s embedding model load; topology queries
+  (`callers` / `definitions` / `importers`) skip the embedder entirely
+  and stay sub-second from the first call.
 
 ---
 
