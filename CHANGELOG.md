@@ -8,7 +8,171 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
-## [0.2.0] — 2026-05-25
+## [0.3.0] — 2026-05-26
+
+Release theme: **the claim loop closes**. v0.2.0 shipped the storage
+side of user claims (bi-temporal SQLite + Graphiti-style extraction).
+This release ships everything around it — detection at prompt time,
+agent-authored assertion via MCP, dedupe at write time, plus a hard
+fix for the silent-hook bug that meant the whole feature was off by
+default. Also lands the Angular clean-arch resolution work: TS
+abstract classes + receiver-type inference + DI graph queries.
+
+### Added — Plugin claim-intent detection (Claude Code + OpenCode)
+
+**What:** every user prompt is scanned for durable-assertion patterns
+(preferences, decisions, rejections, ownership, location). When a
+match fires, both plugins inject a polarity-flipped nudge into the
+agent's system prompt **before** the agent sees the message:
+
+```
+[code-memory] Durable user assertion detected — ACT BEFORE ANSWERING.
+…
+DEFAULT ACTION: call codememory_assert_claim NOW, in the same response,
+BEFORE any other tool call or user-facing text.
+…
+DO NOT skip because: the fact is already in CLAUDE.md / the wording is
+emotional / the user is also asking a question / you are not sure of
+the scope.
+SKIP ONLY if ALL of these hold: hypothetical, counterfactual, retracted,
+or a higher-confidence dupe was asserted in this session.
+If you skip, state ONE LINE: "skipped claim: <reason>". Silent skips
+are a bug.
+```
+
+- Claude Code: `plugins/claude-code/scripts/lib/claim-intent.js` +
+  injection via `UserPromptSubmit` → `additionalContext`.
+- OpenCode: `plugins/opencode/src/code-memory-lib/claim-intent.ts` +
+  injection via `chat.message` → `experimental.chat.system.transform`.
+- Patterns and nudge template are kept lockstep across the two plugins;
+  21 CC tests + 18 OpenCode tests pin the regex behavior, the pure-
+  question filter, and the formatted template text.
+
+**Reason:** the v0.2.0 extractor only fired post-turn from `session.idle`
+via Ollama, so a user typing "I love Clean Architecture" produced no
+claim if the agent didn't think to call `codememory_assert_claim`
+itself. Polarity-flipped wording + explicit anti-rationalizations
+move the default from "skip" to "assert", and the mandatory "skipped
+claim: <reason>" line makes silent drops detectable in the transcript.
+
+### Added — Agent-authored claims via MCP
+
+**What:** `codememory_assert_claim(subject, predicate, object, project, …)`
+MCP tool lets the agent register a claim directly without invoking the
+extractor LLM. Predicate is canonicalized to lowercase-kebab so
+single-valued-predicate contradiction handling (e.g. "uses → switches
+DB") still works. Bypasses the `CLAIMS_EXTRACTION` flag (no Ollama
+in the loop). Entity resolution runs if the resolver is wired up,
+otherwise the row stores raw strings.
+
+**Reason:** matches the plugin nudge above. The agent now has a
+first-party tool to call when the nudge fires; the extractor remains
+available for cases where claims need to be pulled out of historical
+prompts post-hoc.
+
+### Added — Claims store dedupe at write time
+
+**What:** `ClaimsStore.upsert` looks for an open row matching
+`(subject, predicate, object, polarity)` and refreshes it in place
+instead of inserting a duplicate:
+
+- `confidence` is monotonic non-decreasing (`MAX(prev, new)`).
+- Non-empty `evidence_span` overwrites a blank one; never the reverse.
+- `recorded_at` advances.
+- `session_id`, `source_prompt_id`, `entity_*` keep the FIRST
+  observation's provenance via `COALESCE`.
+- Polarity flips and different-object assertions still go through the
+  bi-temporal close path (`valid_to` set on the prior row).
+
+**Reason:** the new "ACT BEFORE ANSWERING" nudge caused the agent to
+re-assert the same claim every turn it qualified, bloating `claims.db`
+with identical rows. Dedupe at write keeps the audit trail useful
+without losing the bi-temporal semantics — `current()` still returns
+exactly one row per (s,p,o,polarity), `as_of()` queries still see the
+right history.
+
+### Fixed — Claude Code plugin install actually enables the plugin
+
+**What:** the previous `plugins/claude-code/install.sh` only symlinked
+the repo into `~/.claude/plugins/code-memory/`. Claude Code ignores
+that path — its plugin loader reads only
+`~/.claude/plugins/installed_plugins.json` (marketplace-installed
+plugins). Result: `hooks.json` was on disk but no hooks fired. The
+hooks panel in Claude Code correctly reported "No hooks configured for
+UserPromptSubmit" — the user just had no way to know symlinking
+wasn't enough.
+
+The fix:
+
+- New marketplace manifest at `.claude-plugin/marketplace.json` at the
+  repo root, pointing at `./plugins/claude-code`.
+- `install.sh` rewritten: validates both manifests, runs
+  `claude plugin marketplace add <repo>`, runs
+  `claude plugin install code-memory@code-memory`, then registers the
+  MCP server as before. Idempotent (uninstall+reinstall on re-run).
+- `plugins/claude-code/README.md` updated; main README documents the
+  marketplace step and warns against bare-symlink installs.
+
+**Reason:** the whole plugin was off by default for every user who
+followed the documented install. Plugins not registered with the CC
+loader are inert no matter what's on disk.
+
+### Added — TypeScript abstract class + receiver-type inference
+
+**What:** the tree-sitter extractor now recognizes
+`abstract_class_declaration` / `abstract_method_signature` as symbol
+nodes, and `Call` carries an optional `receiver_type` field inferred
+from `this.<field>.<method>()` where the field's type is readable
+from a member initializer or annotation.
+
+**Reason:** Angular clean-arch use cases call their port via
+`this.port.method()` where `port` is `inject(SomeAbstractPort)`. Without
+abstract-class recognition the port never enters the graph; without
+receiver-type inference the resolver can't narrow `method()` to the
+port's overloads, so every Angular use case looks like an orphan call.
+The pattern is widespread enough in modern Angular codebases that
+losing it bricks topology queries on the most common architectural
+shape.
+
+### Added — DI graph queries (`codememory_injects`, `codememory_injectors`)
+
+**What:** two new MCP tools matching the existing `callers` / `callees`
+shape, but operating on DI injection edges:
+
+- `codememory_injects(symbol)` — what tokens does this file inject?
+- `codememory_injectors(token)` — which files inject this token?
+
+**Reason:** in clean-arch / hexagonal projects the DI graph carries
+nearly as much architectural signal as the call graph. Surfacing it as
+a first-class topology query closes one of the gaps the v0.2.0
+codebase-exploration rule called out.
+
+### Added — Layered config via `.code-memoryrc`
+
+**What:** `code_memory.config` now reads `KEY=VALUE` overrides from
+`./.code-memoryrc` (project-local) and `~/.config/code-memory/config`
+(global). Real shell env wins; project file beats global file.
+
+**Reason:** users were embedding env exports into shell rc files just
+to pin one default per project (e.g. `CODE_MEMORY_PROJECT=auto`).
+Layered config files keep those defaults out of the shell environment
+and make per-project overrides commitable when desired.
+
+### Added — Tests
+
+- `tests/test_extractor_ts_abstract.py` — abstract-class symbol pickup.
+- `tests/test_extractor_ts_inject.py` — `inject()` call extraction.
+- `tests/test_extractor_receiver_type.py` — receiver-type inference.
+- `tests/test_mcp_assert_claim.py` — MCP tool happy path + invalid
+  inputs + canonicalization + entity resolution.
+- `tests/test_claim_store.py` — 5 new dedupe tests covering same-fact
+  reupsert, max-confidence, non-empty-evidence wins, first-session-id
+  preservation, polarity-differs-not-dedupe.
+
+Total: **496 passed, 3 skipped** (Python), **21 CC + 18 OpenCode**
+plugin tests pass.
+
+
 
 Release theme: **enterprise-grade ingest, full features, no quality
 tradeoffs**. The bulk of this release attacks the cold-ingest problem

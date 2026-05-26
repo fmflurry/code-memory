@@ -1,7 +1,7 @@
 {
   "name": "code-memory",
-  "version": "0.1.0",
-  "description": "Auto-injects a code-memory Context Pack on each user prompt, re-indexes files after Write/Edit, runs a debounced cross-file resolver, and records sessions as episodes. Mirrors the OpenCode plugin's behavior for Claude Code.",
+  "version": "0.3.0",
+  "description": "Auto-injects a code-memory Context Pack on each user prompt, detects durable user assertions (preferences/decisions/rejections/ownership/location) and nudges the agent to call codememory_assert_claim, re-indexes files after Write/Edit, runs a debounced cross-file resolver, and records sessions as episodes. Mirrors the OpenCode plugin's behavior for Claude Code.",
   "author": {
     "name": "fmflurry"
   },

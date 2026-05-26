@@ -122,23 +122,6 @@ async function createMemoryClient(opts = {}) {
       );
     },
 
-    /**
-     * Fire-and-forget claim extraction over one or more user prompts.
-     * No-op when `CLAIMS_EXTRACTION=true` is not set on the daemon side —
-     * the CLI exits 0 with a "disabled" payload, so the spawn is cheap.
-     */
-    extractClaimsDetached({ prompts, sessionId } = {}) {
-      if (!available) return false;
-      const list = (prompts || []).filter((p) => typeof p === "string" && p.trim());
-      if (!list.length) return false;
-      const args = ["extract-claims", "--json", ...baseArgs(project)];
-      for (const p of list) {
-        args.push("--prompt", p);
-      }
-      if (sessionId) args.push("--session-id", String(sessionId));
-      return spawnDetached(binary, args, { cwd });
-    },
-
     async record({ prompt, plan, patch, verdict }) {
       if (!available) return;
       const args = [

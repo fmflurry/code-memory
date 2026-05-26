@@ -1,6 +1,6 @@
 ---
 name: code-memory
-description: Local-first memory layer (semantic vectors + call/import graph + episodes) wired in via MCP and the OpenCode plugin. Use to orient on unfamiliar code, answer topology questions (who calls X, who imports Y), recall prior work, and refresh the index after writes.
+description: Local-first memory layer (semantic vectors + call/import graph + episodes + bi-temporal user claims) wired in via MCP. Use to orient on unfamiliar code, answer topology questions (who calls X, who imports Y), recall prior work, refresh the index after writes, AND to remember durable user assertions — preferences ("I love / prefer / want"), tech-stack decisions ("we use X"), rejections ("don't ship Y"), ownership, location facts. Load this skill whenever the user states an opinion, preference, choice, or correction worth keeping across sessions.
 ---
 
 # code-memory
@@ -44,6 +44,8 @@ If the user's phrasing matches the left column, call the right tool. Do
 | "what existed at commit C"                                | `codememory_at_sha(sha=C, sha_ord=N, project=…)`            |
 | "I just wrote / edited a file"                            | `codememory_reingest(path=…, project=…)`                    |
 | "I finished a task"                                       | `codememory_record(prompt=…, patch=…, verdict=…, project=…)`|
+| User asserts a durable fact / preference / decision       | `codememory_assert_claim(subject, predicate, object, project=…)` |
+| "what did the user say about X" / surface user prefs      | `codememory_claims(subject="X", project=…)`                 |
 
 If two rules match, pick the more specific one (`callers` beats `retrieve`
 when the question is about a named symbol).
@@ -91,6 +93,8 @@ inspect a prior tool response.
 | `codememory_drift`              | `head_sha`, `project`                          | —                                           |
 | `codememory_at_sha`             | `sha`, `sha_ord`, `project`                    | `label` (`Symbol`/`File`, default Symbol), `limit` (200) |
 | `codememory_callers_at_sha`     | `symbol`, `sha`, `sha_ord`, `project`          | —                                           |
+| `codememory_assert_claim`       | `subject`, `predicate`, `object`, `project`    | `polarity` (true), `confidence` (0.95), `evidence_span`, `valid_at`, `session_id`, `source_prompt_id` |
+| `codememory_claims`             | `project`                                      | `subject`, `as_of`, `limit` (50)            |
 
 `symbol` is a bare identifier (`getBearerToken`), not a dotted expression.
 `target` for `importers` is the literal module key (`@scope/pkg`, `rxjs`,
@@ -238,6 +242,98 @@ tombstoned edges that were alive then.
   was using X in release/26.18".
 - You need pre-deletion impact context without re-ingesting an old SHA.
 
+## Claims — durable user assertions (you triage)
+
+Claims are bi-temporal `(subject, predicate, object)` facts about the
+**user, project, or preferences** — not about the code itself. They
+persist across sessions so a future session can answer "what did the
+user say about X?" without re-reading every prompt.
+
+**You are the triage layer.** Auto-extraction is intentionally OFF —
+running a local LLM on every prompt produced noisy / empty triples
+and missed half the durable signal because the LLM lacked task
+context. You see the full conversation, so you decide.
+
+### When to call `codememory_assert_claim`
+
+Call it as soon as the user states something **durable** — i.e. the
+assertion is likely still true in the next session, not transient task
+state. Do this *inline in the same turn* as the user message; don't
+batch to end-of-session.
+
+**Worth asserting (call the tool):**
+- Tech-stack decisions: "we use Postgres / FalkorDB / Tailwind".
+- Stable preferences: "I prefer terse output", "always use TDD".
+- Ownership / location: "the auth service is in apps/api/auth",
+  "Alice owns the billing module".
+- Rejections: "don't ship dark mode", "we're not using Redis here".
+- Explicit corrections of your behavior that should persist:
+  "stop summarizing at end of every turn" → `(user, prefers,
+  "no end-of-turn summaries")`.
+- Deployment / environment facts: "we deploy to Fly.io".
+
+**Not worth asserting (skip the tool):**
+- Questions ("should we use X?") — no assertion.
+- Hypotheticals ("if we used X…") — no assertion.
+- Transient task state ("fix this bug now") — covered by
+  `codememory_record`, not claims.
+- Info already derivable from code (package.json, imports) — read the
+  file instead.
+- Opinions about third parties ("React is overrated") — too noisy.
+- Small talk / acknowledgments.
+
+### Predicate vocabulary (kebab-case)
+
+Use these canonical predicates so single-valued contradiction
+handling works:
+
+| Predicate         | Sense                                  | Single-valued? |
+| ----------------- | -------------------------------------- | -------------- |
+| `uses`            | primary tool ("we use Postgres")       | yes            |
+| `prefers`         | user preference                        | yes            |
+| `rejected`        | explicit no                            | no             |
+| `wants-to`        | stated intent                          | no             |
+| `is-located-at`   | path / URL                             | yes            |
+| `depends-on`      | hard dependency                        | yes            |
+| `deployed-to`     | deployment target                      | yes            |
+| `owns`            | ownership / responsibility             | yes            |
+| `is-a`            | type / category                        | yes            |
+| `mentioned`       | weak co-occurrence (use sparingly)     | no             |
+| `worked-on`       | history of work                        | no             |
+
+Single-valued predicates auto-close prior conflicting assertions: a
+later `(project, uses, "FalkorDB")` supersedes an earlier
+`(project, uses, "Neo4j")` without manual cleanup.
+
+### Subject conventions
+
+- `user` — the human at the keyboard.
+- `project` — the current repo.
+- Bare identifiers for files, modules, services
+  (`apps/api/auth`, `BillingService`).
+- Person names for ownership claims (`Alice`).
+
+### `evidence_span`
+
+Pass the verbatim user quote that justifies the claim when
+practical. It's not enforced (unlike the LLM extractor) but it
+makes future audit trivial.
+
+### `codememory_extract_claims` — when to use it
+
+Reserved for **batch processing** of multiple historical prompts at
+once (e.g. seeding claims from a long imported conversation).
+Requires `CLAIMS_EXTRACTION=true` + gemma2:9b. **Prefer
+`codememory_assert_claim` for inline single-claim authoring** — it
+skips the LLM and gives you full control over the triple.
+
+### `codememory_claims` — read user preferences
+
+Call before making a recommendation that touches a user preference
+area (deployment, tooling choice, output style). Example:
+`codememory_claims(subject="user", project=…)` returns the agent's
+running profile of the user's stated preferences.
+
 ## Manual orientation + write tools
 
 - `codememory_retrieve(query, project, k?, eps?, include_idle_episodes?)`
@@ -272,6 +368,15 @@ tombstoned edges that were alive then.
    │
    ├─ Need conceptual orientation in unfamiliar area?
    │   → codememory_retrieve(query)
+   │
+   ├─ User asserted a durable preference / decision / ownership /
+   │   rejection?
+   │   → codememory_assert_claim(subject, predicate, object, project)
+   │     inline in the same turn (don't batch)
+   │
+   ├─ About to make a recommendation that touches a known preference
+   │   area (deploy target, output style, tooling)?
+   │   → codememory_claims(subject="user", project=…) first
    │
    └─ After completing the task → codememory_record(prompt, patch, verdict)
 ```

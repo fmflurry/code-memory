@@ -106,9 +106,11 @@ class _GraphState:
     file_imports: dict[str, list[tuple[str, str]]]
     # placeholder_key -> short name (e.g. "name::foo" -> "foo")
     placeholders: dict[str, str]
-    # list of (file_path, placeholder_key, arity) edges to resolve.
-    # ``arity`` is -1 when the call site arity is unknown (legacy data).
-    call_edges: list[tuple[str, str, int]]
+    # list of (file_path, placeholder_key, arity, receiver_type) edges to
+    # resolve. ``arity`` is -1 when the call site arity is unknown.
+    # ``receiver_type`` is the inferred type of ``this.<field>`` for
+    # ``this.<field>.<method>()`` patterns; ``None`` otherwise.
+    call_edges: list[tuple[str, str, int, str | None]]
     # symbol_name -> list of (file_path, full_symbol_key, param_count) defining it.
     # ``param_count`` is ``None`` for non-callable kinds; resolver
     # ignores arity matching when either side is missing.
@@ -166,16 +168,18 @@ class _GraphState:
         rows = graph.graph.query(
             "MATCH (f:File)-[r:CALLS]->(s:Symbol) "
             "WHERE s.key STARTS WITH $p "
-            "RETURN f.key, s.key, r.args",
+            "RETURN f.key, s.key, r.args, r.receiver_type",
             {"p": PLACEHOLDER_PREFIX},
         ).result_set
-        call_edges: list[tuple[str, str, int]] = []
+        call_edges: list[tuple[str, str, int, str | None]] = []
         for row in rows:
             f = row[0]
             s = row[1]
             arity_raw = row[2] if len(row) > 2 else None
             arity = int(arity_raw) if isinstance(arity_raw, (int, float)) else -1
-            call_edges.append((f, s, arity))
+            recv = row[3] if len(row) > 3 else None
+            recv_type = recv if isinstance(recv, str) and recv else None
+            call_edges.append((f, s, arity, recv_type))
 
         rows = graph.graph.query(
             "MATCH (f:File)-[:INJECTS]->(s:Symbol) "
@@ -240,20 +244,32 @@ def _resolve_all(state: _GraphState, stats: ResolverStats) -> list[ResolvedEdge]
     # per-file cache: imported file path -> symbols defined there
     import_cache: dict[str, dict[str, list[tuple[str, str, int | None]]]] = {}
 
-    # Normalise call_edges to (file, placeholder, arity); inject_edges
-    # and reference_edges don't carry call-site arity (DI is by type;
-    # type refs have no call site at all).
-    norm_calls = [(f, p, a) for f, p, a in state.call_edges]
-    norm_injects = [(f, p, -1) for f, p in state.inject_edges]
-    norm_references = [(f, p, -1) for f, p in state.reference_edges]
-    edge_specs: list[tuple[str, list[tuple[str, str, int]]]] = [
+    # Normalise to (file, placeholder, arity, receiver_type). Only CALLS
+    # carries a receiver type; DI is by type and type refs have no call
+    # site at all, so both default to ``None``.
+    norm_calls: list[tuple[str, str, int, str | None]] = list(state.call_edges)
+    norm_injects: list[tuple[str, str, int, str | None]] = [
+        (f, p, -1, None) for f, p in state.inject_edges
+    ]
+    norm_references: list[tuple[str, str, int, str | None]] = [
+        (f, p, -1, None) for f, p in state.reference_edges
+    ]
+    edge_specs: list[tuple[str, list[tuple[str, str, int, str | None]]]] = [
         ("CALLS", norm_calls),
         ("INJECTS", norm_injects),
         ("REFERENCES", norm_references),
     ]
 
+    # Reverse index: type name -> set of files that define it. Used to
+    # narrow ``this.<field>.<method>()`` to the methods of the field's
+    # type when ``<method>`` is otherwise ambiguous across the project.
+    name_to_files: dict[str, set[str]] = defaultdict(set)
+    for file_key, names in state.file_defines.items():
+        for nm in names:
+            name_to_files[nm].add(file_key)
+
     for edge_type, edges in edge_specs:
-        for file_path, placeholder_key, arity in edges:
+        for file_path, placeholder_key, arity, receiver_type in edges:
             name = state.placeholders.get(placeholder_key)
             if not name:
                 stats.edges_left_external += 1
@@ -312,6 +328,46 @@ def _resolve_all(state: _GraphState, stats: ResolverStats) -> list[ResolvedEdge]
                     continue
                 stats.edges_left_ambiguous += 1
                 continue
+
+            # (2.5) receiver-type narrowing. For ``this.<field>.<method>()``
+            # patterns, the extractor tagged the call with the inferred
+            # type of ``<field>``. Restrict project-wide candidates to
+            # symbols defined inside a file that also defines that type
+            # — typically the port / interface declaration. Without this
+            # narrow, every Angular use case calling ``port.execute()``
+            # or ``port.with()`` collapses to an ambiguous name with
+            # dozens of cross-codebase definitions.
+            if receiver_type:
+                type_files = name_to_files.get(receiver_type, set())
+                if type_files:
+                    candidates = state.name_index.get(name, [])
+                    narrowed = [c for c in candidates if c[0] in type_files]
+                    if len(narrowed) == 1:
+                        resolutions.append(
+                            ResolvedEdge(
+                                file_path,
+                                placeholder_key,
+                                narrowed[0][1],
+                                "high",
+                                edge_type=edge_type,
+                            )
+                        )
+                        stats.edges_resolved_unique += 1
+                        continue
+                    if len(narrowed) > 1:
+                        arity_match = _pick_by_arity(narrowed, arity)
+                        if arity_match is not None:
+                            resolutions.append(
+                                ResolvedEdge(
+                                    file_path,
+                                    placeholder_key,
+                                    arity_match,
+                                    "high",
+                                    edge_type=edge_type,
+                                )
+                            )
+                            stats.edges_resolved_unique += 1
+                            continue
 
             # (3) project-unique (with arity tiebreak)
             candidates = state.name_index.get(name, [])

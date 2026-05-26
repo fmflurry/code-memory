@@ -72,8 +72,14 @@ class _FakeGraph:
             return _QueryResult([list(r) for r in self.placeholders])
         if "(f:File)-[r:CALLS]->(s:Symbol)" in q and "STARTS WITH $p" in q:
             # Tests supply (file, placeholder) pairs; the resolver
-            # asks for arity too — pad with -1 for "unknown arity".
-            return _QueryResult([list(r) + [-1] for r in self.calls])
+            # asks for arity + receiver_type — pad with defaults so
+            # legacy fixtures don't need to grow extra columns.
+            return _QueryResult(
+                [
+                    list(r) + ([-1] if len(r) == 2 else []) + ([None] if len(r) <= 3 else [])
+                    for r in self.calls
+                ]
+            )
         if "[:CONTAINED_IN]" in q:
             return _QueryResult([list(r) for r in self.file_project])
         if "[:USES_ASSEMBLY]" in q:
@@ -392,3 +398,47 @@ def test_resolver_records_full_stats() -> None:
     assert stats.edges_resolved_same_file == 1
     assert stats.edges_resolved_imported == 0
     assert stats.edges_resolved_unique == 0
+
+
+# ---------------------------------------------------------------- receiver-type narrowing
+
+
+def test_resolver_narrows_by_receiver_type() -> None:
+    """``this.<field>.<method>()`` resolves to the method defined in the
+    same file as ``<field>``'s type, even when many other files define
+    a method with the same name."""
+    port_file = "/r/port.ts"
+    other_file = "/r/other-with.ts"
+    use_case_file = "/r/use-case.ts"
+    fake = _FakeGraph(
+        defines=[
+            (port_file, "MyPort", f"{port_file}::MyPort#3"),
+            (port_file, "with", f"{port_file}::with#5"),
+            (other_file, "with", f"{other_file}::with#10"),
+            (use_case_file, "UseCase", f"{use_case_file}::UseCase#2"),
+        ],
+        imports=[],
+        placeholders=[(f"{PLACEHOLDER_PREFIX}with", "with")],
+        calls=[],  # filled below; we need receiver_type so use raw tuple
+    )
+    # Override calls with receiver_type column.
+    fake.calls = [(use_case_file, f"{PLACEHOLDER_PREFIX}with", -1, "MyPort")]
+    stats = resolve_graph(_FakeStore(fake))
+    assert stats.edges_resolved_unique == 1
+    rewrites = [w for w in fake.writes if w[0] == "rewrite"]
+    assert rewrites[0][1]["target"] == f"{port_file}::with#5"
+
+
+def test_resolver_falls_back_when_receiver_type_unknown() -> None:
+    """When the receiver type isn't in the graph, narrowing skips and
+    the next tier (project-unique / arity) runs."""
+    fake = _FakeGraph(
+        defines=[("/r/only.ts", "doIt", "/r/only.ts::doIt#3")],
+        imports=[],
+        placeholders=[(f"{PLACEHOLDER_PREFIX}doIt", "doIt")],
+        calls=[],
+    )
+    fake.calls = [("/r/use-case.ts", f"{PLACEHOLDER_PREFIX}doIt", -1, "MissingType")]
+    stats = resolve_graph(_FakeStore(fake))
+    # Single project-unique candidate → resolves at the unique tier.
+    assert stats.edges_resolved_unique == 1

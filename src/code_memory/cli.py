@@ -646,6 +646,28 @@ def dependencies(
 
 
 @app.command()
+def injects(
+    symbol: str = typer.Argument(..., help="Symbol whose defining file is inspected."),
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """List DI tokens injected by the file that defines ``symbol``."""
+    rows = _graph_for(project).injects(symbol)
+    _emit({"symbol": symbol, "injects": rows}, as_json=as_json)
+
+
+@app.command()
+def injectors(
+    token: str = typer.Argument(..., help="DI token name."),
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """List files that inject ``token`` (reverse INJECTS edges)."""
+    rows = _graph_for(project).injectors(token)
+    _emit({"token": token, "injectors": rows}, as_json=as_json)
+
+
+@app.command()
 def definitions(
     symbol: str = typer.Argument(..., help="Symbol name to locate."),
     project: str | None = ProjectOpt,

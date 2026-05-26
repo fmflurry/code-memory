@@ -7,6 +7,75 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 
+# Config file name (project-local and global). KEY=VALUE per line, '#'
+# starts a comment. Real shell env always wins; project file beats
+# global file. Layering exists so users can pin defaults once
+# (~/.config/code-memory/config) and override per repo
+# (./.code-memoryrc) without polluting the shell rc.
+_RC_BASENAME = ".code-memoryrc"
+_GLOBAL_RC = (
+    Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+    / "code-memory"
+    / "config"
+)
+
+
+def _parse_rc(path: Path) -> dict[str, str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    out: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        key, sep, val = line.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        val = val.strip()
+        # Strip matching surrounding quotes if any.
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        if key:
+            out[key] = val
+    return out
+
+
+def _project_rc() -> Path | None:
+    """Locate project rc: cwd, then walk up to git toplevel."""
+    cwd = Path.cwd()
+    candidate = cwd / _RC_BASENAME
+    if candidate.is_file():
+        return candidate
+    top = _git_toplevel(cwd)
+    if top is not None:
+        candidate = top / _RC_BASENAME
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _load_rc_into_environ() -> None:
+    """Populate os.environ with rc-file values without overriding the
+    real shell. Project rc beats global rc.
+
+    Precedence (highest → lowest):
+        real shell env > ./.code-memoryrc > ~/.config/code-memory/config
+    """
+    # Apply global first so the project pass can shadow it. Neither
+    # pass overrides anything already in the shell environment.
+    for source in (_GLOBAL_RC, _project_rc()):
+        if source is None:
+            continue
+        for k, v in _parse_rc(source).items():
+            if k not in os.environ:
+                os.environ[k] = v
+
+
 def _env(key: str, default: str) -> str:
     return os.environ.get(key, default)
 
@@ -39,6 +108,12 @@ def _git_toplevel(start: Path) -> Path | None:
         return None
     top = out.stdout.strip()
     return Path(top) if top else None
+
+
+# Populate os.environ from rc files *before* the ``Config`` dataclass
+# defaults are evaluated (those are computed at module import via
+# ``_env(...)`` calls in field defaults). Real shell env still wins.
+_load_rc_into_environ()
 
 
 # Vector dimensionality of the embedding models we ship recipes for.

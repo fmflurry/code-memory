@@ -736,6 +736,16 @@ scoring with a 30-day recency half-life keeps durable preferences
 ("we use Postgres") visible across sessions while letting recent
 reassertions float to the top.
 
+**Dedupe.** Re-asserting the same `(subject, predicate, object, polarity)`
+no longer inserts a new row — the existing open row is refreshed in
+place (`recorded_at` bumps, `confidence` rises monotonically, blank
+`evidence_span` is overwritten by a non-empty one, but `session_id` /
+`source_prompt_id` keep the FIRST observation's provenance). This
+prevents row-count bloat when the plugins' "ACT BEFORE ANSWERING"
+nudge causes the agent to re-assert across turns. Polarity flips and
+different-object assertions still go through the bi-temporal close
+path (`valid_to` set on the prior row).
+
 Via the CLI, query the SQLite store directly:
 
 ```sql
@@ -1119,6 +1129,16 @@ Both plugins:
   out-of-band edits (vim, IDE, `git pull`).
 - Record the session as an episode on idle / stop with the first user
   message + `git diff` as the patch.
+- **Detect durable user assertions on every prompt** — preferences
+  (`I love X`), decisions (`we use X`), rejections (`don't use Y`),
+  ownership (`Alice owns billing`), location (`auth lives at apps/api`)
+  — and inject an in-system-prompt nudge that demands the agent call
+  `codememory_assert_claim` *before* answering. The nudge is
+  polarity-flipped: asserting is the default, skipping requires a
+  one-line written justification. See
+  [`plugins/claude-code/scripts/lib/claim-intent.js`](plugins/claude-code/scripts/lib/claim-intent.js)
+  and [`plugins/opencode/src/code-memory-lib/claim-intent.ts`](plugins/opencode/src/code-memory-lib/claim-intent.ts)
+  for the regex patterns and nudge template — they are kept in lockstep.
 
 Install via the top-level installer:
 
@@ -1134,8 +1154,17 @@ installer:
 
 ```bash
 ./plugins/opencode/install.sh        # ~/.config/opencode/plugins/
-./plugins/claude-code/install.sh     # ~/.claude/plugins/code-memory/
+./plugins/claude-code/install.sh     # registers a local Claude Code
+                                     # marketplace at the repo root and runs
+                                     # `claude plugin install code-memory@code-memory`
 ```
+
+> **Claude Code only:** symlinking the plugin into `~/.claude/plugins/`
+> is **not** enough — Claude Code loads only plugins listed in
+> `~/.claude/plugins/installed_plugins.json`. The plugin's `install.sh`
+> handles this for you: it registers `<repo>/.claude-plugin/marketplace.json`
+> via `claude plugin marketplace add` and then installs the plugin from
+> that marketplace.
 
 Restart your agent after install.
 

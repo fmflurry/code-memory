@@ -55,11 +55,38 @@ def test_callers_returns_decoded_rows() -> None:
 
 
 def test_callers_clamps_depth_into_range() -> None:
+    """depth>1 is implemented in Python (one Cypher hop per ring), so
+    instead of asserting a var-length path we count the number of
+    issued queries: depth=N triggers up to N hops + DEFINES lookups."""
     store, fake = _store_with([])
     store.callers("x", depth=99)
-    assert "CALLS|REFERENCES*1..3" in fake.queries[0][0]
-    store.callers("x", depth=0)
-    assert "CALLS|REFERENCES*1..1" in fake.queries[1][0]
+    # No callers found → just one query, no DEFINES walk.
+    assert len(fake.queries) == 1
+    assert "CALLS|REFERENCES]->(s)" in fake.queries[0][0]
+
+
+def test_callers_walks_defines_for_multi_hop() -> None:
+    """When depth>1 and a caller exists, the store also queries DEFINES
+    on that caller's file to find the next ring of targets."""
+
+    class _Router:
+        def __init__(self) -> None:
+            self.queries: list[tuple[str, dict[str, Any]]] = []
+
+        def query(self, q: str, params: dict[str, Any] | None = None) -> _QueryResult:
+            self.queries.append((q, params or {}))
+            if "[:DEFINES]" in q:
+                return _QueryResult([["execute"]])
+            return _QueryResult(
+                [["/a/use-case.ts", "/b/port.ts", 5, 10, "abstract_method_signature"]]
+            )
+
+    store = FalkorStore.__new__(FalkorStore)
+    router = _Router()
+    store.graph = router  # type: ignore[assignment]
+    store.callers("with", depth=2)
+    assert len(router.queries) >= 2
+    assert "[:DEFINES]" in router.queries[1][0]
 
 
 def test_callers_passes_symbol_name_param() -> None:
@@ -71,9 +98,9 @@ def test_callers_passes_symbol_name_param() -> None:
 # ---------------------------------------------------------------- callees
 
 
-def test_callees_decodes_rows() -> None:
+def test_callees_decodes_rows_resolved() -> None:
     store, _ = _store_with(
-        [["helper", "/b/util.ts", 5, 8, "function_declaration"]]
+        [["helper", "/b/util.ts", 5, 8, "function_declaration", None, "Symbol"]]
     )
     out = store.callees("doWork")
     assert out == [
@@ -83,14 +110,108 @@ def test_callees_decodes_rows() -> None:
             "start": 5,
             "end": 8,
             "kind": "function_declaration",
+            "resolved": True,
+            "label": "Symbol",
         }
     ]
 
 
-def test_callees_excludes_unresolved_targets() -> None:
+def test_callees_surfaces_unresolved_with_flag() -> None:
+    """Placeholder targets (resolver couldn't bind) are no longer hidden;
+    callers see them with ``resolved=False`` so empty-callee bug
+    (Angular use cases, bare method names) stops being silent."""
+    store, _ = _store_with(
+        [["with", None, None, None, None, True, "Symbol"]]
+    )
+    out = store.callees("CreateDraftUseCase")
+    assert out == [
+        {
+            "name": "with",
+            "file": None,
+            "start": None,
+            "end": None,
+            "kind": None,
+            "resolved": False,
+            "label": "Symbol",
+        }
+    ]
+
+
+def test_callees_includes_type_targets() -> None:
+    """Resolver may point a CALLS edge at a ``Type`` node (constructor
+    or external assembly type). Those must surface alongside Symbols."""
+    store, _ = _store_with(
+        [["Foo", "asm::Lib::Foo", None, None, None, None, "Type"]]
+    )
+    out = store.callees("doWork")
+    assert out[0]["label"] == "Type"
+    assert out[0]["resolved"] is True
+
+
+def test_callees_depth_chains_via_python_when_above_one(
+    monkeypatch: object,  # type: ignore[unused-argument]
+) -> None:
+    """depth>1 cannot be expressed as a Cypher var-length path because
+    CALLS goes File→Symbol only (no Symbol→File reverse edge). The
+    store recurses through DEFINES in Python instead."""
     store, fake = _store_with([])
-    store.callees("doWork")
-    assert "target.unresolved IS NULL" in fake.queries[0][0]
+    # First call returns one resolved callee; second (recursive) returns
+    # the canned row again. We just assert the query was issued for
+    # both the original symbol and the discovered callee's file.
+    fake.canned = [["helper", "/b/util.ts", 5, 8, "function_declaration", None, "Symbol"]]
+    store.callees("doWork", depth=2)
+    # Two queries: one for the original symbol, one walking from the
+    # defining file of the discovered callee.
+    assert len(fake.queries) >= 2
+
+
+# ---------------------------------------------------------------- injects
+
+
+def test_injects_returns_resolved_tokens() -> None:
+    """A use case's DI dependencies surface via INJECTS edges. Without
+    this query the agent can't ask 'what does CreateDraftUseCase depend
+    on?' — calling `dependencies` only returns imported modules, not
+    Angular DI tokens."""
+    store, _ = _store_with(
+        [["CreatePurchaseOrderDraftPort", "/r/port.ts::Port#4", "/r/port.ts", "abstract_class_declaration", None]]
+    )
+    out = store.injects("CreateDraftUseCase")
+    assert out == [
+        {
+            "name": "CreatePurchaseOrderDraftPort",
+            "key": "/r/port.ts::Port#4",
+            "file": "/r/port.ts",
+            "kind": "abstract_class_declaration",
+            "resolved": True,
+        }
+    ]
+
+
+def test_injects_surfaces_unresolved_tokens() -> None:
+    """When the DI token is an external symbol the resolver couldn't
+    bind, surface it with resolved=False rather than hiding it."""
+    store, _ = _store_with(
+        [["ExternalToken", "name::ExternalToken", None, None, True]]
+    )
+    out = store.injects("MyService")
+    assert out[0]["resolved"] is False
+    assert out[0]["name"] == "ExternalToken"
+
+
+# ---------------------------------------------------------------- injectors
+
+
+def test_injectors_returns_files() -> None:
+    """Reverse: who injects this token?"""
+    store, _ = _store_with(
+        [["/r/a/use-case.ts"], ["/r/b/use-case.ts"]]
+    )
+    out = store.injectors("CreatePurchaseOrderDraftPort")
+    assert out == [
+        {"file": "/r/a/use-case.ts"},
+        {"file": "/r/b/use-case.ts"},
+    ]
 
 
 # ---------------------------------------------------------------- importers

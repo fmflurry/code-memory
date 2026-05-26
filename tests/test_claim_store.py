@@ -164,19 +164,98 @@ def test_count_reflects_all_rows_including_closed(tmp_path) -> None:
     assert n == 2
 
 
-def test_same_object_reupsert_does_not_close_prior(tmp_path) -> None:
-    """Restating the same fact should not close the existing assertion."""
+def test_same_object_reupsert_dedupes_in_place(tmp_path) -> None:
+    """Restating the same open fact must refresh, not duplicate.
+
+    Prevents row-count bloat when the agent re-asserts the same claim
+    across turns (e.g. via the "ACT BEFORE ANSWERING" nudge in the
+    Claude Code / OpenCode plugins).
+    """
     # Arrange
     store = _store(tmp_path)
-    store.upsert(_claim("project", "uses", "Qdrant", valid_at=10.0))
+    first_id = store.upsert(_claim("project", "uses", "Qdrant", valid_at=10.0))
 
     # Act
-    store.upsert(_claim("project", "uses", "Qdrant", valid_at=20.0))
+    second_id = store.upsert(_claim("project", "uses", "Qdrant", valid_at=20.0))
 
-    # Assert — both rows remain open; same fact reasserted
+    # Assert — single open row; the dedupe path returns the existing id
+    assert second_id == first_id
     current = store.current()
-    assert len(current) == 2
-    assert all(c.object == "Qdrant" for c in current)
+    assert len(current) == 1
+    assert current[0].object == "Qdrant"
+    # Total count must also be 1 — no stub row was inserted.
+    assert store.count() == 1
+
+
+def test_dedupe_keeps_max_confidence(tmp_path) -> None:
+    """A weaker re-assertion must not lower the stored confidence."""
+    # Arrange
+    store = _store(tmp_path)
+    strong = _claim("user", "prefers", "vim", valid_at=10.0)
+    strong.confidence = 0.95
+    store.upsert(strong)
+
+    # Act — second assertion is weaker; should be ignored for confidence
+    weaker = _claim("user", "prefers", "vim", valid_at=20.0)
+    weaker.confidence = 0.4
+    store.upsert(weaker)
+
+    # Assert
+    rows = store.current()
+    assert len(rows) == 1
+    assert rows[0].confidence == 0.95
+
+
+def test_dedupe_non_empty_evidence_wins(tmp_path) -> None:
+    """A non-empty evidence span overwrites a missing/blank one on refresh."""
+    # Arrange
+    store = _store(tmp_path)
+    blank = _claim("user", "prefers", "tabs", valid_at=10.0)
+    blank.evidence_span = ""
+    store.upsert(blank)
+
+    # Act
+    rich = _claim("user", "prefers", "tabs", valid_at=20.0)
+    rich.evidence_span = "i prefer tabs over spaces"
+    store.upsert(rich)
+
+    # Assert
+    rows = store.current()
+    assert len(rows) == 1
+    assert rows[0].evidence_span == "i prefer tabs over spaces"
+
+
+def test_dedupe_preserves_first_session_id(tmp_path) -> None:
+    """COALESCE keeps the first observation's provenance."""
+    # Arrange
+    store = _store(tmp_path)
+    first = _claim("user", "prefers", "emacs", valid_at=10.0)
+    first.session_id = "session-A"
+    store.upsert(first)
+
+    # Act
+    second = _claim("user", "prefers", "emacs", valid_at=20.0)
+    second.session_id = "session-B"
+    store.upsert(second)
+
+    # Assert
+    rows = store.current()
+    assert len(rows) == 1
+    assert rows[0].session_id == "session-A"
+
+
+def test_dedupe_skips_when_polarity_differs(tmp_path) -> None:
+    """A polarity flip closes the prior row (existing behavior), not dedupe."""
+    # Arrange — multi-valued so we exercise the dedupe path, not _close_conflicting
+    store = _store(tmp_path)
+    store.upsert(_claim("user", "mentioned", "auth-bug", valid_at=10.0))
+
+    # Act — same s/p/o but polarity=False → not a dupe; should insert
+    flipped = _claim("user", "mentioned", "auth-bug", valid_at=20.0, polarity=False)
+    store.upsert(flipped)
+
+    # Assert — both rows present (different polarity = different fact)
+    assert store.count() == 2
 
 
 def test_idempotent_reopen(tmp_path) -> None:

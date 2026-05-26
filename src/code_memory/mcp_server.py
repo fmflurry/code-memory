@@ -9,12 +9,16 @@ Tools:
   - codememory_callees(symbol, depth?, project?)
   - codememory_importers(target, project?)
   - codememory_dependencies(file, depth?, project?)
+  - codememory_injects(symbol, project?)                   — Angular/Razor DI
+  - codememory_injectors(token, project?)
   - codememory_definitions(symbol, project?)
   - codememory_assembly_members(type, assembly?, project?) — .NET DLL surface
   - codememory_drift(head_sha, project?)                   — temporal
   - codememory_at_sha(sha, sha_ord, label?, limit?, project?)
   - codememory_callers_at_sha(symbol, sha, sha_ord, project?)
   - codememory_extract_claims(prompts, project, session_id?) — Graphiti-style
+  - codememory_assert_claim(subject, predicate, object, project, ...) —
+    agent-authored direct claim (no LLM)
   - codememory_claims(subject?, as_of?, project)
 
 Transport: stdio. Register via `code-memory-mcp` script entrypoint.
@@ -256,6 +260,38 @@ _TOOLS: list[Tool] = [
         },
     ),
     Tool(
+        name="codememory_injects",
+        description=(
+            "DI dependencies of a symbol — the tokens its defining file "
+            "injects via Angular's ``inject(Token)`` or Razor's ``@inject``. "
+            "Use to answer 'what does this use case / service depend on?' "
+            "without sifting raw imports. Complements ``codememory_callees``."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "Symbol whose defining file is the inspection target."},
+                "project": _project_schema(),
+            },
+            "required": ["symbol", "project"],
+        },
+    ),
+    Tool(
+        name="codememory_injectors",
+        description=(
+            "Reverse DI lookup: files that inject a given token. Use to "
+            "find every consumer of an Angular DI token / Razor service."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "token": {"type": "string", "description": "DI token name (e.g. abstract class used as an Angular port)."},
+                "project": _project_schema(),
+            },
+            "required": ["token", "project"],
+        },
+    ),
+    Tool(
         name="codememory_definitions",
         description=(
             "All files+line ranges that define a given symbol name. Use to "
@@ -418,6 +454,93 @@ _TOOLS: list[Tool] = [
                 "project": _project_schema(),
             },
             "required": ["prompts", "project"],
+        },
+    ),
+    Tool(
+        name="codememory_assert_claim",
+        description=(
+            "Agent-authored direct claim. Use this when YOU (the agent) "
+            "judge that a user message contains a durable assertion worth "
+            "remembering across sessions: stable preferences, ownership, "
+            "tech-stack decisions, rejections, or explicit corrections of "
+            "your behavior. NO LLM is invoked — you supply the structured "
+            "triple yourself. Prefer this over codememory_extract_claims "
+            "when the assertion is unambiguous; reserve extract_claims for "
+            "batch processing of multiple prompts.\n\n"
+            "Predicate vocab (kebab-case verbs): `uses`, `prefers`, "
+            "`rejected`, `wants-to`, `is-located-at`, `depends-on`, "
+            "`deployed-to`, `owns`, `is-a`, `mentioned`, `worked-on`. "
+            "Single-valued predicates (uses/prefers/deployed-to/...) "
+            "auto-close prior conflicting assertions.\n\n"
+            "Worth asserting: 'we use Postgres', 'I prefer terse output', "
+            "'don't ship dark mode'. Not worth asserting: questions, "
+            "hypotheticals, transient task state, info already in code."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "subject": {
+                    "type": "string",
+                    "description": (
+                        "Noun phrase: `user`, `project`, a service name, "
+                        "a person, a module."
+                    ),
+                },
+                "predicate": {
+                    "type": "string",
+                    "description": (
+                        "Kebab-case verb phrase. See description for vocab."
+                    ),
+                },
+                "object": {
+                    "type": "string",
+                    "description": "Noun phrase for what the predicate links to.",
+                },
+                "polarity": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "True asserts, False negates "
+                        "('user does not use X')."
+                    ),
+                },
+                "confidence": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "default": 0.95,
+                    "description": (
+                        "How sure are you this is a durable assertion? "
+                        "0.95 default since you triaged it yourself."
+                    ),
+                },
+                "evidence_span": {
+                    "type": "string",
+                    "description": (
+                        "Optional verbatim quote from the user message "
+                        "that justifies this claim. Recommended for "
+                        "auditability."
+                    ),
+                },
+                "valid_at": {
+                    "type": "number",
+                    "description": (
+                        "Optional unix epoch seconds. Defaults to now. "
+                        "Set this to the user-message timestamp if "
+                        "available."
+                    ),
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Originating session for provenance.",
+                },
+                "source_prompt_id": {
+                    "type": "string",
+                    "description": "Optional ID of the source user prompt.",
+                },
+                "project": _project_schema(),
+            },
+            "required": ["subject", "predicate", "object", "project"],
         },
     ),
     Tool(
@@ -632,6 +755,18 @@ def _dependencies(args: dict[str, Any]) -> list[TextContent]:
     g, slug = _graph_for(_require_project(args))
     rows = g.dependencies(args["file"], depth=int(args.get("depth", 1)))
     return _text({"project": slug, "file": args["file"], "dependencies": rows})
+
+
+def _injects(args: dict[str, Any]) -> list[TextContent]:
+    g, slug = _graph_for(_require_project(args))
+    rows = g.injects(args["symbol"])
+    return _text({"project": slug, "symbol": args["symbol"], "injects": rows})
+
+
+def _injectors(args: dict[str, Any]) -> list[TextContent]:
+    g, slug = _graph_for(_require_project(args))
+    rows = g.injectors(args["token"])
+    return _text({"project": slug, "token": args["token"], "injectors": rows})
 
 
 def _definitions(args: dict[str, Any]) -> list[TextContent]:
@@ -894,6 +1029,131 @@ def _extract_claims(args: dict[str, Any]) -> list[TextContent]:
     )
 
 
+def _assert_claim(args: dict[str, Any]) -> list[TextContent]:
+    """Agent-authored claim. No LLM in the loop.
+
+    Bypasses the ``claims_enabled`` (CLAIMS_EXTRACTION) flag because no
+    Ollama call is made — the agent supplies the triple directly. The
+    flag still gates the extractor path (``_extract_claims``).
+    """
+    project = _require_project(args)
+
+    subject = args.get("subject")
+    predicate = args.get("predicate")
+    obj = args.get("object")
+    for field_name, value in (
+        ("subject", subject),
+        ("predicate", predicate),
+        ("object", obj),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            return _text(
+                {
+                    "error": "ValueError",
+                    "message": f"`{field_name}` is required (non-empty string).",
+                }
+            )
+
+    polarity = args.get("polarity", True)
+    if not isinstance(polarity, bool):
+        return _text(
+            {"error": "ValueError", "message": "`polarity` must be a boolean."}
+        )
+
+    confidence = args.get("confidence", 0.95)
+    try:
+        confidence_val = float(confidence)
+    except (TypeError, ValueError):
+        return _text(
+            {"error": "ValueError", "message": "`confidence` must be a number."}
+        )
+    if not 0.0 <= confidence_val <= 1.0:
+        return _text(
+            {
+                "error": "ValueError",
+                "message": "`confidence` must be in [0, 1].",
+            }
+        )
+
+    evidence_raw = args.get("evidence_span")
+    evidence_span = (
+        evidence_raw.strip()
+        if isinstance(evidence_raw, str) and evidence_raw.strip()
+        else ""
+    )
+
+    valid_at_raw = args.get("valid_at")
+    valid_at = (
+        float(valid_at_raw)
+        if isinstance(valid_at_raw, (int, float))
+        else _now()
+    )
+
+    session_raw = args.get("session_id")
+    session_id = (
+        str(session_raw)
+        if isinstance(session_raw, str) and session_raw
+        else None
+    )
+    pid_raw = args.get("source_prompt_id")
+    source_prompt_id = (
+        str(pid_raw) if isinstance(pid_raw, str) and pid_raw else None
+    )
+
+    repo = Path(os.environ.get("CODE_MEMORY_REPO") or os.getcwd()).resolve()
+    head_sha = _head_sha_safe(repo)
+
+    from .claims import ClaimRecord, ClaimsStore, EntityResolver
+
+    cfg = CONFIG.for_project(project)
+    resolver: EntityResolver | None
+    try:
+        resolver = EntityResolver(project=project, cfg=cfg)
+    except Exception:  # noqa: BLE001
+        resolver = None
+
+    subj_id = _resolve_or_none(resolver, subject)
+    obj_id = _resolve_or_none(resolver, obj)
+
+    # Predicate canonicalization mirrors the extractor: lowercase
+    # kebab-case so single-valued contradiction handling works.
+    canonical_pred = predicate.strip().lower().replace(" ", "-")
+
+    rec = ClaimRecord(
+        subject=subject.strip(),
+        predicate=canonical_pred,
+        object=obj.strip(),
+        polarity=polarity,
+        confidence=confidence_val,
+        evidence_span=evidence_span,
+        valid_at=valid_at,
+        head_sha=head_sha,
+        session_id=session_id,
+        source_prompt_id=source_prompt_id,
+        entity_subject_id=subj_id,
+        entity_object_id=obj_id,
+    )
+
+    store = ClaimsStore(path=cfg.claims_db)
+    try:
+        claim_id = store.upsert(rec)
+    finally:
+        store.close()
+
+    return _text(
+        {
+            "project": project,
+            "claim_id": claim_id,
+            "subject": rec.subject,
+            "predicate": rec.predicate,
+            "object": rec.object,
+            "polarity": rec.polarity,
+            "confidence": rec.confidence,
+            "valid_at": rec.valid_at,
+        }
+    )
+
+
 def _read_claims(args: dict[str, Any]) -> list[TextContent]:
     project = _require_project(args)
     from .claims import ClaimsStore
@@ -972,12 +1232,15 @@ _HANDLERS = {
     "codememory_callees": _callees,
     "codememory_importers": _importers,
     "codememory_dependencies": _dependencies,
+    "codememory_injects": _injects,
+    "codememory_injectors": _injectors,
     "codememory_definitions": _definitions,
     "codememory_assembly_members": _assembly_members,
     "codememory_drift": _drift,
     "codememory_at_sha": _at_sha,
     "codememory_callers_at_sha": _callers_at_sha,
     "codememory_extract_claims": _extract_claims,
+    "codememory_assert_claim": _assert_claim,
     "codememory_claims": _read_claims,
 }
 

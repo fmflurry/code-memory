@@ -1,0 +1,30 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "code-memory",
+  "description": "Local marketplace exposing the code-memory Claude Code plugin from this repo so `claude plugin install` can register its hooks.",
+  "owner": {
+    "name": "fmflurry"
+  },
+  "plugins": [
+    {
+      "name": "code-memory",
+      "source": "./plugins/claude-code",
+      "description": "Auto-injects a code-memory Context Pack on each user prompt, re-indexes files after Write/Edit, runs a debounced cross-file resolver, records sessions as episodes, and detects durable user assertions to nudge codememory_assert_claim.",
+      "version": "0.3.0",
+      "author": {
+        "name": "fmflurry"
+      },
+      "homepage": "https://github.com/fmflurry/code-memory",
+      "repository": "https://github.com/fmflurry/code-memory",
+      "license": "MIT",
+      "keywords": [
+        "code-memory",
+        "context-pack",
+        "mcp",
+        "hooks",
+        "claim-extraction"
+      ],
+      "category": "knowledge"
+    }
+  ]
+}

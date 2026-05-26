@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from ..config import CONFIG, Config, detect_project_slug
 from ..embed import M3Embedder, get_embedder
@@ -914,12 +914,18 @@ class Pipeline:
         # call sites of ``Run()`` collapse, but ``Run()`` and ``Run(x)``
         # both contribute their own edges — the resolver uses the
         # arity downstream to disambiguate overloads.
-        seen_calls: set[tuple[str, int]] = set()
+        seen_calls: set[tuple[str, int, str | None]] = set()
         for call in ex.calls:
-            key_pair = (call.name, call.arity)
-            if key_pair in seen_calls:
+            key_triple = (call.name, call.arity, call.receiver_type)
+            if key_triple in seen_calls:
                 continue
-            seen_calls.add(key_pair)
+            seen_calls.add(key_triple)
+            call_props: dict[str, Any] = {
+                "unresolved": True,
+                "args": call.arity,
+            }
+            if call.receiver_type:
+                call_props["receiver_type"] = call.receiver_type
             edges.append(
                 GraphEdge(
                     type="CALLS",
@@ -927,7 +933,7 @@ class Pipeline:
                     src_key=ex.path,
                     dst_label="Symbol",
                     dst_key=f"name::{call.name}",
-                    props={"unresolved": True, "args": call.arity},
+                    props=call_props,
                 )
             )
             nodes.append(

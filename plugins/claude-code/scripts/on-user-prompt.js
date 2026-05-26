@@ -25,6 +25,7 @@
 const { readEvent, done } = require("./lib/io");
 const { createMemoryClient } = require("./lib/memory");
 const { isSubstantiveCodeIntent, extractQueryFromMessage } = require("./lib/intent");
+const { detectClaimIntent, formatClaimNudge } = require("./lib/claim-intent");
 const { loadSession, saveSession, resetTurn, markAutoRetrieveSeen } = require("./lib/state");
 const { formatPack } = require("./lib/format");
 
@@ -45,8 +46,30 @@ const DEDUP_WINDOW_MS = 60 * 1000;
     saveSession(sessionId, state);
   }
 
+  // Claim-intent nudge runs independently of code-retrieval: a message
+  // like "I love Clean Architecture" carries no code-search signal but
+  // is exactly the kind of durable assertion the agent must capture.
+  const claimHit = detectClaimIntent(prompt);
+  const claimNudge = claimHit ? formatClaimNudge(claimHit) : null;
+
+  const finish = (packContext) => {
+    const parts = [];
+    if (claimNudge) parts.push(claimNudge);
+    if (packContext) parts.push(packContext);
+    if (parts.length === 0) {
+      done();
+      return;
+    }
+    done({
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext: parts.join("\n\n"),
+      },
+    });
+  };
+
   if (!isSubstantiveCodeIntent(prompt)) {
-    done();
+    finish(null);
     return;
   }
 
@@ -57,19 +80,19 @@ const DEDUP_WINDOW_MS = 60 * 1000;
     state.lastFetchedAt &&
     now - state.lastFetchedAt < DEDUP_WINDOW_MS
   ) {
-    done();
+    finish(null);
     return;
   }
 
   const mem = await createMemoryClient({ cwd, log: () => {} });
   if (!mem.available) {
-    done();
+    finish(null);
     return;
   }
 
   const pack = await mem.retrieve(query, { k: 8, eps: 5 });
   if (!pack) {
-    done();
+    finish(null);
     return;
   }
 
@@ -83,16 +106,5 @@ const DEDUP_WINDOW_MS = 60 * 1000;
   // Auto-retrieve fired, but only an explicit MCP tool call satisfies the gate.
   markAutoRetrieveSeen(sessionId);
 
-  if (isEmpty) {
-    done();
-    return;
-  }
-
-  const additionalContext = formatPack(pack);
-  done({
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      additionalContext,
-    },
-  });
+  finish(isEmpty ? null : formatPack(pack));
 })();

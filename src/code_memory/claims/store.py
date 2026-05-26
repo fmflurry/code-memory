@@ -134,12 +134,26 @@ class ClaimsStore:
     def upsert(self, claim: ClaimRecord) -> str:
         """Insert a claim, closing any conflicting prior assertion.
 
+        Dedupe: an open row with the same (subject, predicate, object,
+        polarity) is refreshed in place — its ``recorded_at`` becomes
+        ``now``, its ``confidence`` becomes ``max(prev, new)``, and a
+        non-empty new ``evidence_span`` overwrites a missing/equal one.
+        This prevents bloat when the agent re-asserts the same claim
+        across turns or sessions (which happens often with the
+        "ACT BEFORE ANSWERING" nudge in the plugins).
+
         For single-valued predicates: any open ``(subject, predicate)``
         row with a different ``object`` gets ``valid_to`` set to the
         new claim's ``valid_at``. Polarity flips also close.
         """
         if claim.predicate in SINGLE_VALUED_PREDICATES:
             self._close_conflicting(claim)
+
+        existing_id = self._find_open_duplicate(claim)
+        if existing_id is not None:
+            self._refresh_existing(existing_id, claim)
+            self.conn.commit()
+            return existing_id
 
         self.conn.execute(
             "INSERT INTO claims("
@@ -168,6 +182,60 @@ class ClaimsStore:
         )
         self.conn.commit()
         return claim.id
+
+    def _find_open_duplicate(self, claim: ClaimRecord) -> str | None:
+        """Return the id of an open row identical on (s,p,o,polarity), or None."""
+        row = self.conn.execute(
+            "SELECT id FROM claims "
+            "WHERE valid_to IS NULL "
+            "  AND subject = ? AND predicate = ? AND object = ? "
+            "  AND polarity = ? "
+            "LIMIT 1",
+            (
+                claim.subject,
+                claim.predicate,
+                claim.object,
+                1 if claim.polarity else 0,
+            ),
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    def _refresh_existing(self, claim_id: str, claim: ClaimRecord) -> None:
+        """Refresh an existing open dupe with the new claim's metadata.
+
+        Confidence is monotonic non-decreasing (keep the strongest
+        assertion seen). Evidence is overwritten only when the new
+        span is non-empty so we never erase a quote with a blank one.
+        Session/prompt-id only fill in if previously NULL, preserving
+        the first observation's provenance.
+        """
+        self.conn.execute(
+            "UPDATE claims SET "
+            "  confidence = MAX(confidence, ?), "
+            "  evidence_span = CASE "
+            "    WHEN ? <> '' THEN ? "
+            "    ELSE evidence_span "
+            "  END, "
+            "  recorded_at = ?, "
+            "  head_sha = COALESCE(?, head_sha), "
+            "  session_id = COALESCE(session_id, ?), "
+            "  source_prompt_id = COALESCE(source_prompt_id, ?), "
+            "  entity_subject_id = COALESCE(entity_subject_id, ?), "
+            "  entity_object_id = COALESCE(entity_object_id, ?) "
+            "WHERE id = ?",
+            (
+                claim.confidence,
+                claim.evidence_span,
+                claim.evidence_span,
+                claim.recorded_at,
+                claim.head_sha,
+                claim.session_id,
+                claim.source_prompt_id,
+                claim.entity_subject_id,
+                claim.entity_object_id,
+                claim_id,
+            ),
+        )
 
     def upsert_many(self, claims: Iterable[ClaimRecord]) -> list[str]:
         return [self.upsert(c) for c in claims]

@@ -498,22 +498,47 @@ class FalkorStore:
         the files that declare a parameter / field / base list of that
         type. Returns one row per direct caller file; symbol coordinates
         of the called definition are included so the user can jump to it.
+
+        ``depth > 1`` recurses in Python: each caller File is treated as
+        a new target by walking the symbols it DEFINES. A pure Cypher
+        variable-length path doesn't work because CALLS/REFERENCES go
+        File→Symbol only — the graph has no reverse edge to chain on.
         """
         depth = max(1, min(depth, 3))
-        # Tombstoned symbols / files filtered out by default so callers
-        # see the live HEAD view. Pre-temporal rows have NULL invalid_sha
-        # so the predicate is a no-op for legacy data. ``LIMIT`` keeps hub
-        # symbols (e.g. C# base classes with thousands of callers) from
-        # timing out the Falkor query — agents that need more should page.
-        q = (
+        seen_callers: set[str] = set()
+        seen_names: set[str] = set()
+        out: list[dict[str, Any]] = []
+        frontier_names: list[str] = [symbol_name]
+        for hop in range(depth):
+            next_names: list[str] = []
+            ring_callers: list[str] = []
+            for name in frontier_names:
+                if name in seen_names:
+                    continue
+                seen_names.add(name)
+                for row in self._callers_one_hop(name):
+                    if row["caller"] in seen_callers:
+                        continue
+                    seen_callers.add(row["caller"])
+                    out.append(row)
+                    ring_callers.append(row["caller"])
+            if hop + 1 >= depth or not ring_callers:
+                break
+            for caller_file in ring_callers:
+                next_names.extend(self._defines_at(caller_file))
+            frontier_names = next_names
+        return out
+
+    def _callers_one_hop(self, symbol_name: str) -> list[dict[str, Any]]:
+        rows = self.graph.query(
             "MATCH (s:Symbol {name: $name}) "
             "WHERE s.unresolved IS NULL AND s.invalid_sha IS NULL "
-            "MATCH (caller:File)-[c:CALLS|REFERENCES*1.." + str(depth) + "]->(s) "
+            "MATCH (caller:File)-[c:CALLS|REFERENCES]->(s) "
             "WHERE caller.invalid_sha IS NULL "
             "RETURN DISTINCT caller.key, s.file, s.start, s.end, s.kind "
-            "LIMIT 500"
-        )
-        rows = self.graph.query(q, {"name": symbol_name}).result_set
+            "LIMIT 500",
+            {"name": symbol_name},
+        ).result_set
         return [
             {
                 "caller": caller_key,
@@ -525,23 +550,86 @@ class FalkorStore:
             for caller_key, file_key, start, end, kind in rows
         ]
 
-    def callees(self, symbol_name: str, depth: int = 1) -> list[dict[str, Any]]:
-        """Symbols called from the file that defines ``symbol_name``.
+    def _defines_at(self, file_key: str) -> list[str]:
+        """Names of resolved symbols defined by ``file_key``."""
+        rows = self.graph.query(
+            "MATCH (f:File {key: $key})-[:DEFINES]->(s:Symbol) "
+            "WHERE s.unresolved IS NULL AND s.invalid_sha IS NULL "
+            "  AND f.invalid_sha IS NULL "
+            "RETURN DISTINCT s.name LIMIT 500",
+            {"key": file_key},
+        ).result_set
+        return [name for (name,) in rows if name]
 
-        Definition's containing file is taken as the starting point;
-        all outgoing CALLS edges (transitively up to ``depth``) are
-        enumerated.
+    def callees(self, symbol_name: str, depth: int = 1) -> list[dict[str, Any]]:
+        """Callees reachable from the file that defines ``symbol_name``.
+
+        Returns both **resolved** targets (a Symbol or Type node the
+        resolver bound the call to) and **unresolved** placeholders.
+        Hiding placeholders silently turned ``callees`` into a no-op
+        for Angular clean-arch use cases where every call goes through
+        ``this.port.method()`` and the bare method name can't be bound
+        to a unique definition — the agent saw an empty list with no
+        signal that calls actually exist.
+
+        ``depth > 1`` recurses in Python by walking through DEFINES
+        edges of each discovered callee. A pure Cypher variable-length
+        path doesn't work here: CALLS goes File→Symbol only, so the
+        graph has no Symbol→File reverse to chain on.
         """
         depth = max(1, min(depth, 3))
-        q = (
-            "MATCH (defFile:File)-[:DEFINES]->(s:Symbol {name: $name}) "
-            "WHERE defFile.invalid_sha IS NULL AND s.invalid_sha IS NULL "
-            "MATCH (defFile)-[:CALLS*1.." + str(depth) + "]->(target:Symbol) "
-            "WHERE target.unresolved IS NULL AND target.invalid_sha IS NULL "
-            "RETURN DISTINCT target.name, target.file, target.start, target.end, target.kind "
-            "LIMIT 500"
-        )
-        rows = self.graph.query(q, {"name": symbol_name}).result_set
+        seen: set[tuple[str, str | None]] = set()
+        out: list[dict[str, Any]] = []
+        frontier_files: list[str | None] = [None]  # None = start from defining file
+        frontier_symbol: str | None = symbol_name
+        for _ in range(depth):
+            rows = self._callees_one_hop(frontier_symbol, frontier_files)
+            next_files: list[str | None] = []
+            for row in rows:
+                key = (row["name"], row["file"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(row)
+                if row["resolved"] and row["file"]:
+                    next_files.append(row["file"])
+            if not next_files:
+                break
+            frontier_symbol = None
+            frontier_files = next_files
+        return out
+
+    def _callees_one_hop(
+        self, symbol_name: str | None, files: list[str | None]
+    ) -> list[dict[str, Any]]:
+        """One CALLS hop. Either anchored by the symbol's defining file
+        (``symbol_name`` set, ``files`` ignored) or by a list of explicit
+        file keys (``symbol_name`` None)."""
+        if symbol_name is not None:
+            q = (
+                "MATCH (defFile:File)-[:DEFINES]->(s:Symbol {name: $name}) "
+                "WHERE defFile.invalid_sha IS NULL AND s.invalid_sha IS NULL "
+                "MATCH (defFile)-[:CALLS]->(target) "
+                "WHERE target.invalid_sha IS NULL "
+                "  AND (labels(target)[0] = 'Symbol' OR labels(target)[0] = 'Type') "
+                "RETURN DISTINCT target.name, target.file, target.start, "
+                "  target.end, target.kind, target.unresolved, labels(target)[0] "
+                "LIMIT 500"
+            )
+            params: dict[str, Any] = {"name": symbol_name}
+        else:
+            q = (
+                "MATCH (defFile:File) WHERE defFile.key IN $files "
+                "  AND defFile.invalid_sha IS NULL "
+                "MATCH (defFile)-[:CALLS]->(target) "
+                "WHERE target.invalid_sha IS NULL "
+                "  AND (labels(target)[0] = 'Symbol' OR labels(target)[0] = 'Type') "
+                "RETURN DISTINCT target.name, target.file, target.start, "
+                "  target.end, target.kind, target.unresolved, labels(target)[0] "
+                "LIMIT 500"
+            )
+            params = {"files": [f for f in files if f]}
+        rows = self.graph.query(q, params).result_set
         return [
             {
                 "name": name,
@@ -549,9 +637,55 @@ class FalkorStore:
                 "start": start,
                 "end": end,
                 "kind": kind,
+                "resolved": unresolved is None,
+                "label": label,
             }
-            for name, file_key, start, end, kind in rows
+            for name, file_key, start, end, kind, unresolved, label in rows
         ]
+
+    def injects(self, symbol_name: str) -> list[dict[str, Any]]:
+        """DI dependencies declared in the file that defines ``symbol_name``.
+
+        Angular's ``inject(Token)`` primitive (and Razor's ``@inject``)
+        emit INJECTS edges separately from CALLS so the DI graph isn't
+        conflated with raw method invocation. Use this to answer
+        "what does this class depend on?" without sifting through
+        imported modules.
+        """
+        rows = self.graph.query(
+            "MATCH (defFile:File)-[:DEFINES]->(s:Symbol {name: $name}) "
+            "WHERE defFile.invalid_sha IS NULL AND s.invalid_sha IS NULL "
+            "MATCH (defFile)-[:INJECTS]->(target) "
+            "WHERE target.invalid_sha IS NULL "
+            "RETURN DISTINCT target.name, target.key, target.file, "
+            "  target.kind, target.unresolved "
+            "LIMIT 500",
+            {"name": symbol_name},
+        ).result_set
+        return [
+            {
+                "name": name,
+                "key": key,
+                "file": file_key,
+                "kind": kind,
+                "resolved": unresolved is None,
+            }
+            for name, key, file_key, kind, unresolved in rows
+        ]
+
+    def injectors(self, token: str) -> list[dict[str, Any]]:
+        """Files that inject ``token`` (reverse INJECTS edges).
+
+        ``token`` may be the bare name of a class/abstract class used as
+        an Angular DI token, or any symbol exposed via INJECTS.
+        """
+        rows = self.graph.query(
+            "MATCH (f:File)-[:INJECTS]->(s:Symbol {name: $name}) "
+            "WHERE f.invalid_sha IS NULL AND s.invalid_sha IS NULL "
+            "RETURN DISTINCT f.key LIMIT 500",
+            {"name": token},
+        ).result_set
+        return [{"file": file_key} for (file_key,) in rows]
 
     def importers(self, target: str) -> list[dict[str, Any]]:
         """Files that import a Module whose key matches ``target``.

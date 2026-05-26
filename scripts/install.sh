@@ -298,7 +298,19 @@ if [ "$SKIP_OLLAMA" -eq 0 ]; then
           && ok "gemma2:9b pulled" \
           || warn "gemma2:9b pull failed (you can retry: ollama pull gemma2:9b)"
       fi
-      printf "${DIM}  Enable claim extraction at runtime with:\n    export CLAIMS_EXTRACTION=true${RST}\n"
+      # Flip claim extraction ON in project rc so users don't have to
+      # remember to export the env var after pulling a 5+ GB model.
+      # Project rc beats the global rc (~/.config/code-memory/config),
+      # which beats hard-coded defaults; real shell env always wins.
+      RC_FILE=".code-memoryrc"
+      if [ -f "$RC_FILE" ] && grep -qE '^[[:space:]]*CLAIMS_EXTRACTION=' "$RC_FILE"; then
+        # macOS sed needs a backup suffix; clean it up after.
+        sed -i.bak -E 's/^[[:space:]]*CLAIMS_EXTRACTION=.*/CLAIMS_EXTRACTION=true/' "$RC_FILE" \
+          && rm -f "$RC_FILE.bak"
+      else
+        printf '\n# Set by scripts/install.sh after gemma2:9b pull.\nCLAIMS_EXTRACTION=true\n' >> "$RC_FILE"
+      fi
+      ok "CLAIMS_EXTRACTION=true written to $RC_FILE"
     fi
   else
     warn "Ollama daemon did not become reachable within 30s — skipping model pull."
@@ -412,6 +424,10 @@ cat <<EOF
   Browse:
     FalkorDB  http://localhost:3000
     Qdrant    http://localhost:6333/dashboard
+
+  Configure defaults (project beats global; real shell env beats both):
+    project: ./.code-memoryrc
+    global:  \${XDG_CONFIG_HOME:-~/.config}/code-memory/config
 
   Optional knobs (see .env.example):
     EMBED_BACKEND=flagembed    # opt-in in-process BGE-M3 (needs --with-hybrid)

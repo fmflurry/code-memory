@@ -3,6 +3,11 @@ __pycache__/
 .venv/
 venv/
 .env
+
+# code-memory per-machine config (written by scripts/install.sh).
+# Project-local toggles like CLAIMS_EXTRACTION belong here, not in git.
+.code-memoryrc
+
 dist/
 build/
 *.egg-info/

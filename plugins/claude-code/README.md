@@ -17,7 +17,7 @@ server, which stays available for the agent to call manually
 | Hook             | Behavior                                                                                                                                                                                              |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SessionStart`   | Background `code-memory ingest <cwd>` (git delta) so the index reflects out-of-band edits (vim, IDE, `git pull`, `git checkout`) since the last session.                                              |
-| `UserPromptSubmit` | Detects substantive code intent → `code-memory retrieve --json` → emits the formatted Context Pack as `additionalContext` for orientation only. 5 min cache, 60 s dedup. Resets the per-turn gate flag (see `PreToolUse`). |
+| `UserPromptSubmit` | (a) Detects substantive code intent → `code-memory retrieve --json` → emits the formatted Context Pack as `additionalContext` for orientation only. 5 min cache, 60 s dedup. (b) Detects durable user assertions (preference / decision / rejection / ownership / location patterns) and injects a nudge reminding the agent to call `codememory_assert_claim`. Resets the per-turn gate flag (see `PreToolUse`). |
 | `PreToolUse` (`Read`/`Bash`/`Grep`/`Glob`) | First-tool gate: if no explicit `codememory_*` MCP tool has fired this turn, emits a one-shot soft nudge as `additionalContext` reminding the agent to query the index before scanning the filesystem. Never blocks; the queued tool still runs. Goes silent once any explicit `codememory_*` MCP tool fires, and once per turn either way. |
 | `PostToolUse` (`Write`/`Edit`/`MultiEdit`) | (a) Fires `code-memory reingest <path>`. (b) Invalidates the per-session Context Pack so the next prompt re-fetches. (c) Schedules a debounced `code-memory resolve` to re-point cross-file CALLS edges. |
 | `PostToolUse` (`mcp__code-memory__codememory_*`) | Marks the gate flag as satisfied so the rest of the turn stays silent. |
@@ -52,20 +52,25 @@ never blocked.
 ## Install
 
 ```bash
-# global (default) — pick this for everyday use
+# user scope (default) — pick this for everyday use
 ./plugins/claude-code/install.sh
 
-# project-local
-cd /path/to/repo
-~/Workspace/code-memory/plugins/claude-code/install.sh --project
+# project scope (committed to .mcp.json + scoped to this dir)
+./plugins/claude-code/install.sh --scope project
 
-# custom directory
-./plugins/claude-code/install.sh --target /some/other/dir
+# skip MCP server registration
+./plugins/claude-code/install.sh --no-mcp
 ```
 
-The installer symlinks the entire plugin directory into
-`~/.claude/plugins/code-memory/` (or `<cwd>/.claude/plugins/code-memory/`
-with `--project`). Claude Code discovers it on next start.
+The installer registers this repo as a **local Claude Code marketplace**
+(via `claude plugin marketplace add <repo>`) using the manifest at
+`.claude-plugin/marketplace.json`, then installs the plugin via
+`claude plugin install code-memory@code-memory`. The hooks defined in
+`hooks/hooks.json` only fire once Claude Code has the plugin registered
+in `~/.claude/plugins/installed_plugins.json` — a bare symlink into
+`~/.claude/plugins/` is not enough.
+
+**Restart Claude Code** after installing so the new hooks take effect.
 
 ### Use alongside the MCP server (recommended)
 
@@ -91,6 +96,12 @@ recording useful on its own. Add to `~/.claude.json`:
 ```
 
 Restart Claude Code.
+
+> **Updating the plugin or MCP server?** Claude Code caches the MCP
+> server's tool list per session — after pulling new code, **fully
+> restart Claude Code** (not just `/clear`) so new tools like
+> `codememory_assert_claim` become visible to the agent. Confirm by
+> running `/mcp` and verifying the expected tool count.
 
 ## Configuration
 

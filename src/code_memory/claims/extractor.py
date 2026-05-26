@@ -33,6 +33,27 @@ class ExtractionError(RuntimeError):
     """Raised when the LLM backend itself is unreachable or misconfigured."""
 
 
+# Closed predicate vocabulary. The system prompt instructs the model to
+# stay inside this set; _coerce enforces it so a noisy generation can't
+# smuggle in free-form predicates that would defeat single-valued
+# contradiction handling downstream.
+_ALLOWED_PREDICATES: frozenset[str] = frozenset(
+    {
+        "uses",
+        "prefers",
+        "rejected",
+        "wants-to",
+        "is-located-at",
+        "depends-on",
+        "deployed-to",
+        "owns",
+        "is-a",
+        "mentioned",
+        "worked-on",
+    }
+)
+
+
 @dataclass(frozen=True)
 class Claim:
     subject: str
@@ -78,23 +99,39 @@ _OUTPUT_SCHEMA = {
 
 
 _SYSTEM_PROMPT = """\
-You extract factual claims from a software engineer's chat message.
+You extract DURABLE factual claims from a software engineer's chat
+message. Durable = the assertion is likely still true in a future
+session, not transient task state.
 
 Output JSON only, matching the provided schema. Each claim is a
 (subject, predicate, object) triple plus polarity, confidence, and an
 ``evidence_span`` that is a verbatim substring of the input.
 
 Rules:
-- Predicate is kebab-case verb phrase: "uses", "prefers", "is-located-at",
-  "depends-on", "wants-to", "rejected", "owns", "is-a", "deployed-to".
+- Predicate is kebab-case verb phrase from this closed vocabulary:
+  "uses", "prefers", "rejected", "wants-to", "is-located-at",
+  "depends-on", "deployed-to", "owns", "is-a", "mentioned",
+  "worked-on". Reject any predicate outside this list.
 - Subject and object are short noun phrases lifted from the message;
   normalize case but keep technical identifiers as written.
-- Skip questions, hypotheticals, opinions about third parties, and
-  small talk. Only extract assertions the user is making about their
-  project, tooling, preferences, or themselves.
-- ``confidence`` reflects how certain you are this is an assertion (not
-  a question or speculation), not how true the claim is.
-- If nothing assertive, return {"claims": []}.
+- HARD FILTER — skip and emit no claim for:
+  * Questions of any kind ("should I…", "why does…", "is X…").
+  * Hypotheticals / counterfactuals ("if we used…", "suppose X…").
+  * Imperatives directed at YOU the assistant ("fix this", "run X",
+    "look at Y") — those are task state, not durable facts.
+  * Opinions about third parties or general industry statements.
+  * Small talk, acknowledgments, meta-comments about the conversation.
+  * Anything that would be obvious from the codebase itself (e.g.
+    "this file imports React" — already in the source).
+- Only extract assertions the user is making about their PROJECT, their
+  TOOLING choices, their PREFERENCES, OWNERSHIP, or LOCATIONS — facts
+  worth recalling next week.
+- ``confidence`` ∈ [0,1] reflects how certain you are this is a
+  durable assertion (not a question, speculation, or task state).
+  Below 0.7 → don't emit at all.
+- Be CONSERVATIVE. If in doubt, emit nothing. Empty output is the
+  correct answer for most messages.
+- If nothing qualifies, return {"claims": []}.
 
 Examples:
 
@@ -109,10 +146,30 @@ OUTPUT: {"claims": [
 INPUT: "should I use Redis here?"
 OUTPUT: {"claims": []}
 
+INPUT: "fix the bug in auth.py"
+OUTPUT: {"claims": []}
+
+INPUT: "look at this file and tell me what it does"
+OUTPUT: {"claims": []}
+
 INPUT: "I don't want to ship dark mode"
 OUTPUT: {"claims": [
   {"subject":"user","predicate":"rejected","object":"dark mode",
    "polarity":true,"confidence":0.9,"evidence_span":"don't want to ship dark mode"}
+]}
+
+INPUT: "stop summarizing at the end of every response"
+OUTPUT: {"claims": [
+  {"subject":"user","predicate":"prefers","object":"no end-of-turn summaries",
+   "polarity":true,"confidence":0.9,
+   "evidence_span":"stop summarizing at the end of every response"}
+]}
+
+INPUT: "the billing service lives in apps/api/billing"
+OUTPUT: {"claims": [
+  {"subject":"billing service","predicate":"is-located-at",
+   "object":"apps/api/billing","polarity":true,"confidence":0.95,
+   "evidence_span":"billing service lives in apps/api/billing"}
 ]}
 """
 
@@ -243,6 +300,11 @@ class ClaimExtractor:
             return None
 
         if not subject or not predicate or not obj or not evidence:
+            return None
+        if predicate not in _ALLOWED_PREDICATES:
+            _LOG.debug(
+                "claim extractor: dropping out-of-vocab predicate %r", predicate
+            )
             return None
         if confidence < self.min_confidence:
             return None

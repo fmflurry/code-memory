@@ -32,6 +32,11 @@ SYMBOL_NODE_TYPES = {
     "method_definition",
     "class_declaration",
     "class_definition",
+    # TypeScript ``abstract class`` parses as its own node type; missing
+    # it makes Angular clean-arch ports invisible to the graph, which
+    # in turn leaves every ``inject(Port)`` edge unresolved.
+    "abstract_class_declaration",
+    "abstract_method_signature",
     "arrow_function",
     "export_statement",
     # C# / Razor (Razor embeds C#)
@@ -155,10 +160,18 @@ class Call:
     Arity feeds the resolver's overload-disambiguation tier: when
     multiple definitions share the same name (classic C# / Java
     overload pattern), prefer the one whose parameter count matches.
+
+    ``receiver_type`` is the inferred type of the call's receiver, set
+    for TS ``this.<field>.<method>()`` patterns where the field's type
+    can be read off a member initializer or annotation. The resolver
+    uses it to narrow ``<method>`` to the methods defined on that type
+    — without it, every Angular use case's call to its port collapses
+    to an ambiguous bare identifier.
     """
 
     name: str
     arity: int
+    receiver_type: str | None = None
 
 
 @dataclass
@@ -283,7 +296,7 @@ def extract_file(path: str | Path) -> ExtractedFile | None:
         source=source,
         generated=looks_generated(p, source),
     )
-    _walk(root, raw, ex, ns_stack=[])
+    _walk(root, raw, ex, ns_stack=[], class_stack=[])
     return ex
 
 
@@ -340,14 +353,30 @@ def _namespace_name(node: Node, source: bytes) -> str | None:
     return None
 
 
+_CLASS_DECL_NODE_TYPES = frozenset(
+    {"class_declaration", "abstract_class_declaration", "class"}
+)
+
+
 def _walk(
     node: Node,
     source: bytes,
     ex: ExtractedFile,
     ns_stack: list[str],
+    class_stack: list[dict[str, str]],
 ) -> None:
     t = node.type
     pushed_ns = False
+    pushed_class = False
+    if t in _CLASS_DECL_NODE_TYPES:
+        body = None
+        for child in node.children:
+            if child.type == "class_body":
+                body = child
+                break
+        if body is not None:
+            class_stack.append(_ts_class_field_types(body, source))
+            pushed_class = True
     if t in _BLOCK_NAMESPACE_NODE_TYPES:
         ns = _namespace_name(node, source)
         if ns:
@@ -388,9 +417,27 @@ def _walk(
         if injected:
             ex.injects.append(injected)
     elif t in CALL_NODE_TYPES:
-        callee = _callee_name(node, source)
-        if callee:
-            ex.calls.append(Call(name=callee, arity=_call_arity(node)))
+        # Angular DI: ``inject(Token)`` becomes an INJECTS edge instead
+        # of a (stoplisted) CALL. Without this, the entire DI graph for
+        # Angular 14+ codebases is invisible.
+        token = _angular_inject_token(node, source)
+        if token:
+            ex.injects.append(token)
+        else:
+            callee = _callee_name(node, source)
+            if callee:
+                receiver_type: str | None = None
+                if class_stack:
+                    field = _this_field_receiver(node, source)
+                    if field:
+                        receiver_type = class_stack[-1].get(field)
+                ex.calls.append(
+                    Call(
+                        name=callee,
+                        arity=_call_arity(node),
+                        receiver_type=receiver_type,
+                    )
+                )
 
     if t in TYPE_FIELD_NODE_TYPES:
         # ``method_declaration`` exposes the return type via ``returns``
@@ -454,10 +501,12 @@ def _walk(
                 _collect_type_refs(child, source, ex.references)
 
     for child in node.children:
-        _walk(child, source, ex, ns_stack)
+        _walk(child, source, ex, ns_stack, class_stack)
 
     if pushed_ns:
         ns_stack.pop()
+    if pushed_class:
+        class_stack.pop()
 
 
 def _slice(source: bytes, node: Node) -> str:
@@ -497,7 +546,7 @@ def _symbol_name(node: Node, source: bytes) -> str | None:
     if node.type in _FSHARP_DEEP_NAME_NODES:
         return _first_identifier_deep(node, source)
     for child in node.children:
-        if child.type in {"identifier", "type_identifier"}:
+        if child.type in {"identifier", "type_identifier", "property_identifier"}:
             return _slice(source, child)
     return None
 
@@ -642,6 +691,175 @@ def _collect_type_refs(node: Node, source: bytes, out: list[str]) -> None:
     # Wrapper / composite type nodes — recurse to find inner type names.
     for child in node.children:
         _collect_type_refs(child, source, out)
+
+
+_CLASS_BODY_NODE_TYPES = frozenset({"class_body", "object_type"})
+_TS_FIELD_DECL_TYPES = frozenset(
+    {
+        "public_field_definition",
+        "property_definition",
+        "property_signature",
+        "abstract_method_signature",
+    }
+)
+
+
+def _ts_class_field_types(body: Node, source: bytes) -> dict[str, str]:
+    """Map of ``field_name → type_name`` for a TS class body.
+
+    Reads two sources per field:
+
+    1. A type annotation (``private foo: Bar``) — the most reliable
+       signal.
+    2. An initializer of the form ``inject(Token)`` — Angular 14+ DI;
+       lets a use case's injected port surface its type even when no
+       explicit annotation is written.
+
+    Also handles constructor parameter properties
+    (``constructor(private foo: Bar) {}``), which TypeScript treats as
+    fields. Without the constructor scan, Angular services that stick
+    to the older ``constructor(private repo: Repo)`` style stay
+    invisible to receiver-type resolution.
+    """
+    out: dict[str, str] = {}
+    for child in body.children:
+        if child.type in _TS_FIELD_DECL_TYPES:
+            name_node = child.child_by_field_name("name")
+            field_name: str | None = None
+            for sub in child.children:
+                if sub.type == "property_identifier":
+                    field_name = _slice(source, sub)
+                    break
+            if name_node is not None:
+                field_name = _slice(source, name_node)
+            if not field_name:
+                continue
+            type_name = _ts_field_type_from_annotation(child, source)
+            if type_name is None:
+                type_name = _ts_field_type_from_inject_init(child, source)
+            if type_name:
+                out[field_name] = type_name
+        elif child.type == "method_definition":
+            # Constructor parameter properties live on the formal_parameters.
+            name_node = child.child_by_field_name("name")
+            method_name = _slice(source, name_node) if name_node else None
+            if method_name != "constructor":
+                continue
+            params = child.child_by_field_name("parameters")
+            if params is None:
+                for sub in child.children:
+                    if sub.type == "formal_parameters":
+                        params = sub
+                        break
+            if params is None:
+                continue
+            for param in params.children:
+                if param.type not in {"required_parameter", "optional_parameter"}:
+                    continue
+                # Only treat as a field when there is an accessibility modifier
+                # (private/public/protected) — that's TS's "parameter property"
+                # syntax. Plain ctor params live in local scope.
+                has_modifier = any(
+                    sub.type == "accessibility_modifier" for sub in param.children
+                )
+                if not has_modifier:
+                    continue
+                pname = None
+                for sub in param.children:
+                    if sub.type == "identifier":
+                        pname = _slice(source, sub)
+                        break
+                if not pname:
+                    continue
+                type_name = _ts_field_type_from_annotation(param, source)
+                if type_name:
+                    out[pname] = type_name
+    return out
+
+
+def _ts_field_type_from_annotation(node: Node, source: bytes) -> str | None:
+    """Read ``: <Type>`` annotation off a field / param node."""
+    for child in node.children:
+        if child.type == "type_annotation":
+            for sub in child.children:
+                if sub.type in {"type_identifier", "identifier"}:
+                    return _slice(source, sub)
+                if sub.type == "generic_type":
+                    for inner in sub.children:
+                        if inner.type in {"type_identifier", "identifier"}:
+                            return _slice(source, inner)
+                    return None
+    return None
+
+
+def _ts_field_type_from_inject_init(node: Node, source: bytes) -> str | None:
+    """Read ``= inject(Token)`` initializer off a field node."""
+    for child in node.children:
+        if child.type == "call_expression":
+            return _angular_inject_token(child, source)
+    return None
+
+
+def _this_field_receiver(node: Node, source: bytes) -> str | None:
+    """For a callee ``this.<field>.<method>``, return ``<field>``.
+
+    Other receiver shapes (chained calls, computed members, bare
+    identifiers) return ``None`` — too ambiguous for the receiver-type
+    table to help.
+    """
+    fn = node.child_by_field_name("function") or node.child_by_field_name("callee")
+    if fn is None or fn.type != "member_expression":
+        return None
+    obj = fn.child_by_field_name("object")
+    if obj is None or obj.type != "member_expression":
+        return None
+    inner_obj = obj.child_by_field_name("object")
+    inner_prop = obj.child_by_field_name("property")
+    if inner_obj is None or inner_obj.type != "this":
+        return None
+    if inner_prop is None or inner_prop.type != "property_identifier":
+        return None
+    return _slice(source, inner_prop)
+
+
+def _angular_inject_token(node: Node, source: bytes) -> str | None:
+    """Pull the DI token out of an Angular ``inject(Token)`` call.
+
+    Angular 14+ replaced constructor-DI with the ``inject()`` primitive.
+    Without this hook the call gets filtered by ``CALLEE_STOPLIST`` and
+    the DI graph for any Angular codebase disappears entirely. We only
+    accept call sites whose function is literally ``inject`` to avoid
+    capturing user-defined functions of the same name in module scope.
+    """
+    fn = node.child_by_field_name("function") or node.child_by_field_name("callee")
+    if fn is None:
+        return None
+    fn_text = _slice(source, fn).strip()
+    # Drop generic args: ``inject<Token>`` parses as the bare identifier
+    # in the function field; defensive split keeps qualified forms out.
+    if fn_text.split("<", 1)[0] != "inject":
+        return None
+    args = None
+    for child in node.children:
+        if child.type in {"arguments", "argument_list"}:
+            args = child
+            break
+    if args is None:
+        return None
+    for sub in args.children:
+        if sub.type in {"(", ")", ",", "argument"}:
+            if sub.type == "argument":
+                # Some grammars wrap each arg in `argument`; descend.
+                for inner in sub.children:
+                    name = _last_identifier(_slice(source, inner).strip())
+                    if name:
+                        return name
+            continue
+        raw = _slice(source, sub).strip()
+        name = _last_identifier(raw)
+        if name:
+            return name
+    return None
 
 
 def _inject_type(node: Node, source: bytes) -> str | None:

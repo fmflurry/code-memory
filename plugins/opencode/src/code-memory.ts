@@ -29,6 +29,10 @@ import {
   extractQueryFromMessage,
   isSubstantiveCodeIntent,
 } from "./code-memory-lib/intent.ts";
+import {
+  detectClaimIntent,
+  formatClaimNudge,
+} from "./code-memory-lib/claim-intent.ts";
 
 const execFile = promisify(execFileCb);
 
@@ -77,6 +81,7 @@ interface SessionMemory {
   autoRetrieveSeen: boolean;
   explicitMemorySeen: boolean;
   pendingGateNudge: boolean;
+  pendingClaimNudge: string | null;
 }
 
 function isMemoryTool(tool: string): boolean {
@@ -314,6 +319,7 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
         autoRetrieveSeen: false,
         explicitMemorySeen: false,
         pendingGateNudge: false,
+        pendingClaimNudge: null,
       };
       stateBySession.set(id, s);
     }
@@ -345,6 +351,16 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
       const text = extractText(output.parts);
       if (text && !session.firstUserMessage) {
         session.firstUserMessage = text;
+      }
+
+      // Claim-intent detection runs independently of code-retrieval: a
+      // message like "I love Clean Architecture" carries no code-search
+      // signal but IS exactly the kind of durable assertion the agent
+      // must capture via codememory_assert_claim.
+      const claimHit = detectClaimIntent(text);
+      if (claimHit) {
+        session.pendingClaimNudge = formatClaimNudge(claimHit);
+        log("info", `claim-intent: ${claimHit.kind} → "${claimHit.snippet}"`);
       }
 
       // Once per session, kick off a delta ingest in the background. Catches
@@ -397,6 +413,13 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
       if (session.pendingGateNudge) {
         session.pendingGateNudge = false;
         output.system.push(GATE_NUDGE);
+      }
+
+      // Drain a pending claim nudge. One-shot per turn: surface the
+      // suggestion to call codememory_assert_claim, then clear it.
+      if (session.pendingClaimNudge) {
+        output.system.push(session.pendingClaimNudge);
+        session.pendingClaimNudge = null;
       }
 
       if (!session.pack) return;
