@@ -224,6 +224,22 @@ def record(
     _emit({"project": pipe.slug, "id": ep_id}, as_json=as_json)
 
 
+@app.command("dedupe-episodes")
+def dedupe_episodes(
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """Compact duplicate episodes by prompt hash, prune their vectors.
+
+    Same prompt asserted N times collapses to one row whose ts is the
+    most-recent observation. Matching Qdrant points are deleted so the
+    vector store stays aligned with SQLite.
+    """
+    pipe = Pipeline(project=project)
+    result = pipe.dedupe_episodes()
+    _emit({"project": pipe.slug, **result}, as_json=as_json)
+
+
 @app.command("extract-claims")
 def extract_claims(
     prompt: list[str] = typer.Option(

@@ -239,6 +239,15 @@ class QdrantStore:
             ),
         )
 
+    def delete_by_ids(self, collection: str, ids: Sequence[str]) -> None:
+        """Bulk delete points by id. No-op on empty input."""
+        if not ids:
+            return
+        self.client.delete(
+            collection_name=collection,
+            points_selector=qm.PointIdsList(points=list(ids)),
+        )
+
 
 def _to_filter(filt: dict[str, Any]) -> qm.Filter:
     must = [

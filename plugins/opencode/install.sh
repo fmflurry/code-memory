@@ -18,6 +18,7 @@ LIB="$PLUGIN_SRC/code-memory-lib"
 TARGET=""
 MODE="global"
 SKIP_MCP=0
+INSTALL_KIND="copy"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,14 +35,24 @@ while [[ $# -gt 0 ]]; do
       SKIP_MCP=1
       shift
       ;;
+    --symlink)
+      INSTALL_KIND="symlink"
+      shift
+      ;;
+    --copy)
+      INSTALL_KIND="copy"
+      shift
+      ;;
     -h|--help)
       cat <<EOF
-Usage: $0 [--project | --target DIR] [--no-mcp]
+Usage: $0 [--project | --target DIR] [--no-mcp] [--symlink | --copy]
 
   (default)        install globally at ~/.config/opencode/plugins/
   --project        install project-local at \$PWD/.opencode/plugins/
   --target DIR     install into DIR
   --no-mcp         skip registering the code-memory MCP server in opencode.jsonc
+  --copy           (default) copy files; survives repo move/delete, isolated edits
+  --symlink        symlink to repo; live-tracks repo edits (contributor mode)
 EOF
       exit 0
       ;;
@@ -62,22 +73,31 @@ esac
 
 mkdir -p "$TARGET"
 
-link_or_replace() {
+install_entry() {
   local src="$1" dst="$2"
   if [[ -L "$dst" ]]; then
     rm "$dst"
+  elif [[ -d "$dst" && ! -L "$dst" ]]; then
+    rm -rf "$dst"
   elif [[ -e "$dst" ]]; then
-    echo "Refusing to overwrite real file at $dst" >&2
-    echo "Move or delete it first, then re-run." >&2
-    exit 1
+    rm -f "$dst"
   fi
-  ln -s "$src" "$dst"
-  echo "  $dst -> $src"
+  if [[ "$INSTALL_KIND" == "symlink" ]]; then
+    ln -s "$src" "$dst"
+    echo "  $dst -> $src (symlink)"
+  else
+    if [[ -d "$src" ]]; then
+      cp -R "$src" "$dst"
+    else
+      cp "$src" "$dst"
+    fi
+    echo "  $dst (copy from $src)"
+  fi
 }
 
-echo "Installing plugin into: $TARGET"
-link_or_replace "$ENTRY" "$TARGET/code-memory.ts"
-link_or_replace "$LIB"   "$TARGET/code-memory-lib"
+echo "Installing plugin into: $TARGET ($INSTALL_KIND mode)"
+install_entry "$ENTRY" "$TARGET/code-memory.ts"
+install_entry "$LIB"   "$TARGET/code-memory-lib"
 
 # Quick CLI sanity check
 echo

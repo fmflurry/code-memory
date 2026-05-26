@@ -850,6 +850,21 @@ class Pipeline:
         )
         return ep_id
 
+    def dedupe_episodes(self) -> dict[str, int]:
+        """Compact duplicate episodes in SQLite and prune their vectors.
+
+        Mirrors ``EpisodicStore.dedupe`` and follows up with a Qdrant
+        delete for removed point ids so the vector store doesn't drift
+        from the source of truth. Returns ``{"removed": n, "groups": g}``.
+        """
+        removed_map = self.episodic.dedupe()
+        removed_ids: list[str] = []
+        for ids in removed_map.values():
+            removed_ids.extend(ids)
+        if removed_ids and not getattr(self, "skip_vectors", False):
+            self.vector.delete_by_ids(self.cfg.qdrant_episodes, removed_ids)
+        return {"removed": len(removed_ids), "groups": len(removed_map)}
+
     def _upsert_graph(
         self,
         ex: ExtractedFile,
