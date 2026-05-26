@@ -1271,7 +1271,7 @@ def _health(args: dict[str, Any]) -> list[TextContent]:
     # Qdrant
     t0 = _time.time()
     try:
-        from ..vector import QdrantStore
+        from .vector import QdrantStore
 
         q = QdrantStore()
         info = q.client.get_collection(cfg.qdrant_code)
@@ -1296,7 +1296,7 @@ def _health(args: dict[str, Any]) -> list[TextContent]:
     # FalkorDB
     t0 = _time.time()
     try:
-        from ..graph.falkor_store import FalkorStore
+        from .graph.falkor_store import FalkorStore
 
         g = FalkorStore(graph_name=cfg.falkor_graph)
         node_count = len(g.graph.query("MATCH (n) RETURN count(n)").result_set)
