@@ -122,6 +122,18 @@ async function createMemoryClient(opts = {}) {
       );
     },
 
+    autostartInstallDetached() {
+      if (!available) return false;
+      // Idempotent: `ensure_autostart` no-ops if launchd unit already
+      // installed and running. Passes safety guard (refuses home/root
+      // / non-VCS dirs) so unsafe cwds are silently skipped.
+      return spawnDetached(
+        binary,
+        ["autostart", "install", cwd, "--json"],
+        { cwd },
+      );
+    },
+
     async record({ prompt, plan, patch, verdict }) {
       if (!available) return;
       const args = [

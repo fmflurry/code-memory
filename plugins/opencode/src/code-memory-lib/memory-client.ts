@@ -71,6 +71,7 @@ export interface MemoryClient {
     prompts: readonly string[];
     sessionId?: string;
   }): boolean;
+  autostartInstallDetached(): boolean;
 }
 
 function nullLogger(_level: LogLevel, _message: string): void {
@@ -223,6 +224,30 @@ export async function createMemoryClient(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log("warn", `extractClaims spawn failed: ${msg}`);
+        return false;
+      }
+    },
+
+    /**
+     * Fire-and-forget autostart registration for ``cwd``. Wraps
+     * ``code-memory autostart install <cwd>``. ``ensure_autostart`` in
+     * the CLI is idempotent and refuses unsafe roots (home/root/no VCS),
+     * so this is cheap to call on every session bootstrap.
+     */
+    autostartInstallDetached() {
+      if (!available) return false;
+      const args = ["autostart", "install", cwd, "--json"];
+      try {
+        const child = spawn(binary, args, {
+          cwd,
+          detached: true,
+          stdio: "ignore",
+        });
+        child.unref();
+        return true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log("warn", `autostart install spawn failed: ${msg}`);
         return false;
       }
     },

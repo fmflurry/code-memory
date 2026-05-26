@@ -24,6 +24,10 @@ const { pruneExpired } = require("./lib/state");
 
   const mem = await createMemoryClient({ cwd, log });
   if (mem.available) {
+    // Ensure a launchd/systemd watcher unit exists for this repo so file
+    // edits between sessions trigger reingest automatically. Idempotent;
+    // safety guard inside the CLI refuses home/root / non-VCS dirs.
+    mem.autostartInstallDetached();
     mem.ingestDetached();
   }
   done();

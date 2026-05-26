@@ -365,9 +365,12 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
 
       // Once per session, kick off a delta ingest in the background. Catches
       // out-of-band edits (vim, IDE, git pull) made between sessions so the
-      // index isn't stale on the very first prompt.
+      // index isn't stale on the very first prompt. Also ensure a launchd /
+      // systemd watcher unit exists for this repo so edits BETWEEN sessions
+      // (when no agent is running) still trigger reingest automatically.
       if (memory.available && sid && !sessionsBootstrapped.has(sid)) {
         sessionsBootstrapped.add(sid);
+        memory.autostartInstallDetached();
         void memory.ingest().catch(() => {
           // ingest() logs internally; never block session start on failure.
         });
