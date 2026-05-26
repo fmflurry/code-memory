@@ -1529,6 +1529,16 @@ See `CHANGELOG.md` for the design rationale.
 
 ---
 
+## TODOs
+
+- [ ] **Docker auth**: Qdrant (:6333) and FalkorDB (:6379) ports are exposed without authentication. Add TLS + auth support so the docker-compose setup is safe for non-localhost use.
+- [ ] **Cross-embedding model dimension migration**: When the embedding model changes (e.g., 768-d to 1024-d), existing Qdrant collections become silently incompatible. Need a migration path — detect dimension mismatch, warn, offer re-index option.
+- [ ] **FalkorDB config validation**: `RESULTSET_SIZE=-1` and `TIMEOUT_DEFAULT=30000` are set in FalkorDB store with exceptions swallowed. Should validate that config took effect, warn if not.
+- [ ] **Cross-corpus benchmarks**: Current benchmark only covers Angular sample-webapp. Need Python, Go, C# corpora too since extractors exist for all four.
+- [ ] **Integration tests**: Unit tests exist but no docker-compose + real-repo roundtrip test verifying ingest → retrieve → topology end-to-end.
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

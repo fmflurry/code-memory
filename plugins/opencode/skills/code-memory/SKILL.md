@@ -44,6 +44,7 @@ If the user's phrasing matches the left column, call the right tool. Do
 | "what existed at commit C"                                | `codememory_at_sha(sha=C, sha_ord=N, project=…)`            |
 | "I just wrote / edited a file"                            | `codememory_reingest(path=…, project=…)`                    |
 | "I finished a task"                                       | `codememory_record(prompt=…, patch=…, verdict=…, project=…)`|
+| "how healthy is code-memory" / "backend status"          | `codememory_health(project=…)`                              |
 
 If two rules match, pick the more specific one (`callers` beats `retrieve`
 when the question is about a named symbol).
@@ -89,16 +90,17 @@ inspect a prior tool response.
 | `codememory_definitions`        | `symbol`, `project`                            | —                                           |
 | `codememory_assembly_members`   | `type`, `project`                              | `assembly` (`'Name, Version=…'`)            |
 | `codememory_drift`              | `head_sha`, `project`                          | —                                           |
-| `codememory_at_sha`             | `sha`, `sha_ord`, `project`                    | `label` (`Symbol`/`File`, default Symbol), `limit` (200) |
-| `codememory_callers_at_sha`     | `symbol`, `sha`, `sha_ord`, `project`          | —                                           |
+| `codememory_at_sha`             | `sha`, `project`                                | `sha_ord` (auto-computed if omitted), `label` (`Symbol`/`File`, default Symbol), `limit` (200) |
+| `codememory_callers_at_sha`     | `symbol`, `sha`, `project`                      | `sha_ord` (auto-computed if omitted)         |
+| `codememory_health`              | `project`                                      | —                                           |
 
 `symbol` is a bare identifier (`getBearerToken`), not a dotted expression.
 `target` for `importers` is the literal module key (`@scope/pkg`, `rxjs`,
 or `./relative-path`). `path` / `file` are absolute filesystem paths.
 `type` for `assembly_members` is the fully qualified .NET type name
-(`Namespace.TypeName`). `sha_ord` is the topological ordinal — compute
-once with `git rev-list --count --first-parent <sha>` and reuse for all
-time-travel calls in the same conversation.
+(`Namespace.TypeName`). `sha_ord` is the topological ordinal — the server
+auto-computes it from the SHA if omitted; you can still pass it explicitly
+to save a shell round-trip.
 
 ## Auto-injected Context Pack
 

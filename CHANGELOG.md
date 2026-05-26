@@ -345,7 +345,7 @@ is set explicitly.
 
 **Reason:** swapping `EMBED_MODEL` without setting `EMBED_DIM`
 silently truncated or rejected upserts. The known-model table
-covers bge, nomic, mxbai, and snowflake-arctic at standard sizes;
+covers bge, mxbai, and snowflake-arctic at standard sizes;
 unknown models default to 1024 with a stderr warning.
 
 ### Docs — README headline + framing pass

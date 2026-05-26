@@ -130,10 +130,6 @@ _KNOWN_MODEL_DIMS: dict[str, int] = {
     "bge-large-en": 1024,
     "bge-base-en": 768,
     "bge-small-en": 384,
-    # nomic — fast Mac default for code search
-    "nomic-embed-text": 768,
-    "nomic-embed-text-v1": 768,
-    "nomic-embed-text-v1.5": 768,
     # mixedbread
     "mxbai-embed-large": 1024,
     # snowflake
@@ -216,6 +212,13 @@ class Config:
     qdrant_claim_entities: str = _env(
         "QDRANT_COLLECTION_CLAIM_ENTITIES", "claim_entities"
     )
+    # Semantic index over user-claim triples (subject + predicate + object
+    # + evidence_span). Distinct from ``qdrant_claim_entities`` — that
+    # one stores canonical entity vectors for resolver dedup; this one
+    # stores per-claim vectors so retrieve can return semantically
+    # matching claims alongside code + episodes. SQLite (``claims.db``)
+    # remains source of truth; this collection is rebuildable.
+    qdrant_claims: str = _env("QDRANT_COLLECTION_CLAIMS", "claims")
 
     falkor_host: str = _env("FALKOR_HOST", "localhost")
     falkor_port: int = int(_env("FALKOR_PORT", "6379"))
@@ -226,8 +229,8 @@ class Config:
     data_dir: Path = Path(_env("DATA_DIR", "./data"))
 
     # Claim extraction (Graphiti-style user-prompt facts).
-    # Disabled by default — opt in once the Ollama model is pulled.
-    claims_enabled: bool = _env("CLAIMS_EXTRACTION", "false").strip().lower() in {
+    # Enabled by default. Set CLAIMS_EXTRACTION=false to disable.
+    claims_enabled: bool = _env("CLAIMS_EXTRACTION", "true").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -251,6 +254,7 @@ class Config:
             qdrant_code=f"{self.qdrant_code}__{slug}",
             qdrant_episodes=f"{self.qdrant_episodes}__{slug}",
             qdrant_claim_entities=f"{self.qdrant_claim_entities}__{slug}",
+            qdrant_claims=f"{self.qdrant_claims}__{slug}",
             falkor_graph=f"{self.falkor_graph}__{slug}",
             episodic_db=self.data_dir / slug / "episodic.db",
             claims_db=self.data_dir / slug / "claims.db",

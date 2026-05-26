@@ -1,7 +1,6 @@
 """Resolution of ``embed_dim`` from a model name.
 
-The footgun this guards: operator swaps ``EMBED_MODEL`` from
-``bge-m3`` (1024-d) to ``nomic-embed-text`` (768-d) without also
+The footgun this guards: operator swaps ``EMBED_MODEL`` without also
 setting ``EMBED_DIM``. Qdrant collection gets recreated with the
 wrong width, every upsert silently truncates or rejects. The known-
 model table fixes that by giving sensible defaults; these tests pin
@@ -23,9 +22,6 @@ from code_memory.config import resolve_embed_dim
         ("bge-m3:latest", 1024),
         ("bge-m3:567m-fp16", 1024),
         ("BAAI/bge-m3", 1024),
-        ("nomic-embed-text", 768),
-        ("nomic-embed-text:latest", 768),
-        ("nomic-embed-text-v1.5", 768),
         ("bge-small-en", 384),
         ("bge-base-en", 768),
         ("mxbai-embed-large", 1024),

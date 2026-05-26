@@ -91,6 +91,40 @@ _MIGRATIONS: tuple[str, ...] = (
 )
 
 
+class UpsertResult(str):
+    """Result of :meth:`ClaimsStore.upsert`.
+
+    Subclasses ``str`` so the old contract — ``upsert`` returning a
+    claim id — is preserved for callers that just want the id:
+
+        cid = store.upsert(record)   # works as before
+        assert isinstance(cid, str)  # still true
+
+    Newer callers (the Qdrant claim indexer) read the extra fields to
+    know which prior rows were closed in the same transaction so they
+    can flip ``open=false`` on the matching Qdrant points.
+    """
+
+    closed_ids: list[str]
+    was_new: bool
+
+    def __new__(
+        cls,
+        claim_id: str,
+        *,
+        closed_ids: list[str] | None = None,
+        was_new: bool = True,
+    ) -> "UpsertResult":
+        inst = super().__new__(cls, claim_id)
+        inst.closed_ids = list(closed_ids or [])
+        inst.was_new = was_new
+        return inst
+
+    @property
+    def claim_id(self) -> str:
+        return str(self)
+
+
 @dataclass
 class ClaimRecord:
     subject: str
@@ -131,7 +165,7 @@ class ClaimsStore:
 
     # -------------------------------------------------------------- write
 
-    def upsert(self, claim: ClaimRecord) -> str:
+    def upsert(self, claim: ClaimRecord) -> UpsertResult:
         """Insert a claim, closing any conflicting prior assertion.
 
         Dedupe: an open row with the same (subject, predicate, object,
@@ -145,15 +179,26 @@ class ClaimsStore:
         For single-valued predicates: any open ``(subject, predicate)``
         row with a different ``object`` gets ``valid_to`` set to the
         new claim's ``valid_at``. Polarity flips also close.
+
+        Returns an :class:`UpsertResult` carrying both the canonical id
+        of the (refreshed-or-new) claim AND the ids of any rows that got
+        closed by this insertion. Callers maintaining a secondary index
+        (the Qdrant claim vector store) need both: insert/refresh the
+        canonical id, and flip ``open=false`` on the closed ids.
+
+        Backwards compatibility: ``UpsertResult`` is a string subclass
+        so legacy callers using ``store.upsert(c)`` as the claim id keep
+        working (``str(result) == result.claim_id``).
         """
+        closed_ids: list[str] = []
         if claim.predicate in SINGLE_VALUED_PREDICATES:
-            self._close_conflicting(claim)
+            closed_ids = self._close_conflicting(claim)
 
         existing_id = self._find_open_duplicate(claim)
         if existing_id is not None:
             self._refresh_existing(existing_id, claim)
             self.conn.commit()
-            return existing_id
+            return UpsertResult(existing_id, closed_ids=closed_ids, was_new=False)
 
         self.conn.execute(
             "INSERT INTO claims("
@@ -181,7 +226,7 @@ class ClaimsStore:
             ),
         )
         self.conn.commit()
-        return claim.id
+        return UpsertResult(claim.id, closed_ids=closed_ids, was_new=True)
 
     def _find_open_duplicate(self, claim: ClaimRecord) -> str | None:
         """Return the id of an open row identical on (s,p,o,polarity), or None."""
@@ -237,31 +282,50 @@ class ClaimsStore:
             ),
         )
 
-    def upsert_many(self, claims: Iterable[ClaimRecord]) -> list[str]:
+    def upsert_many(self, claims: Iterable[ClaimRecord]) -> list[UpsertResult]:
         return [self.upsert(c) for c in claims]
 
-    def _close_conflicting(self, claim: ClaimRecord) -> None:
+    def _close_conflicting(self, claim: ClaimRecord) -> list[str]:
         """Close prior open assertions that conflict with the new claim.
 
         Conflict := same (subject, predicate) but different object OR
         polarity flip. Scope is global (not per-session) because user
         preferences carry across sessions; restricting to one session
         would defeat the point.
+
+        Returns the ids of the rows whose ``valid_to`` was just set, so
+        a caller maintaining a secondary index can flip their ``open``
+        flag in lockstep. Returns ``[]`` when nothing matched.
         """
-        self.conn.execute(
-            "UPDATE claims "
-            "SET valid_to = ? "
+        rows = self.conn.execute(
+            "SELECT id FROM claims "
             "WHERE subject = ? AND predicate = ? "
             "  AND valid_to IS NULL "
             "  AND (object <> ? OR polarity <> ?)",
             (
-                claim.valid_at,
                 claim.subject,
                 claim.predicate,
                 claim.object,
                 1 if claim.polarity else 0,
             ),
-        )
+        ).fetchall()
+        closed_ids = [str(r[0]) for r in rows]
+        if closed_ids:
+            self.conn.execute(
+                "UPDATE claims "
+                "SET valid_to = ? "
+                "WHERE subject = ? AND predicate = ? "
+                "  AND valid_to IS NULL "
+                "  AND (object <> ? OR polarity <> ?)",
+                (
+                    claim.valid_at,
+                    claim.subject,
+                    claim.predicate,
+                    claim.object,
+                    1 if claim.polarity else 0,
+                ),
+            )
+        return closed_ids
 
     # --------------------------------------------------------------- read
 
@@ -306,6 +370,23 @@ class ClaimsStore:
             _SELECT_ALL + " WHERE id = ?", (claim_id,)
         ).fetchone()
         return _row_to_claim(row) if row else None
+
+    def by_ids(self, ids: list[str]) -> list[ClaimRecord]:
+        """Batch fetch by id list. Preserves caller ordering.
+
+        Mirrors :meth:`EpisodicStore.by_ids`. Used to hydrate
+        ``ClaimRecord`` rows after a Qdrant semantic search returns ids.
+        Unknown ids are silently dropped — they may have been pruned
+        between the vector hit and this lookup.
+        """
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            _SELECT_ALL + f" WHERE id IN ({placeholders})", ids
+        ).fetchall()
+        by_id = {row[0]: row for row in rows}
+        return [_row_to_claim(by_id[i]) for i in ids if i in by_id]
 
     def count(self) -> int:
         (n,) = self.conn.execute("SELECT COUNT(*) FROM claims").fetchone()

@@ -13,16 +13,20 @@ Layout:
 """
 
 from .extractor import Claim, ClaimExtractor, ExtractionError
+from .indexer import ClaimsIndexer, make_claims_indexer
 from .resolver import EntityRef, EntityResolver
-from .store import ClaimRecord, ClaimsStore, SINGLE_VALUED_PREDICATES
+from .store import ClaimRecord, ClaimsStore, SINGLE_VALUED_PREDICATES, UpsertResult
 
 __all__ = [
     "Claim",
     "ClaimExtractor",
     "ClaimRecord",
+    "ClaimsIndexer",
     "ClaimsStore",
     "EntityRef",
     "EntityResolver",
     "ExtractionError",
     "SINGLE_VALUED_PREDICATES",
+    "UpsertResult",
+    "make_claims_indexer",
 ]

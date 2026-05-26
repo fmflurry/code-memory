@@ -18,10 +18,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import logging
+
 import httpx
 
 from ..config import CONFIG
+from ..resilience import with_retry
 from .m3 import HybridVec, SparseVec
+
+log_ = logging.getLogger(__name__)
 
 
 class OllamaEmbedder:
@@ -46,15 +51,28 @@ class OllamaEmbedder:
     def embed(self, texts: Sequence[str]) -> list[HybridVec]:
         if not texts:
             return []
-        res = self._client.post(
-            f"{self.url}/api/embed",
-            json={"model": self.model, "input": list(texts)},
+
+        def _call():
+            res = self._client.post(
+                f"{self.url}/api/embed",
+                json={"model": self.model, "input": list(texts)},
+            )
+            res.raise_for_status()
+            data = res.json()
+            embeddings = data.get("embeddings")
+            if embeddings is None:
+                raise RuntimeError(f"Ollama returned no embeddings: {data}")
+            return embeddings
+
+        embeddings = with_retry(
+            _call,
+            max_retries=3,
+            backoff_s=1.0,
+            on_retry=lambda attempt, exc: log_.warning(
+                "ollama embed retry %d/3 after %s", attempt, exc
+            ),
         )
-        res.raise_for_status()
-        data = res.json()
-        embeddings = data.get("embeddings")
-        if embeddings is None:
-            raise RuntimeError(f"Ollama returned no embeddings: {data}")
+
         empty = SparseVec(indices=[], values=[])
         return [
             HybridVec(dense=[float(x) for x in vec], sparse=empty)

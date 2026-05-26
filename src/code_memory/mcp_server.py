@@ -366,11 +366,8 @@ _TOOLS: list[Tool] = [
     Tool(
         name="codememory_at_sha",
         description=(
-            "Time-travel query: list Symbol (default) or File nodes that were "
-            "alive at the supplied commit. Requires the graph to carry "
-            "topological ordinals — anything ingested before the temporal "
-            "upgrade is invisible to this tool by design (we can't reason "
-            "about lifecycles for un-stamped rows). Combine with "
+            "List Symbol (default) or File nodes that were "
+            "alive at the supplied commit. Combine with "
             "codememory_callers_at_sha for 'what called X back then'."
         ),
         inputSchema={
@@ -379,6 +376,13 @@ _TOOLS: list[Tool] = [
                 "sha": {
                     "type": "string",
                     "description": "Full git SHA to query the graph state at.",
+                },
+                "sha_ord": {
+                    "type": "integer",
+                    "description": (
+                        "Topological ordinal of sha. Server auto-computes "
+                        "if omitted."
+                    ),
                 },
                 "sha_ord": {
                     "type": "integer",
@@ -401,7 +405,7 @@ _TOOLS: list[Tool] = [
                 },
                 "project": _project_schema(),
             },
-            "required": ["sha", "sha_ord", "project"],
+            "required": ["sha", "project"],
         },
     ),
     Tool(
@@ -409,18 +413,23 @@ _TOOLS: list[Tool] = [
         description=(
             "Callers of a symbol as the graph looked at the supplied commit. "
             "Answers 'what used to call X before commit Y deleted it' without "
-            "a worktree checkout. Requires temporal ordinals (see "
-            "codememory_at_sha for caveats)."
+            "a worktree checkout."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "symbol": {"type": "string"},
                 "sha": {"type": "string"},
-                "sha_ord": {"type": "integer"},
+                "sha_ord": {
+                    "type": "integer",
+                    "description": (
+                        "Topological ordinal of sha. Server auto-computes "
+                        "if omitted."
+                    ),
+                },
                 "project": _project_schema(),
             },
-            "required": ["symbol", "sha", "sha_ord", "project"],
+            "required": ["symbol", "sha", "project"],
         },
     ),
     Tool(
@@ -431,9 +440,9 @@ _TOOLS: list[Tool] = [
             "and store them with valid_at = prompt timestamp, recorded_at = "
             "now, head_sha = current HEAD. Single-valued predicates ('uses', "
             "'prefers', 'deployed-to', ...) close prior conflicting "
-            "assertions. Requires `claims_enabled=true` (env "
-            "CLAIMS_EXTRACTION=true). Fire-and-forget — call from a Stop "
-            "hook, not inline in a turn."
+            "assertions. On by default. Set CLAIMS_EXTRACTION=false to "
+            "disable. Fire-and-forget — call from a Stop hook, not inline "
+            "in a turn."
         ),
         inputSchema={
             "type": "object",
@@ -565,6 +574,21 @@ _TOOLS: list[Tool] = [
                     ),
                 },
                 "limit": {"type": "integer", "default": 50},
+                "project": _project_schema(),
+            },
+            "required": ["project"],
+        },
+    ),
+    Tool(
+        name="codememory_health",
+        description=(
+            "Check backend connectivity and stats. Returns Ollama, Qdrant, "
+            "FalkorDB status plus collection counts, metric summaries, and "
+            "last ingest timestamp."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
                 "project": _project_schema(),
             },
             "required": ["project"],
@@ -859,6 +883,23 @@ def _drift(args: dict[str, Any]) -> list[TextContent]:
     )
 
 
+def _compute_sha_ord(sha: str) -> int:
+    """Compute topological ordinal for a git sha."""
+    import subprocess
+
+    repo = Path(os.environ.get("CODE_MEMORY_REPO") or os.getcwd()).resolve()
+    out = subprocess.run(
+        ["git", "-C", str(repo), "rev-list", "--count", "--first-parent", sha],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+    if out.returncode != 0 or not out.stdout.strip():
+        raise ValueError(f"Cannot compute ordinal for sha {sha[:12]}: {out.stderr.strip()}")
+    return int(out.stdout.strip())
+
+
 def _at_sha(args: dict[str, Any]) -> list[TextContent]:
     g, slug = _graph_for(_require_project(args))
     sha = args.get("sha")
@@ -866,9 +907,10 @@ def _at_sha(args: dict[str, Any]) -> list[TextContent]:
     if not isinstance(sha, str) or not sha:
         return _text({"error": "ValueError", "message": "sha is required"})
     if not isinstance(sha_ord, int):
-        return _text(
-            {"error": "ValueError", "message": "sha_ord must be an integer"}
-        )
+        try:
+            sha_ord = _compute_sha_ord(sha)
+        except ValueError as e:
+            return _text({"error": "ValueError", "message": str(e)})
     label = args.get("label", "Symbol")
     if label not in {"Symbol", "File"}:
         return _text(
@@ -895,9 +937,10 @@ def _callers_at_sha(args: dict[str, Any]) -> list[TextContent]:
     if not isinstance(sha, str) or not sha:
         return _text({"error": "ValueError", "message": "sha is required"})
     if not isinstance(sha_ord, int):
-        return _text(
-            {"error": "ValueError", "message": "sha_ord must be an integer"}
-        )
+        try:
+            sha_ord = _compute_sha_ord(sha)
+        except ValueError as e:
+            return _text({"error": "ValueError", "message": str(e)})
     rows = g.callers_at_sha(args["symbol"], sha, sha_ord)
     return _text(
         {
@@ -924,7 +967,7 @@ def _extract_claims(args: dict[str, Any]) -> list[TextContent]:
         return _text(
             {
                 "status": "disabled",
-                "hint": "set CLAIMS_EXTRACTION=true after `ollama pull gemma2:9b`.",
+                "hint": "set CLAIMS_EXTRACTION=true (if disabled).",
             }
         )
 
@@ -1195,6 +1238,154 @@ def _read_claims(args: dict[str, Any]) -> list[TextContent]:
     )
 
 
+def _health(args: dict[str, Any]) -> list[TextContent]:
+    """Health check across all backends and storage."""
+    import time as _time
+    import httpx as _httpx
+
+    project = _require_project(args)
+    cfg = CONFIG.for_project(project)
+
+    results: dict[str, Any] = {"project": project, "backends": {}}
+
+    # Ollama
+    t0 = _time.time()
+    try:
+        with _httpx.Client(timeout=5) as c:
+            r = c.get(f"{CONFIG.ollama_url}/api/tags")
+            r.raise_for_status()
+            models = [m["name"] for m in r.json().get("models", [])]
+            results["backends"]["ollama"] = {
+                "status": "ok",
+                "url": CONFIG.ollama_url,
+                "latency_ms": round((_time.time() - t0) * 1000),
+                "models": models,
+            }
+    except Exception as exc:
+        results["backends"]["ollama"] = {
+            "status": "error",
+            "url": CONFIG.ollama_url,
+            "error": str(exc),
+        }
+
+    # Qdrant
+    t0 = _time.time()
+    try:
+        from ..vector import QdrantStore
+
+        q = QdrantStore()
+        info = q.client.get_collection(cfg.qdrant_code)
+        results["backends"]["qdrant"] = {
+            "status": "ok",
+            "url": CONFIG.qdrant_url,
+            "latency_ms": round((_time.time() - t0) * 1000),
+            "collections": {
+                "code": {
+                    "name": cfg.qdrant_code,
+                    "vectors": info.points_count,
+                },
+            },
+        }
+    except Exception as exc:
+        results["backends"]["qdrant"] = {
+            "status": "error",
+            "url": CONFIG.qdrant_url,
+            "error": str(exc),
+        }
+
+    # FalkorDB
+    t0 = _time.time()
+    try:
+        from ..graph.falkor_store import FalkorStore
+
+        g = FalkorStore(graph_name=cfg.falkor_graph)
+        node_count = len(g.graph.query("MATCH (n) RETURN count(n)").result_set)
+        results["backends"]["falkordb"] = {
+            "status": "ok",
+            "host": CONFIG.falkor_host,
+            "port": CONFIG.falkor_port,
+            "latency_ms": round((_time.time() - t0) * 1000),
+            "graph": cfg.falkor_graph,
+            "nodes": node_count,
+        }
+    except Exception as exc:
+        results["backends"]["falkordb"] = {
+            "status": "error",
+            "host": CONFIG.falkor_host,
+            "port": CONFIG.falkor_port,
+            "error": str(exc),
+        }
+
+    # Storage stats
+    results["storage"] = {
+        "data_dir": str(cfg.data_dir),
+    }
+
+    # Episodic count
+    try:
+        from ..episodic import EpisodicStore
+
+        eps = EpisodicStore(path=cfg.episodic_db)
+        row = eps.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()
+        results["storage"]["episodes"] = {
+            "path": str(cfg.episodic_db),
+            "exists": cfg.episodic_db.exists(),
+            "count": row[0] if row else 0,
+        }
+    except Exception:
+        pass
+
+    # Claims count
+    try:
+        from ..claims import ClaimsStore
+
+        cs = ClaimsStore(path=cfg.claims_db)
+        results["storage"]["claims"] = {
+            "path": str(cfg.claims_db),
+            "exists": cfg.claims_db.exists(),
+            "count": len(cs.current()) if cfg.claims_db.exists() else 0,
+        }
+        cs.close()
+    except Exception:
+        pass
+
+    # Metrics summary (if metrics db exists)
+    metrics_path = Path(
+        os.environ.get("CODEMEMORY_METRICS_DB", cfg.data_dir / "metrics.db")
+    )
+    if metrics_path.exists():
+        try:
+            from ..metrics import MetricsStore
+
+            ms = MetricsStore(metrics_path)
+            results["metrics"] = ms.summary()
+        except Exception:
+            pass
+
+    # Last ingest SHA
+    try:
+        repo = Path(
+            os.environ.get("CODE_MEMORY_REPO") or os.getcwd()
+        ).resolve()
+        if (repo / ".git").exists():
+            from ..orchestrator.ingest_state import IngestStateStore
+
+            # IngestState lives alongside episodes in the same DB
+            epdb = cfg.episodic_db
+            if epdb.exists():
+                st = IngestStateStore(epdb)
+                state = st.get(repo)
+                if state is not None:
+                    results["last_ingest"] = {
+                        "sha": state.last_sha,
+                        "ts": state.last_ts,
+                    }
+    except Exception:
+        pass
+
+    return _text(results)
+
+
 def _now() -> float:
     import time
 
@@ -1242,6 +1433,7 @@ _HANDLERS = {
     "codememory_extract_claims": _extract_claims,
     "codememory_assert_claim": _assert_claim,
     "codememory_claims": _read_claims,
+    "codememory_health": _health,
 }
 
 
@@ -1272,6 +1464,10 @@ def _bootstrap_repo() -> Path | None:
     watchdog dep) logs and continues. The MCP server still serves
     queries even if these side-channels can't be set up.
     """
+    # 0. Backend health check (best-effort)
+    if not os.environ.get("CODE_MEMORY_NO_HEALTH_CHECK"):
+        _check_backends()
+
     candidate = os.environ.get("CODE_MEMORY_REPO") or os.getcwd()
     repo = Path(candidate).resolve()
     if not (repo / ".git").exists():
@@ -1343,6 +1539,50 @@ def _bootstrap_repo() -> Path | None:
 
 
 _BOOTSTRAP_REFS: dict[str, Any] = {}
+
+
+def _check_backends() -> None:
+    """Ping backends at startup. Logs errors but never crashes."""
+    import httpx as _httpx
+
+    # Ollama
+    try:
+        with _httpx.Client(timeout=5) as c:
+            r = c.get(f"{CONFIG.ollama_url}/api/tags")
+            r.raise_for_status()
+            log.info("health: ollama ok (%s)", CONFIG.ollama_url)
+    except Exception as exc:
+        log.error("health: ollama UNREACHABLE (%s): %s", CONFIG.ollama_url, exc)
+    # Qdrant
+    try:
+        with _httpx.Client(timeout=3) as c:
+            r = c.get(f"{CONFIG.qdrant_url}/healthz")
+            r.raise_for_status()
+            log.info("health: qdrant ok (%s)", CONFIG.qdrant_url)
+    except Exception as exc:
+        log.error("health: qdrant UNREACHABLE (%s): %s", CONFIG.qdrant_url, exc)
+    # FalkorDB
+    try:
+        import redis as _redis
+
+        r = _redis.Redis(
+            host=CONFIG.falkor_host,
+            port=CONFIG.falkor_port,
+            socket_timeout=3,
+        )
+        r.ping()
+        log.info(
+            "health: falkordb ok (%s:%d)",
+            CONFIG.falkor_host,
+            CONFIG.falkor_port,
+        )
+    except Exception as exc:
+        log.error(
+            "health: falkordb UNREACHABLE (%s:%d): %s",
+            CONFIG.falkor_host,
+            CONFIG.falkor_port,
+            exc,
+        )
 
 
 async def _run() -> None:

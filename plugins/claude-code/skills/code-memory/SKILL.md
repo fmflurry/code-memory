@@ -46,6 +46,7 @@ If the user's phrasing matches the left column, call the right tool. Do
 | "I finished a task"                                       | `codememory_record(prompt=…, patch=…, verdict=…, project=…)`|
 | User asserts a durable fact / preference / decision       | `codememory_assert_claim(subject, predicate, object, project=…)` |
 | "what did the user say about X" / surface user prefs      | `codememory_claims(subject="X", project=…)`                 |
+| "how healthy is code-memory" / "backend status"          | `codememory_health(project=…)`                              |
 
 If two rules match, pick the more specific one (`callers` beats `retrieve`
 when the question is about a named symbol).
@@ -91,18 +92,19 @@ inspect a prior tool response.
 | `codememory_definitions`        | `symbol`, `project`                            | —                                           |
 | `codememory_assembly_members`   | `type`, `project`                              | `assembly` (`'Name, Version=…'`)            |
 | `codememory_drift`              | `head_sha`, `project`                          | —                                           |
-| `codememory_at_sha`             | `sha`, `sha_ord`, `project`                    | `label` (`Symbol`/`File`, default Symbol), `limit` (200) |
-| `codememory_callers_at_sha`     | `symbol`, `sha`, `sha_ord`, `project`          | —                                           |
+| `codememory_at_sha`             | `sha`, `project`                                | `sha_ord` (auto-computed if omitted), `label` (`Symbol`/`File`, default Symbol), `limit` (200) |
+| `codememory_callers_at_sha`     | `symbol`, `sha`, `project`                      | `sha_ord` (auto-computed if omitted)         |
 | `codememory_assert_claim`       | `subject`, `predicate`, `object`, `project`    | `polarity` (true), `confidence` (0.95), `evidence_span`, `valid_at`, `session_id`, `source_prompt_id` |
 | `codememory_claims`             | `project`                                      | `subject`, `as_of`, `limit` (50)            |
+| `codememory_health`              | `project`                                      | —                                           |
 
 `symbol` is a bare identifier (`getBearerToken`), not a dotted expression.
 `target` for `importers` is the literal module key (`@scope/pkg`, `rxjs`,
 or `./relative-path`). `path` / `file` are absolute filesystem paths.
 `type` for `assembly_members` is the fully qualified .NET type name
-(`Namespace.TypeName`). `sha_ord` is the topological ordinal — compute
-once with `git rev-list --count --first-parent <sha>` and reuse for all
-time-travel calls in the same conversation.
+(`Namespace.TypeName`). `sha_ord` is the topological ordinal — the server
+auto-computes it from the SHA if omitted; you can still pass it explicitly
+to save a shell round-trip.
 
 ## Auto-injected Context Pack
 

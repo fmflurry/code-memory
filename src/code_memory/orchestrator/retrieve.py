@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import re
 import time
@@ -9,13 +10,12 @@ from typing import Any
 
 import os
 
-from ..claims import ClaimRecord, ClaimsStore
+from ..claims import ClaimRecord, ClaimsIndexer, ClaimsStore, make_claims_indexer
+from ..metrics import MetricsStore, RetrieveTiming
 from ..config import CONFIG, Config, detect_project_slug
-from ..embed import M3Embedder, get_embedder
+from ..embed import HybridVec, M3Embedder, get_embedder
 from ..episodic import Episode, EpisodicStore
 from ..vector import QdrantStore, VectorHit
-from .rerank import maybe_cross_encode
-
 # Hybrid (dense + sparse RRF) is opt-in. Benchmarks on the sample-webapp
 # Angular corpus showed dense-only m3 outperforms hybrid on natural
 # language queries (see docs/BENCHMARK.md). Sparse over-promotes spec
@@ -23,6 +23,9 @@ from .rerank import maybe_cross_encode
 # heavily with the query. The collection still stores both vectors so
 # users can toggle at query time without re-ingesting.
 ENV_HYBRID = "CODEMEMORY_HYBRID"
+ENV_METRICS = "CODEMEMORY_METRICS_DB"
+
+log = logging.getLogger(__name__)
 
 
 def _retrieval_mode() -> str:
@@ -168,12 +171,18 @@ class Retriever:
         embedder: M3Embedder | None = None,
         vector: QdrantStore | None = None,
         episodic: EpisodicStore | None = None,
+        claims_indexer: ClaimsIndexer | None = None,
     ) -> None:
         self.slug = project or detect_project_slug()
         self.cfg: Config = CONFIG.for_project(self.slug)
         self.embedder = embedder or get_embedder()
         self.vector = vector or QdrantStore()
         self.episodic = episodic or EpisodicStore(path=self.cfg.episodic_db)
+        # Injected for tests; lazily built on first claim retrieval in
+        # prod so projects without ``claims.db`` pay zero cost.
+        self._claims_indexer = claims_indexer
+        self._metrics_path = Path(os.environ.get(ENV_METRICS, ""))
+        self._metrics: MetricsStore | None = None
 
     def retrieve(
         self,
@@ -183,7 +192,11 @@ class Retriever:
         top_k_claims: int = 5,
         include_idle_episodes: bool = False,
     ) -> ContextPack:
+        t0 = time.time()
+
         qvec = self.embedder.embed_one(query)
+        t_embed = time.time()
+
         # Fetch 2x candidates so re-rank has room to lift entrypoints
         # and demote generated code without losing depth. Mode is
         # selected per ``CODEMEMORY_HYBRID``; default ``dense`` reflects
@@ -194,14 +207,13 @@ class Retriever:
             top_k=top_k_code * 2,
             mode=_retrieval_mode(),
         )
-        # Cross-encoder rerank when Metal/CUDA is available — no-op
-        # otherwise. Heuristic boosts then apply on top of the new scores.
-        reranked = maybe_cross_encode(query, raw_code)
-        code_hits = _rerank_code(reranked)[:top_k_code]
+        t_code = time.time()
+        code_hits = _rerank_code(raw_code)[:top_k_code]
 
         raw_eps = self.vector.search(
             self.cfg.qdrant_episodes, qvec, top_k=top_k_eps * 3
         )
+        t_eps = time.time()
         episodes = self.episodic.by_ids([h.id for h in raw_eps])
         ep_hits, episodes = _filter_episodes(
             query,
@@ -211,7 +223,58 @@ class Retriever:
             include_idle=include_idle_episodes,
         )
 
-        claims = self._retrieve_claims(query, limit=top_k_claims)
+        claims = self._retrieve_claims(query, qvec, limit=top_k_claims)
+        t_claims = time.time()
+
+        total = time.time() - t0
+
+        # Timing log
+        log.debug(
+            "retrieve query=%r embed=%.0fms code=%.0fms eps=%.0fms claims=%.0fms total=%.0fms "
+            "code_hits=%d eps_hits=%d claims_hits=%d",
+            query,
+            (t_embed - t0) * 1000,
+            (t_code - t_embed) * 1000,
+            (t_eps - t_code) * 1000,
+            (t_claims - t_eps) * 1000,
+            total * 1000,
+            len(code_hits),
+            len(ep_hits),
+            len(claims),
+        )
+
+        # Warn on slow stages
+        if (t_embed - t0) > 5.0:
+            log.warning(
+                "retrieve: embed took %.1fs for query=%r", t_embed - t0, query
+            )
+        if (t_code - t_embed) > 2.0:
+            log.warning(
+                "retrieve: code search took %.1fs for query=%r",
+                t_code - t_embed,
+                query,
+            )
+
+        # Record metrics (non-fatal)
+        if self._metrics_path and self._metrics_path.suffix == ".db":
+            try:
+                if self._metrics is None:
+                    self._metrics = MetricsStore(self._metrics_path)
+                self._metrics.record_retrieve(
+                    RetrieveTiming(
+                        query=query,
+                        embed_ms=(t_embed - t0) * 1000,
+                        code_search_ms=(t_code - t_embed) * 1000,
+                        eps_search_ms=(t_eps - t_code) * 1000,
+                        claims_ms=(t_claims - t_eps) * 1000,
+                        total_ms=total * 1000,
+                        code_hit_count=len(code_hits),
+                        eps_hit_count=len(ep_hits),
+                        claims_hit_count=len(claims),
+                    )
+                )
+            except Exception:
+                pass  # metrics never fail retrieval
 
         return ContextPack(
             query=query,
@@ -221,20 +284,44 @@ class Retriever:
             claims=claims,
         )
 
-    def _retrieve_claims(self, query: str, limit: int) -> list[ClaimRecord]:
+    def _retrieve_claims(
+        self,
+        query: str,
+        query_vec: HybridVec,
+        limit: int,
+    ) -> list[ClaimRecord]:
         """Best-effort claim recall.
 
-        We don't index claims in Qdrant yet (planned — see task #11), so
-        scoring is a cheap token-overlap heuristic with mild recency
-        decay. Returns empty when the per-project ``claims.db`` doesn't
-        exist (the common case for projects that never opted into
-        extraction) so this is free for non-claim users.
+        Two-stage strategy:
+
+        1. **Semantic.** If the per-project Qdrant claim collection
+           exists (or can be backfilled from SQLite), search it and
+           hydrate the top-k via ``store.by_ids``. Reranked by cosine
+           score × confidence × recency decay.
+        2. **Token-overlap fallback.** When no claims collection is
+           reachable (Qdrant down, embedder unavailable, or the
+           project never opted into claim extraction), fall back to
+           the lexical ``_rank_claims`` heuristic.
+
+        Returns empty when the per-project ``claims.db`` doesn't exist
+        (the common case for projects that never opted into extraction)
+        so this is free for non-claim users.
         """
         if limit <= 0:
             return []
         path = self.cfg.claims_db
         if not path.exists():
             return []
+
+        indexer = self._ensure_claims_indexer()
+        if indexer is not None:
+            ranked = _semantic_claim_search(indexer, query_vec, limit)
+            if ranked is not None:
+                return ranked[:limit]
+
+        # Fallback path: SQLite-only token-overlap. Still useful when
+        # the embedder is offline (CI without Ollama, dev box without
+        # GPU, etc.) — keeps the orientation payload non-empty.
         try:
             store = ClaimsStore(path=path)
         except Exception:  # noqa: BLE001
@@ -246,6 +333,27 @@ class Retriever:
         if not rows:
             return []
         return _rank_claims(query, rows)[:limit]
+
+    def _ensure_claims_indexer(self) -> ClaimsIndexer | None:
+        """Lazy-init the indexer. Returns ``None`` if construction fails.
+
+        Failure modes are silent on purpose: a broken Qdrant or
+        embedder must not take down the whole retrieve call — the
+        fallback path will still return token-overlap claims.
+        """
+        if self._claims_indexer is not None:
+            return self._claims_indexer
+        try:
+            self._claims_indexer = make_claims_indexer(
+                project=self.slug,
+                cfg=self.cfg,
+                embedder=self.embedder,
+                vector=self.vector,
+            )
+        except Exception:  # noqa: BLE001
+            self._claims_indexer = None
+            return None
+        return self._claims_indexer
 
 
 def _rerank_code(hits: list[VectorHit]) -> list[VectorHit]:
@@ -265,6 +373,49 @@ def _rerank_code(hits: list[VectorHit]) -> list[VectorHit]:
         adjusted.append(VectorHit(id=h.id, score=score, payload=h.payload))
     adjusted.sort(key=lambda h: h.score, reverse=True)
     return adjusted
+
+
+def _semantic_claim_search(
+    indexer: ClaimsIndexer,
+    query_vec: HybridVec,
+    limit: int,
+) -> list[ClaimRecord] | None:
+    """Run a Qdrant search over claim points and hydrate rows.
+
+    Returns ``None`` when the indexer's collection is missing AND
+    backfill produced no rows — the caller falls back to lexical
+    ranking. Returns ``[]`` (not ``None``) when the collection exists
+    but yielded no semantic matches: the lexical path would just
+    re-scan the same rows for nothing, so we short-circuit.
+    """
+    try:
+        embedded = indexer.ensure_backfilled()
+    except Exception:  # noqa: BLE001
+        return None
+    if embedded == 0 and indexer.store.count() == 0:
+        return None
+
+    hits = indexer.search(query_vec, top_k=limit * 3)
+    if not hits:
+        # Backfill ran (or skipped because already in sync) but no
+        # semantic neighbors — surface nothing rather than recompute
+        # the same answer via token overlap.
+        return []
+
+    claims = indexer.store.by_ids([h.id for h in hits])
+    by_id = {c.id: c for c in claims}
+    ranked: list[tuple[float, ClaimRecord]] = []
+    now = time.time()
+    for h in hits:
+        claim = by_id.get(h.id)
+        if claim is None:
+            continue
+        age_s = max(0.0, now - claim.valid_at)
+        decay = math.exp(-age_s / _CLAIM_RECENCY_HALF_LIFE_S)
+        score = h.score * claim.confidence * (0.5 + 0.5 * decay)
+        ranked.append((score, claim))
+    ranked.sort(key=lambda pair: pair[0], reverse=True)
+    return [c for _, c in ranked]
 
 
 _CLAIM_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]+")

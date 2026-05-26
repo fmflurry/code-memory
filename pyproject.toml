@@ -28,12 +28,6 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.11",
 ]
-# Optional cross-encoder rerank stage. Activates automatically on
-# Apple Silicon (Metal) and CUDA hosts; CPU stays on heuristics.
-rerank = [
-  "torch>=2.1",
-  "sentence-transformers>=3.0",
-]
 # Optional in-process FlagEmbedding backend for true m3 dense+sparse
 # (EMBED_BACKEND=flagembed). Heavy (~2.3 GB weights); only worth it
 # inside long-lived processes (watcher, MCP server).

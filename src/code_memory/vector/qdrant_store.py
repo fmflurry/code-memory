@@ -49,9 +49,9 @@ class QdrantStore:
         self.url = url or CONFIG.qdrant_url
         self.client = QdrantClient(url=self.url)
         # ``CONFIG.embed_dim`` is 0 by default (sentinel for "auto").
-        # Resolve via the known-model table so ``EMBED_MODEL=nomic-embed-text``
-        # automatically picks 768 without the operator setting
-        # ``EMBED_DIM=768``. Explicit ``dim`` arg or ``EMBED_DIM`` env
+        # Resolve via the known-model table so ``EMBED_MODEL``
+        # automatically picks the right dim without the operator setting
+        # ``EMBED_DIM``. Explicit ``dim`` arg or ``EMBED_DIM`` env
         # still wins.
         self.dim = (
             dim
@@ -64,6 +64,19 @@ class QdrantStore:
     def ensure_collection(self, name: str) -> None:
         status = self._inspect_collection(name)
         if status == "hybrid":
+            # Check dimension match so mismatched embedding models are
+            # caught early with a clear error rather than cryptic Qdrant
+            # gRPC failures at upsert time.
+            existing = self.client.get_collection(collection_name=name)
+            vectors = getattr(existing.config.params, "vectors", None)
+            if isinstance(vectors, dict) and DENSE in vectors:
+                existing_dim = getattr(vectors[DENSE], "size", None)
+                if existing_dim is not None and existing_dim != self.dim:
+                    raise ValueError(
+                        f"Collection '{name}' exists with dimension {existing_dim:,}d, "
+                        f"but embedding model produces {self.dim:,}d. "
+                        f"Re-ingest (code-memory ingest --full) or delete the collection and re-create."
+                    )
             return
         if status == "legacy":
             # Caller is on the ingest path and explicitly asked us to make
@@ -247,6 +260,38 @@ class QdrantStore:
             collection_name=collection,
             points_selector=qm.PointIdsList(points=list(ids)),
         )
+
+    def set_payload(
+        self,
+        collection: str,
+        ids: Sequence[str],
+        payload: dict[str, Any],
+    ) -> None:
+        """Merge ``payload`` into points identified by ``ids``.
+
+        Used by the claim indexer to flip ``open`` from ``True`` to
+        ``False`` when a claim is superseded, without re-embedding the
+        triple. No-op on empty ids — Qdrant rejects empty selectors.
+        """
+        if not ids:
+            return
+        self.client.set_payload(
+            collection_name=collection,
+            payload=payload,
+            points=list(ids),
+        )
+
+    def count(self, collection: str) -> int:
+        """Return total point count for the collection.
+
+        Returns ``0`` for missing collections so callers can use this
+        as a cheap "do I need to backfill?" probe without try/except
+        around ``ensure_collection``.
+        """
+        if self._inspect_collection(collection) == "missing":
+            return 0
+        res = self.client.count(collection_name=collection, exact=False)
+        return int(res.count)
 
 
 def _to_filter(filt: dict[str, Any]) -> qm.Filter:
