@@ -594,6 +594,21 @@ _TOOLS: list[Tool] = [
             "required": ["project"],
         },
     ),
+    Tool(
+        name="codememory_record_read",
+        description="Record a filesystem read after an MCP tool call for efficiency tracking.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "tool": {"type": "string", "description": "Filesystem tool name (grep, read, bash, glob)"},
+                "path": {"type": "string", "description": "File path or pattern accessed"},
+                "session_id": {"type": "string", "description": "Session ID for correlation"},
+                "project": _project_schema(),
+                "chars": {"type": "integer", "description": "Output character count (optional)"},
+            },
+            "required": ["tool", "project"],
+        },
+    ),
 ]
 
 
@@ -1359,6 +1374,8 @@ def _health(args: dict[str, Any]) -> list[TextContent]:
 
             ms = MetricsStore(metrics_path)
             results["metrics"] = ms.summary()
+            results["metrics"]["tool_usage"] = ms.tool_usage_summary()
+            results["metrics"]["efficiency"] = ms.efficiency_summary()
         except Exception:
             pass
 
@@ -1384,6 +1401,24 @@ def _health(args: dict[str, Any]) -> list[TextContent]:
         pass
 
     return _text(results)
+
+
+def _record_read(args: dict[str, Any]) -> list[TextContent]:
+    project = _require_project(args)
+    tool = args.get("tool", "")
+    path = args.get("path", "")
+    chars = int(args.get("chars", 0) or 0)
+    session_id = str(args.get("session_id") or "")
+    db_path = os.environ.get("CODEMEMORY_METRICS_DB")
+    if not db_path:
+        return _text({"recorded": False, "reason": "CODEMEMORY_METRICS_DB not set"})
+    try:
+        from .metrics import MetricsStore
+        ms = MetricsStore(Path(db_path))
+        ms.record_fs_read(tool=tool, path=path, project=project, output_chars=chars, session_id=session_id)
+        return _text({"recorded": True})
+    except Exception as exc:
+        return _text({"recorded": False, "error": str(exc)})
 
 
 def _now() -> float:
@@ -1414,6 +1449,37 @@ def _head_sha_safe(repo: Path) -> str | None:
         return None
 
 
+def _record_tool_call_if_configured(tool: str, args: dict, output_chars: int) -> None:
+    """Record tool call to MetricsStore if configured. Fire-and-forget."""
+    try:
+        db_path = os.environ.get("CODEMEMORY_METRICS_DB")
+        if not db_path:
+            return
+        from .metrics import MetricsStore
+        ms = MetricsStore(Path(db_path))
+        query_text = str(args.get("query") or args.get("symbol") or args.get("target") or args.get("prompt") or "")
+        result_count = _extract_result_count(tool, args, output_chars)
+        ms.record_tool_call(
+            tool=tool,
+            project=args.get("project", ""),
+            query_text=query_text[:500],
+            output_chars=output_chars,
+            result_count=result_count,
+            session_id=str(args.get("session_id") or ""),
+        )
+    except Exception:
+        pass
+
+
+def _extract_result_count(tool: str, args: dict, output_chars: int) -> int:
+    """Estimate result count from context. Best-effort."""
+    k = int(args.get("k", 0) or 0)
+    eps = int(args.get("eps", 0) or 0)
+    if k or eps:
+        return k + eps
+    return 0
+
+
 _HANDLERS = {
     "codememory_retrieve": _retrieve,
     "codememory_record": _record,
@@ -1434,6 +1500,7 @@ _HANDLERS = {
     "codememory_assert_claim": _assert_claim,
     "codememory_claims": _read_claims,
     "codememory_health": _health,
+    "codememory_record_read": _record_read,
 }
 
 
@@ -1450,9 +1517,13 @@ def build_server() -> Server:
         if handler is None:
             return _text({"error": f"unknown tool: {name}"})
         try:
-            return await anyio.to_thread.run_sync(lambda: handler(arguments))
+            result = await anyio.to_thread.run_sync(lambda: handler(arguments))
         except Exception as exc:  # surface, don't crash the server
             return _text({"error": type(exc).__name__, "message": str(exc)})
+        # Auto-record MCP tool call for efficiency tracking (fire-and-forget)
+        output_chars = sum(len(t.text) for t in result if hasattr(t, "text"))
+        _record_tool_call_if_configured(name, arguments, output_chars)
+        return result
 
     return server
 

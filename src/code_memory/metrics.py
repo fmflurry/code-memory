@@ -66,6 +66,29 @@ class MetricsStore:
                     ts REAL NOT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tool_calls (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tool TEXT NOT NULL,
+                    project TEXT NOT NULL,
+                    query_text TEXT,
+                    output_chars INTEGER DEFAULT 0,
+                    result_count INTEGER DEFAULT 0,
+                    session_id TEXT,
+                    ts REAL NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS fs_reads (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tool TEXT NOT NULL,
+                    path TEXT,
+                    output_chars INTEGER DEFAULT 0,
+                    session_id TEXT,
+                    project TEXT NOT NULL,
+                    ts REAL NOT NULL
+                )
+            """)
             conn.commit()
     
     def record_retrieve(self, m: RetrieveTiming):
@@ -99,7 +122,87 @@ class MetricsStore:
                 (files, symbols, duration_s, time.time())
             )
             conn.commit()
-    
+
+    def record_tool_call(self, tool: str, project: str, *, query_text: str = "", output_chars: int = 0, result_count: int = 0, session_id: str = ""):
+        with sqlite3.connect(str(self.path)) as conn:
+            conn.execute(
+                "INSERT INTO tool_calls (tool, project, query_text, output_chars, result_count, session_id, ts) VALUES (?,?,?,?,?,?,?)",
+                (tool, project, query_text or None, output_chars, result_count, session_id or None, time.time())
+            )
+            conn.commit()
+
+    def record_fs_read(self, tool: str, path: str, project: str, *, output_chars: int = 0, session_id: str = ""):
+        with sqlite3.connect(str(self.path)) as conn:
+            conn.execute(
+                "INSERT INTO fs_reads (tool, path, output_chars, session_id, project, ts) VALUES (?,?,?,?,?,?)",
+                (tool, path or None, output_chars, session_id or None, project, time.time())
+            )
+            conn.commit()
+
+    def tool_usage_summary(self, project: str | None = None) -> dict:
+        with sqlite3.connect(str(self.path)) as conn:
+            conn.row_factory = sqlite3.Row
+            where = " WHERE project=?" if project else ""
+            params = (project,) if project else ()
+            rows = conn.execute(
+                f"SELECT tool, COUNT(*) as calls, COALESCE(SUM(output_chars),0) as total_chars, COALESCE(AVG(output_chars),0) as avg_chars FROM tool_calls{where} GROUP BY tool ORDER BY calls DESC",
+                params
+            ).fetchall()
+            return {
+                "tools": [dict(r) for r in rows],
+                "total_calls": sum(r["calls"] for r in rows),
+            }
+
+    def efficiency_summary(self, project: str | None = None) -> dict:
+        with sqlite3.connect(str(self.path)) as conn:
+            conn.row_factory = sqlite3.Row
+            # Aggregate tool_calls
+            tc_where = " WHERE project=?" if project else ""
+            tc_params = (project,) if project else ()
+            tc = conn.execute(
+                f"SELECT COUNT(*) as calls, COALESCE(SUM(output_chars),0) as total_chars FROM tool_calls{tc_where}",
+                tc_params
+            ).fetchone()
+
+            # Aggregate fs_reads
+            fs_where = " WHERE project=?" if project else ""
+            fs_params = (project,) if project else ()
+            fs = conn.execute(
+                f"SELECT COUNT(*) as reads, COALESCE(SUM(output_chars),0) as total_chars FROM fs_reads{fs_where}",
+                fs_params
+            ).fetchone()
+
+            # Per-session breakdown
+            session_where = " WHERE project=?" if project else ""
+            session_params = (project,) if project else ()
+            tc_sessions = conn.execute(
+                f"SELECT COALESCE(session_id,'') as session_id, SUM(output_chars) as mcp_chars FROM tool_calls{session_where} GROUP BY session_id",
+                session_params
+            ).fetchall()
+            fs_sessions = conn.execute(
+                f"SELECT COALESCE(session_id,'') as session_id, SUM(output_chars) as fs_chars FROM fs_reads{session_where} GROUP BY session_id",
+                session_params
+            ).fetchall()
+
+            # Merge per-session
+            session_map: dict[str, dict] = {}
+            for r in tc_sessions:
+                sid = r["session_id"]
+                session_map.setdefault(sid, {"session_id": sid, "mcp_chars": 0, "fs_chars": 0})
+                session_map[sid]["mcp_chars"] = r["mcp_chars"]
+            for r in fs_sessions:
+                sid = r["session_id"]
+                session_map.setdefault(sid, {"session_id": sid, "mcp_chars": 0, "fs_chars": 0})
+                session_map[sid]["fs_chars"] = r["fs_chars"]
+
+            return {
+                "total_mcp_chars": tc["total_chars"],
+                "total_fs_chars": fs["total_chars"],
+                "mcp_calls": tc["calls"],
+                "fs_reads": fs["reads"],
+                "sessions": list(session_map.values()),
+            }
+
     def summary(self) -> dict[str, Any]:
         with sqlite3.connect(str(self.path)) as conn:
             conn.row_factory = sqlite3.Row

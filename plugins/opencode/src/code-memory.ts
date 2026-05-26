@@ -479,6 +479,17 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
         }
       }
 
+      // Track filesystem reads for MCP efficiency metrics.
+      // Records only when the agent used code-memory MCP this turn.
+      if (GATED_READ_TOOLS.has(tool)) {
+        const session = sessionLookup(stateBySession, input.sessionID);
+        if (session?.explicitMemorySeen) {
+          const path =
+            pickToolPath(output.args) ?? pickToolPath(output.metadata) ?? "";
+          void memory.recordRead(tool, path);
+        }
+      }
+
       if (!memory.available) return;
       if (!WRITE_TOOLS.has(tool)) return;
 

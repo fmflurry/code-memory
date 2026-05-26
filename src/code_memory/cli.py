@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -222,6 +223,40 @@ def record(
     )
     ep_id = pipe.record_episode(ep)
     _emit({"project": pipe.slug, "id": ep_id}, as_json=as_json)
+
+
+@app.command("record-read")
+def record_read(
+    tool: str = typer.Option(..., "--tool", help="Filesystem tool name (grep, read, bash, glob)"),
+    path: str = typer.Option("", "--path", help="File path or pattern accessed"),
+    chars: int = typer.Option(0, "--chars", help="Output character count"),
+    session_id: str = typer.Option("", "--session-id"),
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """Record a filesystem read for MCP efficiency tracking.
+
+    Fire-and-forget metrics call — best-effort, never crashes.
+    Only persists when CODEMEMORY_METRICS_DB is set.
+    """
+    db_path = os.environ.get("CODEMEMORY_METRICS_DB")
+    if not db_path:
+        _emit({"recorded": False, "reason": "CODEMEMORY_METRICS_DB not set"}, as_json=as_json)
+        return
+    try:
+        from .metrics import MetricsStore
+
+        ms = MetricsStore(Path(db_path))
+        ms.record_fs_read(
+            tool=tool,
+            path=path,
+            project=project or "",
+            output_chars=chars,
+            session_id=session_id,
+        )
+        _emit({"recorded": True}, as_json=as_json)
+    except Exception as exc:
+        _emit({"recorded": False, "error": str(exc)}, as_json=as_json)
 
 
 @app.command("dedupe-episodes")

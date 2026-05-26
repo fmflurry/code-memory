@@ -72,6 +72,7 @@ export interface MemoryClient {
     sessionId?: string;
   }): boolean;
   autostartInstallDetached(): boolean;
+  recordRead(tool: string, path: string, chars?: number): Promise<void>;
 }
 
 function nullLogger(_level: LogLevel, _message: string): void {
@@ -191,6 +192,32 @@ export async function createMemoryClient(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log("warn", `record failed: ${msg}`);
+      }
+    },
+
+    async recordRead(
+      tool: string,
+      path: string,
+      chars: number = 0,
+    ): Promise<void> {
+      if (!available) return;
+      try {
+        await execFile(
+          binary,
+          [
+            "record-read",
+            "--tool",
+            tool,
+            "--path",
+            String(path),
+            "--chars",
+            String(chars),
+            ...baseArgs(),
+          ],
+          { cwd, timeout: 2000 },
+        );
+      } catch {
+        // silent — metrics are best-effort
       }
     },
 
