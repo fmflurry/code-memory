@@ -114,14 +114,15 @@ def sync_repo(
     state_store = IngestStateStore(cfg.episodic_db)
     prior = state_store.get(root_path)
     dirty = git_delta.dirty_files(root_path)
+    dirty_deleted = git_delta.dirty_deleted_files(root_path)
 
     # ---- Case 1: HEAD matches local state ---------------------------------
     if prior is not None and prior.last_sha == head:
-        if not dirty:
+        if not dirty and not dirty_deleted:
             log.info("sync noop (head=%s, clean)", head[:12])
             return SyncResult(action="noop", head_sha=head)
         # dirty files: incremental only
-        return _run_dirty_only(root_path, slug, head, dirty)
+        return _run_dirty_only(root_path, slug, head, dirty, dirty_deleted)
 
     # ---- Case 2: no local state -------------------------------------------
     if prior is None:
@@ -181,7 +182,11 @@ def sync_repo(
 
 
 def _run_dirty_only(
-    root: Path, slug: str, head: str, dirty: Iterable[Path]
+    root: Path,
+    slug: str,
+    head: str,
+    dirty: Iterable[Path],
+    dirty_deleted: Iterable[Path] = (),
 ) -> SyncResult:
     pipe = Pipeline(project=slug)
     changed = 0
@@ -191,11 +196,17 @@ def _run_dirty_only(
         ex = pipe.reingest_file(path)
         if ex is not None:
             changed += 1
+    # Tear down vanished files even when HEAD hasn't moved. Without this
+    # leg a plain ``rm tracked.ts`` (or ``git rm``) leaves the file's
+    # graph node + vectors orphaned until the deletion is committed and
+    # a later sync runs through the diff path.
+    deleted = pipe.delete_paths(list(dirty_deleted), head_sha=head)
     return SyncResult(
         action="dirty_only",
         head_sha=head,
         base_sha=head,
         files_changed=changed,
+        files_deleted=deleted,
         notes=["worktree dirty; re-indexed locally without changing state"],
     )
 

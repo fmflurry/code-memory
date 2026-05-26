@@ -841,6 +841,32 @@ class Pipeline:
         self.ingest_file(ex, head_sha=head_sha, head_ord=head_ord)
         return ex
 
+    def delete_paths(
+        self,
+        paths: Iterable[Path | str],
+        *,
+        head_sha: str | None = None,
+        head_ord: int | None = None,
+    ) -> int:
+        """Remove ``paths`` from graph + vector index.
+
+        Mirrors the deletion branch of ``ingest_delta`` so callers that
+        already know which files vanished (file-save hooks, dirty-only
+        sync) can prune without recomputing a full git delta. When
+        ``head_sha`` is omitted we resolve it once from the first path's
+        repo so the temporal stamp still lands.
+        """
+        path_list = [str(p) for p in paths]
+        if not path_list:
+            return 0
+        if head_sha is None and path_list:
+            head_sha, head_ord = _resolve_head(Path(path_list[0]).parent)
+        for path_str in path_list:
+            self.graph.delete_file(path_str, head_sha=head_sha, head_ord=head_ord)
+            if not getattr(self, "skip_vectors", False):
+                self.vector.delete_by_path(self.cfg.qdrant_code, path_str)
+        return len(path_list)
+
     def record_episode(self, ep: Episode) -> str:
         ep_id = self.episodic.add(ep)
         hv = self.embedder.embed_one(episode_text(ep))

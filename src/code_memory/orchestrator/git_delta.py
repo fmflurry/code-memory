@@ -143,10 +143,10 @@ def diff(root: str | Path, base_sha: str, head: str = "HEAD") -> Delta:
 
 
 def dirty_files(root: str | Path) -> list[Path]:
-    """Return absolute paths of files with uncommitted changes (modified, added, untracked).
-
-    Deleted-but-not-committed files are not reported here; they're handled by
-    a future commit-driven delete.
+    """Return absolute paths of files with uncommitted *content* changes
+    (modified, added, untracked). Worktree deletions are reported by
+    ``dirty_deleted_files`` so callers can route them to a delete path
+    instead of trying to reingest a missing file.
     """
     repo = Path(root).resolve()
     out = _run(repo, "status", "--porcelain=v1", "--untracked-files=all")
@@ -168,9 +168,44 @@ def dirty_files(root: str | Path) -> list[Path]:
     return paths
 
 
+def dirty_deleted_files(root: str | Path) -> list[Path]:
+    """Return absolute paths of files deleted in the worktree but not yet
+    committed.
+
+    Catches both ``git rm`` (index column 'D') and a plain ``rm`` against
+    a tracked file (worktree column 'D'), so the index can be pruned
+    before any commit lands. Without this, deletes only propagate after
+    the next commit — leaving the graph and vector index claiming the
+    file still exists.
+    """
+    repo = Path(root).resolve()
+    out = _run(repo, "status", "--porcelain=v1")
+    paths: list[Path] = []
+    for line in out.splitlines():
+        if len(line) < 4:
+            continue
+        xy = line[:2]
+        rest = line[3:]
+        if xy == "!!":
+            continue
+        # Renames: ``R<sp>`` in index means the OLD path is gone; we
+        # don't get the old name from here (it appears with ``->``),
+        # but ``diff`` against HEAD already emits a paired delete +
+        # change for those, so we skip rename lines defensively.
+        if "->" in rest:
+            continue
+        if xy[0] == "D" or xy[1] == "D":
+            paths.append((repo / rest).resolve())
+    return paths
+
+
 def changed_since(root: str | Path, base_sha: str, *, include_dirty: bool = True) -> Delta:
     """Convenience: delta from base_sha to HEAD, plus optional dirty worktree."""
     d = diff(root, base_sha, "HEAD")
     if include_dirty:
         d.dirty.extend(dirty_files(root))
+        # Uncommitted deletes must reach the pipeline's delete loop so
+        # graph nodes + vectors for vanished files get torn down even
+        # before the user commits the removal.
+        d.deleted.extend(dirty_deleted_files(root))
     return d

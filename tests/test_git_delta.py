@@ -140,3 +140,48 @@ def test_changed_since_includes_dirty(tmp_path: Path) -> None:
     d = git_delta.changed_since(tmp_path, base, include_dirty=True)
     names = {p.name for p in d.reingest_paths()}
     assert {"b.py", "c.py"}.issubset(names)
+
+
+def test_dirty_deleted_files_worktree_rm(tmp_path: Path) -> None:
+    """A plain ``rm`` against a tracked file must be reported as a
+    pending delete so the index can be pruned before any commit."""
+    _init_repo(tmp_path)
+    (tmp_path / "gone.py").write_text("g = 1\n")
+    (tmp_path / "keep.py").write_text("k = 1\n")
+    _commit(tmp_path, "init")
+
+    (tmp_path / "gone.py").unlink()  # worktree-only delete; no `git rm`
+
+    deleted = {p.name for p in git_delta.dirty_deleted_files(tmp_path)}
+    assert "gone.py" in deleted
+    assert "keep.py" not in deleted
+    # And it must NOT leak back into ``dirty_files`` (which would push
+    # the path into the reingest loop and crash on the missing file).
+    assert "gone.py" not in {p.name for p in git_delta.dirty_files(tmp_path)}
+
+
+def test_dirty_deleted_files_git_rm(tmp_path: Path) -> None:
+    """``git rm`` (staged delete, pre-commit) also surfaces here."""
+    _init_repo(tmp_path)
+    (tmp_path / "gone.py").write_text("g = 1\n")
+    _commit(tmp_path, "init")
+
+    _git(tmp_path, "rm", "-q", "gone.py")
+
+    deleted = {p.name for p in git_delta.dirty_deleted_files(tmp_path)}
+    assert "gone.py" in deleted
+
+
+def test_changed_since_includes_dirty_deletes(tmp_path: Path) -> None:
+    """``changed_since(include_dirty=True)`` must surface uncommitted
+    deletes so the pipeline's delete loop fires before a commit lands."""
+    _init_repo(tmp_path)
+    (tmp_path / "a.py").write_text("a = 1\n")
+    (tmp_path / "gone.py").write_text("g = 1\n")
+    base = _commit(tmp_path, "base")
+
+    (tmp_path / "gone.py").unlink()
+
+    d = git_delta.changed_since(tmp_path, base, include_dirty=True)
+    deleted = {p.name for p in d.deleted}
+    assert "gone.py" in deleted
