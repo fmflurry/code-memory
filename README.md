@@ -68,36 +68,23 @@ _Full tables + methodology in [Benchmarks](#benchmarks)._
 
 `code-memory` installs in **one command**. Pick your OS, paste it, you're done.
 
-<table>
-<tr>
-<th align="center" width="33%">🍎 macOS</th>
-<th align="center" width="33%">🐧 Linux</th>
-<th align="center" width="33%">🪟 Windows</th>
-</tr>
-<tr>
-<td>
+**🍎 macOS**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.sh | bash
 ```
 
-</td>
-<td>
+**🐧 Linux**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.sh | bash
 ```
 
-</td>
-<td>
+**🪟 Windows**
 
 ```powershell
 irm https://raw.githubusercontent.com/fmflurry/code-memory/main/install.ps1 | iex
 ```
-
-</td>
-</tr>
-</table>
 
 The installer fetches the CLI, drops `docker-compose.yml` into `~/.code-memory/`, starts **FalkorDB** + **Qdrant**, pulls **`bge-m3`**, and wires the **Claude Code** + **OpenCode** plugins. Idempotent — safe to re-run.
 
