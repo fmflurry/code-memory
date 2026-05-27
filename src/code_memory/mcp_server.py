@@ -1321,7 +1321,7 @@ def _health(args: dict[str, Any]) -> list[TextContent]:
         from .graph.falkor_store import FalkorStore
 
         g = FalkorStore(graph_name=cfg.falkor_graph)
-        node_count = len(g.graph.query("MATCH (n) RETURN count(n)").result_set)
+        node_count = int(g.graph.query("MATCH (n) RETURN count(n)").result_set[0][0])
         results["backends"]["falkordb"] = {
             "status": "ok",
             "host": CONFIG.falkor_host,
