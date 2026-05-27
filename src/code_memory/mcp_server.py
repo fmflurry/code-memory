@@ -146,15 +146,20 @@ _TOOLS: list[Tool] = [
     Tool(
         name="codememory_ingest",
         description=(
-            "LONG-RUNNING / BLOCKING. Ingest an entire repository. "
-            "DO NOT call without first asking the user for confirmation — full "
-            "ingests can take minutes to hours on large repos and block the "
-            "MCP transport while running. Default mode is git-incremental "
-            "(diff prior state to HEAD); pass `full=true` to purge this "
-            "project's vectors+graph+ingest_state and re-walk every file. "
-            "Once the user has explicitly confirmed, call again with "
-            "`confirmed=true` to actually run. Without `confirmed=true` the "
-            "server returns a dry advisory payload describing what would run."
+            "DISABLED BY DEFAULT — do NOT call this tool to actually run an "
+            "ingest. MCP transport blocks for the full duration of the call "
+            "and the host (Claude Code / OpenCode / ...) does not surface "
+            "mid-call `notifications/progress` back to the agent, so the user "
+            "would see no progress feedback. Instead, run the Bash CLI:\n\n"
+            "    code-memory ingest <root> --project <slug>\n\n"
+            "Prefer `run_in_background=true` + periodic `BashOutput` polls so "
+            "you (the agent) can narrate progress turn-by-turn; the CLI emits "
+            "throttled `[code-memory] files=… symbols=… rate=…/s` lines to "
+            "stderr every 50 files. The user can `tail -f` the same stream "
+            "independently. Calling this MCP tool returns a steering payload "
+            "pointing to the CLI. The blocking MCP path can be re-enabled "
+            "by setting `CODE_MEMORY_MCP_INGEST_ENABLED=1` in the server env "
+            "(then `confirmed=true` is also required)."
         ),
         inputSchema={
             "type": "object",
@@ -746,6 +751,56 @@ def _ingest(
     dry_run = bool(args.get("dry_run", False))
     confirmed = bool(args.get("confirmed", False))
     mode: IngestMode = "full" if full else "auto"
+
+    # Default OFF: MCP ingest blocks transport and the host cannot show
+    # progress mid-call. Steer the agent to the Bash CLI where progress
+    # lines stream to stderr and `run_in_background` + `BashOutput` lets
+    # the agent narrate progress turn-by-turn. Operators can re-enable
+    # the in-MCP path via env var.
+    mcp_path_enabled = os.environ.get("CODE_MEMORY_MCP_INGEST_ENABLED", "0") == "1"
+    if not mcp_path_enabled:
+        slug_arg = f" --project {project}" if project else ""
+        full_arg = " --full" if full else ""
+        since_arg = f" --since {since}" if since else ""
+        dry_arg = " --dry-run" if dry_run else ""
+        cmd = (
+            f"code-memory ingest {root.resolve()}"
+            f"{slug_arg}{full_arg}{since_arg}{dry_arg}"
+        )
+        return _text(
+            {
+                "status": "disabled_use_cli",
+                "project": project,
+                "root": str(root.resolve()),
+                "mode": mode,
+                "reason": (
+                    "MCP ingest is disabled because the transport blocks for "
+                    "the full duration of the call and the host does not "
+                    "surface `notifications/progress` mid-call. The agent "
+                    "would see only the final result and the user would see "
+                    "no progress feedback."
+                ),
+                "run_this_instead": cmd,
+                "agent_guidance": [
+                    "Invoke the command above with the Bash tool.",
+                    "Pass `run_in_background=true` so the call returns "
+                    "immediately with a shell id.",
+                    "Between turns, call `BashOutput(shell_id)` to read new "
+                    "stderr lines and narrate progress to the user.",
+                    "On completion, the final stdout payload is the same "
+                    "JSON shape this MCP tool would have returned.",
+                ],
+                "human_guidance": (
+                    "Run `tail -f` on the same process stderr (or pipe it to "
+                    "a file) for a true live view independent of the agent."
+                ),
+                "override": (
+                    "Set CODE_MEMORY_MCP_INGEST_ENABLED=1 in the MCP server "
+                    "env to re-enable the in-MCP ingest path; then pass "
+                    "`confirmed=true` on the tool call."
+                ),
+            }
+        )
 
     if not confirmed:
         return _text(
