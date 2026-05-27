@@ -224,9 +224,13 @@ class Config:
     falkor_port: int = int(_env("FALKOR_PORT", "6379"))
     falkor_graph: str = _env("FALKOR_GRAPH", "code_graph")
 
-    episodic_db: Path = Path(_env("EPISODIC_DB", "./data/episodic.db"))
-    claims_db: Path = Path(_env("CLAIMS_DB", "./data/claims.db"))
-    data_dir: Path = Path(_env("DATA_DIR", "./data"))
+    # Resolved once at import time. Late-binding against `Path.cwd()` would
+    # diverge whenever a long-lived process (MCP server) shares storage
+    # with shell invocations launched from a different cwd, silently
+    # routing writes and reads to different files.
+    episodic_db: Path = Path(_env("EPISODIC_DB", "./data/episodic.db")).resolve()
+    claims_db: Path = Path(_env("CLAIMS_DB", "./data/claims.db")).resolve()
+    data_dir: Path = Path(_env("DATA_DIR", "./data")).resolve()
 
     # Claim extraction (Graphiti-style user-prompt facts).
     # Enabled by default. Set CLAIMS_EXTRACTION=false to disable.

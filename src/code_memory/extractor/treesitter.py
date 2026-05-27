@@ -24,6 +24,10 @@ LANG_BY_EXT: dict[str, str] = {
     ".fs": "fsharp",
     ".fsi": "fsharp",
     ".fsx": "fsharp",
+    # PHP — ``.phtml`` is the legacy template extension still used by
+    # Laravel/Zend/WordPress for view files mixing PHP + HTML; same grammar.
+    ".php": "php",
+    ".phtml": "php",
 }
 
 SYMBOL_NODE_TYPES = {
@@ -57,6 +61,10 @@ SYMBOL_NODE_TYPES = {
     "type_definition",
     "method_or_prop_defn",
     "named_module",
+    # PHP — trait_declaration is the only one not already covered by
+    # the C#/TS/Py names above (class_declaration, interface_declaration,
+    # enum_declaration, method_declaration, function_definition are reused).
+    "trait_declaration",
 }
 
 CALL_NODE_TYPES = {
@@ -70,6 +78,12 @@ CALL_NODE_TYPES = {
     # become CALLS edges, which is the #1 reason the call graph looks empty
     # on real .NET codebases.
     "object_creation_expression",
+    # PHP — function call (``foo($x)``), instance method (``$obj->bar($x)``),
+    # static method (``Foo::baz($x)``). PHP ``new Foo()`` is also
+    # ``object_creation_expression`` (shared name).
+    "function_call_expression",
+    "member_call_expression",
+    "scoped_call_expression",
 }
 
 # Nodes that carry a type expression via a field named "type" (or "returns").
@@ -105,6 +119,34 @@ TYPE_CHILDREN_NODE_TYPES = {
     "heritage_clause",                    # TS class heritage
     "tuple_type",                         # C# `(int, Foo)` — walk for Foo
     "tuple_element",
+    # PHP
+    "base_clause",             # ``extends Bar``
+    "class_interface_clause",  # ``implements I1, I2``
+}
+
+# PHP type-expression wrapper nodes — recurse to find inner ``name``s.
+# ``primitive_type`` (``int``, ``string``, ``array``, ...) is skipped at
+# the top of ``_collect_type_refs`` because primitives carry no graph
+# value; they'd otherwise pollute "who touches type X" queries.
+_PHP_TYPE_WRAPPER_NODE_TYPES = {
+    "named_type",
+    "optional_type",     # ``?Foo``
+    "union_type",        # ``Foo|Bar``
+    "intersection_type", # ``Foo&Bar``
+    "disjunctive_normal_form_type",  # PHP 8.2 ``(Foo&Bar)|Baz``
+}
+
+# Parent nodes whose children include a PHP type expression in a
+# positional slot (no ``type`` field). Walk each child whose type is a
+# wrapper and collect the references. This is in addition to
+# ``TYPE_FIELD_NODE_TYPES`` (field-name lookup) so C#/TS keep working.
+_PHP_TYPED_PARENT_NODE_TYPES = {
+    "property_declaration",
+    "simple_parameter",
+    "variadic_parameter",
+    "property_promotion_parameter",
+    "method_declaration",       # return type after ``:``
+    "function_definition",      # free-function return type
 }
 
 # Primitive / language-built-in type tokens — never emit as a reference.
@@ -127,6 +169,7 @@ IMPORT_NODE_TYPES = {
     "razor_using_directive",  # Razor
     "imports_statement",  # VB
     "import_decl",  # F#
+    "namespace_use_declaration",  # PHP ``use Foo\Bar;``
 }
 
 # Razor / Blazor ``@inject TypeName Member`` directives. Each one is
@@ -308,6 +351,12 @@ _BLOCK_NAMESPACE_NODE_TYPES = {"namespace_declaration"}
 # to *everything after it*. We push without popping.
 _FILE_SCOPED_NAMESPACE_NODE_TYPES = {"file_scoped_namespace_declaration"}
 
+# PHP ``namespace X;`` (file-scoped, persists for the rest of the file) vs
+# ``namespace X { ... }`` (block, scopes only its body). Tree-sitter emits
+# the same ``namespace_definition`` node for both — we disambiguate by
+# checking for a ``compound_statement`` child.
+_PHP_NAMESPACE_NODE_TYPE = "namespace_definition"
+
 # Symbol kinds that can carry a ``partial`` modifier in C#. Partial
 # classes / structs / interfaces / records get merged into a single
 # logical entity in the graph; non-partial symbols stay file-scoped.
@@ -346,9 +395,11 @@ def _has_partial_modifier(node: Node, source: bytes) -> bool:
 
 
 def _namespace_name(node: Node, source: bytes) -> str | None:
-    """Return the dotted name of a C# namespace declaration."""
+    """Return the dotted name of a namespace declaration (C#/PHP)."""
     for child in node.children:
-        if child.type in {"qualified_name", "identifier"}:
+        # ``namespace_name`` is PHP's wrapper for ``Foo\Bar\Baz``;
+        # ``qualified_name`` is C# / PHP ``use`` clauses.
+        if child.type in {"qualified_name", "identifier", "namespace_name"}:
             return _slice(source, child)
     return None
 
@@ -388,6 +439,16 @@ def _walk(
         ns = _namespace_name(node, source)
         if ns:
             ns_stack.append(ns)
+    elif t == _PHP_NAMESPACE_NODE_TYPE:
+        # PHP ``namespace X { ... }`` has a ``compound_statement`` body —
+        # push+pop so symbols outside the braces stay unqualified.
+        # ``namespace X;`` has no body — push without pop so the rest of
+        # the file (parsed as sibling nodes of the ``program``) inherits it.
+        ns = _namespace_name(node, source)
+        if ns:
+            ns_stack.append(ns)
+            if any(c.type == "compound_statement" for c in node.children):
+                pushed_ns = True
 
     if t in SYMBOL_NODE_TYPES:
         name = _symbol_name(node, source)
@@ -409,9 +470,13 @@ def _walk(
                 )
             )
     elif t in IMPORT_NODE_TYPES:
-        mod = _import_module(node, source)
-        if mod:
-            ex.imports.append(mod)
+        if t == "namespace_use_declaration":
+            # PHP allows multiple clauses per statement; emit each FQCN.
+            ex.imports.extend(_php_use_imports(node, source))
+        else:
+            mod = _import_module(node, source)
+            if mod:
+                ex.imports.append(mod)
     elif t in INJECT_NODE_TYPES:
         injected = _inject_type(node, source)
         if injected:
@@ -449,9 +514,22 @@ def _walk(
             _collect_type_refs(type_node, source, ex.references)
     if t in TYPE_CHILDREN_NODE_TYPES:
         for child in node.children:
-            if child.type in {",", ":", "(", ")", "<", ">", "where", "extends", "implements"}:
+            if child.type in {
+                ",", ":", "(", ")", "<", ">",
+                "where", "extends", "implements",
+                "|", "&",  # PHP union/intersection separators
+            }:
                 continue
             _collect_type_refs(child, source, ex.references)
+    if t in _PHP_TYPED_PARENT_NODE_TYPES:
+        # PHP property/parameter/return types are positional children
+        # (no ``type`` field). Find any type-wrapper child and harvest
+        # the inner identifiers. The wrapper-only filter keeps us from
+        # over-walking unrelated children like ``visibility_modifier``
+        # or ``variable_name`` that share the parent node.
+        for child in node.children:
+            if child.type in _PHP_TYPE_WRAPPER_NODE_TYPES:
+                _collect_type_refs(child, source, ex.references)
     # C# pattern / cast / typeof: tree-sitter doesn't expose a `type`
     # field on these, so collect the type child positionally.
     if t == "cast_expression":
@@ -551,6 +629,27 @@ def _symbol_name(node: Node, source: bytes) -> str | None:
     return None
 
 
+def _php_use_imports(node: Node, source: bytes) -> list[str]:
+    """Extract every FQCN imported by a PHP ``use`` statement.
+
+    Handles single-clause (``use Foo\\Bar;``), multi-clause
+    (``use A\\B, C\\D;``), and aliased (``use A\\B as Alias;``) forms.
+    The alias is discarded — the graph tracks what the file *imports*,
+    not the local rebinding name. For plain ``use Alias;`` (no
+    backslash) we surface the bare ``name`` child so the import shows
+    up under its declared identifier.
+    """
+    out: list[str] = []
+    for child in node.children:
+        if child.type != "namespace_use_clause":
+            continue
+        for sub in child.children:
+            if sub.type in {"qualified_name", "name"}:
+                out.append(_slice(source, sub).strip())
+                break  # first id-bearing child is the FQCN; ignore ``as Alias``
+    return out
+
+
 def _import_module(node: Node, source: bytes) -> str | None:
     # Python ``from X import Y`` and ``from .X import Y`` expose the
     # module via a ``module_name`` field. Without this branch the first
@@ -592,6 +691,10 @@ _PARAMETER_NODE_TYPES = {
     "typed_default_parameter",
     "default_parameter",
     "identifier",  # F# value bindings expose bare identifiers
+    # PHP
+    "simple_parameter",
+    "variadic_parameter",
+    "property_promotion_parameter",  # PHP 8 ctor promotion
 }
 
 
@@ -648,12 +751,23 @@ def _collect_type_refs(node: Node, source: bytes, out: list[str]) -> None:
     - ``tuple_type`` / ``tuple_element`` → recurse for inner names
     """
     t = node.type
-    if t in {"predefined_type", "implicit_type", "this_type"}:
+    if t in {"predefined_type", "implicit_type", "this_type", "primitive_type"}:
         return
-    if t in {"identifier", "type_identifier"}:
+    if t in {"identifier", "type_identifier", "name"}:
+        # ``name`` is PHP's identifier node; included here so PHP type
+        # positions (``named_type``, ``base_clause`` children, etc.)
+        # surface as references the same way C#/TS identifiers do.
         name = _slice(source, node).strip()
         if name and name not in _PRIMITIVE_TYPE_NAMES:
             out.append(name)
+        return
+    if t in _PHP_TYPE_WRAPPER_NODE_TYPES:
+        # ``?Foo`` / ``Foo|Bar`` / ``Foo&Bar`` / ``(A&B)|C`` — recurse,
+        # skipping the punctuation that separates the alternatives.
+        for child in node.children:
+            if child.type in {"?", "|", "&", "(", ")"}:
+                continue
+            _collect_type_refs(child, source, out)
         return
     if t == "qualified_name":
         # ``Foo.Bar.Baz`` — recurse into the right-most type-bearing
@@ -668,6 +782,7 @@ def _collect_type_refs(node: Node, source: bytes, out: list[str]) -> None:
                 "type_identifier",
                 "generic_name",
                 "qualified_name",
+                "name",  # PHP: trailing segment of ``App\Repo\UserRepo``
             }:
                 last = child
         if last is not None:
@@ -932,7 +1047,25 @@ def _callee_name(node: Node, source: bytes) -> str | None:
         node.child_by_field_name("type")
         or node.child_by_field_name("function")
         or node.child_by_field_name("callee")
+        # PHP ``member_call_expression`` and ``scoped_call_expression``
+        # expose the method name via a ``name`` field instead of
+        # ``function`` / ``callee``. Without this branch, callee
+        # resolution falls through to the first-child fallback, which
+        # for ``$this->repo->byId(...)`` lands on the
+        # ``member_access_expression`` text (``$this->repo``) and
+        # ``_last_identifier`` rejects the ``->`` separator — every PHP
+        # method call disappears from the call graph.
+        or node.child_by_field_name("name")
     )
+    if fn is None and node.type == "object_creation_expression":
+        # PHP ``new Foo()`` / ``new App\Foo()`` — no field names on
+        # children. The first child is the ``new`` keyword; the class
+        # name follows. Without this, the first-child fallback returns
+        # ``new`` as the callee for every PHP ctor call.
+        for c in node.children:
+            if c.type in {"name", "identifier", "qualified_name", "type_identifier"}:
+                fn = c
+                break
     if fn is None and node.children:
         fn = node.children[0]
     if fn is None:
@@ -959,7 +1092,10 @@ def _last_identifier(expr: str) -> str | None:
     # Reject anything with brackets or calls in the trailing position.
     if expr.endswith("]") or expr.endswith(")"):
         return None
-    parts = expr.split(".")
+    # PHP fully-qualified names use ``\`` as the namespace separator
+    # (``App\Repo\UserRepo``). Normalize to ``.`` so the chained-name
+    # split below picks the trailing class/method identifier.
+    parts = expr.replace("\\", ".").split(".")
     last = parts[-1].strip()
     if not last:
         return None

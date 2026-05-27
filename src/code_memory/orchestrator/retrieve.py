@@ -181,7 +181,10 @@ class Retriever:
         # Injected for tests; lazily built on first claim retrieval in
         # prod so projects without ``claims.db`` pay zero cost.
         self._claims_indexer = claims_indexer
-        self._metrics_path = Path(os.environ.get(ENV_METRICS, ""))
+        # Mirror writer fallback in mcp_server / cli: when env var is
+        # unset, persist alongside the other per-project SQLite stores.
+        env_metrics = os.environ.get(ENV_METRICS)
+        self._metrics_path = Path(env_metrics) if env_metrics else CONFIG.data_dir / "metrics.db"
         self._metrics: MetricsStore | None = None
 
     def retrieve(

@@ -1338,7 +1338,7 @@ def _health(args: dict[str, Any]) -> list[TextContent]:
 
     # Episodic count
     try:
-        from ..episodic import EpisodicStore
+        from .episodic import EpisodicStore
 
         eps = EpisodicStore(path=cfg.episodic_db)
         row = eps.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()
@@ -1352,7 +1352,7 @@ def _health(args: dict[str, Any]) -> list[TextContent]:
 
     # Claims count
     try:
-        from ..claims import ClaimsStore
+        from .claims import ClaimsStore
 
         cs = ClaimsStore(path=cfg.claims_db)
         results["storage"]["claims"] = {
@@ -1364,20 +1364,25 @@ def _health(args: dict[str, Any]) -> list[TextContent]:
     except Exception:
         pass
 
-    # Metrics summary (if metrics db exists)
-    metrics_path = Path(
-        os.environ.get("CODEMEMORY_METRICS_DB", cfg.data_dir / "metrics.db")
-    )
-    if metrics_path.exists():
+    # Metrics summary. Always emit the block so callers can tell
+    # "no data yet" apart from "metrics module disabled or broken".
+    env_metrics = os.environ.get("CODEMEMORY_METRICS_DB")
+    metrics_path = Path(env_metrics) if env_metrics else cfg.data_dir / "metrics.db"
+    metrics_block: dict[str, Any] = {
+        "path": str(metrics_path),
+        "exists": metrics_path.exists(),
+    }
+    if metrics_block["exists"]:
         try:
-            from ..metrics import MetricsStore
+            from .metrics import MetricsStore
 
             ms = MetricsStore(metrics_path)
-            results["metrics"] = ms.summary()
-            results["metrics"]["tool_usage"] = ms.tool_usage_summary()
-            results["metrics"]["efficiency"] = ms.efficiency_summary()
-        except Exception:
-            pass
+            metrics_block.update(ms.summary())
+            metrics_block["tool_usage"] = ms.tool_usage_summary()
+            metrics_block["efficiency"] = ms.efficiency_summary()
+        except Exception as exc:
+            metrics_block["error"] = f"{type(exc).__name__}: {exc}"
+    results["metrics"] = metrics_block
 
     # Last ingest SHA
     try:
@@ -1385,7 +1390,7 @@ def _health(args: dict[str, Any]) -> list[TextContent]:
             os.environ.get("CODE_MEMORY_REPO") or os.getcwd()
         ).resolve()
         if (repo / ".git").exists():
-            from ..orchestrator.ingest_state import IngestStateStore
+            from .orchestrator.ingest_state import IngestStateStore
 
             # IngestState lives alongside episodes in the same DB
             epdb = cfg.episodic_db
