@@ -239,10 +239,7 @@ def record_read(
     Fire-and-forget metrics call — best-effort, never crashes.
     Only persists when CODEMEMORY_METRICS_DB is set.
     """
-    db_path = os.environ.get("CODEMEMORY_METRICS_DB")
-    if not db_path:
-        _emit({"recorded": False, "reason": "CODEMEMORY_METRICS_DB not set"}, as_json=as_json)
-        return
+    db_path = os.environ.get("CODEMEMORY_METRICS_DB") or str(CONFIG.data_dir / "metrics.db")
     try:
         from .metrics import MetricsStore
 

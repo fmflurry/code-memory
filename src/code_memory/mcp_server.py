@@ -1409,9 +1409,7 @@ def _record_read(args: dict[str, Any]) -> list[TextContent]:
     path = args.get("path", "")
     chars = int(args.get("chars", 0) or 0)
     session_id = str(args.get("session_id") or "")
-    db_path = os.environ.get("CODEMEMORY_METRICS_DB")
-    if not db_path:
-        return _text({"recorded": False, "reason": "CODEMEMORY_METRICS_DB not set"})
+    db_path = os.environ.get("CODEMEMORY_METRICS_DB") or str(CONFIG.data_dir / "metrics.db")
     try:
         from .metrics import MetricsStore
         ms = MetricsStore(Path(db_path))
@@ -1452,9 +1450,7 @@ def _head_sha_safe(repo: Path) -> str | None:
 def _record_tool_call_if_configured(tool: str, args: dict, output_chars: int) -> None:
     """Record tool call to MetricsStore if configured. Fire-and-forget."""
     try:
-        db_path = os.environ.get("CODEMEMORY_METRICS_DB")
-        if not db_path:
-            return
+        db_path = os.environ.get("CODEMEMORY_METRICS_DB") or str(CONFIG.data_dir / "metrics.db")
         from .metrics import MetricsStore
         ms = MetricsStore(Path(db_path))
         query_text = str(args.get("query") or args.get("symbol") or args.get("target") or args.get("prompt") or "")
