@@ -154,8 +154,13 @@ iwr https://raw.githubusercontent.com/fmflurry/code-memory/main/install.ps1 -Out
 <summary><strong>Manual install (à la carte, no one-liner)</strong></summary>
 
 ```bash
-# 1. CLI (via uv)
-uv tool install --from git+https://github.com/fmflurry/code-memory code-memory
+# 1. CLI (PyPI — recommended)
+uv tool install flurryx-code-memory
+# or: pipx install flurryx-code-memory
+# or: pip install flurryx-code-memory
+#
+# Bleeding edge from main:
+#   uv tool install --from git+https://github.com/fmflurry/code-memory flurryx-code-memory
 
 # 2. Infra (compose + env)
 mkdir -p ~/.code-memory/docker
@@ -173,7 +178,7 @@ claude plugin marketplace add https://github.com/fmflurry/code-memory
 claude plugin install code-memory@code-memory --scope user
 claude mcp add code-memory --scope user \
   -e CODE_MEMORY_PROJECT=auto \
-  -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
+  -- uvx --from flurryx-code-memory code-memory-mcp
 
 # 5. OpenCode plugin
 npm i -g code-memory-opencode
@@ -189,7 +194,7 @@ Just the Claude Code MCP server — no auto-retrieve / auto-record hooks, no Doc
 
 ```bash
 claude mcp add code-memory \
-  -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
+  -- uvx --from flurryx-code-memory code-memory-mcp
 ```
 
 </details>
