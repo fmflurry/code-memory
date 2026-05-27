@@ -153,6 +153,113 @@ def ingest_status(
     _emit(payload, as_json=as_json)
 
 
+@app.command("ingest-watch")
+def ingest_watch(
+    file: Path | None = typer.Option(
+        None,
+        "--file",
+        help=(
+            "Override snapshot path. Defaults to "
+            "$CODEMEMORY_PROGRESS_FILE or ~/.cache/code-memory/"
+            "ingest-progress.json (same path the ingest pipeline "
+            "writes to)."
+        ),
+    ),
+    interval: float = typer.Option(
+        0.25, "--interval", help="Poll cadence in seconds."
+    ),
+    stale_after: float = typer.Option(
+        10.0,
+        "--stale-after",
+        help="Show 'idle' state if no snapshot update for this many seconds.",
+    ),
+) -> None:
+    """Live ingest progressbar.
+
+    Run in any real terminal (your own iTerm pane, tmux split, etc.)
+    while an agent or another process runs ``code-memory ingest``.
+    Renders a rich live bar reading the same snapshot file the pipeline
+    writes on every tick. Exits when the snapshot reports ``done`` or on
+    Ctrl-C.
+    """
+    from .orchestrator.pipeline import _default_progress_file
+
+    path = file or _default_progress_file()
+
+    try:
+        from rich.console import Console
+        from rich.progress import (
+            BarColumn,
+            MofNCompleteColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeElapsedColumn,
+            TimeRemainingColumn,
+        )
+    except Exception as exc:  # noqa: BLE001
+        rprint(f"[red]rich not available: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    progress = Progress(
+        SpinnerColumn(style="cyan"),
+        TextColumn("[bold cyan]code-memory[/] {task.description}"),
+        BarColumn(bar_width=None),
+        MofNCompleteColumn(),
+        TextColumn(
+            "[green]{task.fields[symbols]}[/]sym "
+            "[magenta]{task.fields[chunks]}[/]chk "
+            "[yellow]{task.fields[skipped]}[/]skip "
+            "[dim]{task.fields[rate]}/s {task.fields[state]}[/]"
+        ),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=Console(),
+        refresh_per_second=8,
+    )
+
+    import time as _time
+
+    progress.start()
+    task_id = progress.add_task(
+        "waiting…", total=None, symbols=0, chunks=0, skipped=0, rate="0.0", state="idle"
+    )
+    try:
+        while True:
+            snap: dict[str, Any] | None = None
+            try:
+                snap = json.loads(path.read_text()) if path.exists() else None
+            except Exception:  # noqa: BLE001 — race with writer; retry
+                snap = None
+            now = _time.time()
+            if snap:
+                ts = float(snap.get("ts", 0.0))
+                state = "running"
+                if now - ts > stale_after:
+                    state = "stale"
+                if snap.get("done"):
+                    state = "done"
+                progress.update(
+                    task_id,
+                    description=snap.get("label", "ingest"),
+                    completed=int(snap.get("files", 0)),
+                    total=snap.get("total"),
+                    symbols=int(snap.get("symbols", 0)),
+                    chunks=int(snap.get("chunks", 0)),
+                    skipped=int(snap.get("skipped", 0)),
+                    rate=f"{float(snap.get('rate', 0.0)):.1f}",
+                    state=state,
+                )
+                if snap.get("done"):
+                    progress.refresh()
+                    break
+            _time.sleep(interval)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        progress.stop()
+
+
 @app.command()
 def reingest(
     path: Path = typer.Argument(..., exists=True, file_okay=True, dir_okay=False),

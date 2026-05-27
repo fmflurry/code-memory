@@ -791,8 +791,12 @@ def _ingest(
                     "JSON shape this MCP tool would have returned.",
                 ],
                 "human_guidance": (
-                    "Run `tail -f` on the same process stderr (or pipe it to "
-                    "a file) for a true live view independent of the agent."
+                    "Run `code-memory ingest-watch` in a separate real "
+                    "terminal pane (iTerm split / tmux pane / new window) "
+                    "for a true live rich progressbar — the ingest pipeline "
+                    "always writes a snapshot file the watcher tails. Falls "
+                    "back to `tail -f` on the stderr/log if rich isn't "
+                    "desired."
                 ),
                 "override": (
                     "Set CODE_MEMORY_MCP_INGEST_ENABLED=1 in the MCP server "

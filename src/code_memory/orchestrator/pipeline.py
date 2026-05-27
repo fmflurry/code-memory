@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sys
 import time
@@ -45,6 +46,39 @@ _PROGRESS_ENABLED = os.environ.get("CODEMEMORY_PROGRESS", "1") != "0"
 # text  = legacy throttled heartbeat lines.
 # none  = silence everything.
 _PROGRESS_STYLE = os.environ.get("CODEMEMORY_PROGRESS_STYLE", "auto").lower()
+
+
+def _default_progress_file() -> Path:
+    """Where _Heartbeat writes the live progress snapshot.
+
+    Cross-process channel for the `code-memory watch` CLI: any process
+    running ingest writes here on every tick; the watch CLI tails the
+    same path and renders a rich live bar. Path is overridable via
+    ``CODEMEMORY_PROGRESS_FILE`` for tests or split projects.
+    """
+    override = os.environ.get("CODEMEMORY_PROGRESS_FILE")
+    if override:
+        return Path(override).expanduser()
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "code-memory" / "ingest-progress.json"
+
+
+_PROGRESS_FILE = _default_progress_file()
+
+
+def _write_progress_snapshot(snap: dict[str, Any]) -> None:
+    """Atomically write a progress snapshot for the watch CLI.
+
+    Atomic via tmp + rename so a watcher never reads a half-written
+    document. Failures swallowed — UI must not break the ingest loop.
+    """
+    try:
+        _PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _PROGRESS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(snap))
+        os.replace(tmp, _PROGRESS_FILE)
+    except Exception:  # noqa: BLE001 — UI errors must not abort ingest.
+        pass
 
 
 def _want_rich_progress() -> bool:
@@ -146,6 +180,21 @@ class _Heartbeat:
         elapsed = max(time.monotonic() - self.start, 1e-6)
         return files / elapsed
 
+    def _snapshot(self, stats: IngestStats, *, done: bool) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "files": stats.files,
+            "total": self.total,
+            "symbols": stats.symbols,
+            "chunks": stats.chunks,
+            "skipped": stats.skipped,
+            "rate": self._rate(stats.files),
+            "elapsed": time.monotonic() - self.start,
+            "ts": time.time(),
+            "done": done,
+            "pid": os.getpid(),
+        }
+
     def _notify(self, stats: IngestStats, *, force: bool = False) -> None:
         if self._on_progress is None:
             return
@@ -166,6 +215,7 @@ class _Heartbeat:
 
     def tick(self, stats: IngestStats) -> None:
         self._notify(stats)
+        _write_progress_snapshot(self._snapshot(stats, done=False))
         if self._rich is not None:
             self._rich.update(
                 self._task,
@@ -200,6 +250,7 @@ class _Heartbeat:
 
     def done(self, stats: IngestStats) -> None:
         self._notify(stats, force=True)
+        _write_progress_snapshot(self._snapshot(stats, done=True))
         if self._rich is not None:
             try:
                 self._rich.update(
