@@ -1539,10 +1539,23 @@ def build_server() -> Server:
             ctx = None  # type: ignore[assignment]
 
         on_progress: Callable[[int, int | None, str], None] | None = None
+        if name == "codememory_ingest":
+            # Log token state on every ingest invocation so the user can
+            # tell from MCP server logs whether the host (Claude Code,
+            # OpenCode, ...) opted into progress at all. Without a token
+            # the spec forbids sending; the call runs silently end-to-end.
+            if progress_token is None:
+                log.info(
+                    "ingest: no progressToken on request — client did "
+                    "not opt into notifications/progress"
+                )
+            else:
+                log.info("ingest: progressToken=%r — streaming progress", progress_token)
         if progress_token is not None and ctx is not None:
             session = ctx.session
             token = progress_token
             request_id = str(ctx.request_id) if ctx.request_id is not None else None
+            send_count = {"n": 0}
 
             async def _emit(
                 completed: float, total: float | None, message: str
@@ -1565,9 +1578,14 @@ def build_server() -> Server:
                         float(total) if total is not None else None,
                         message,
                     )
-                except Exception:  # noqa: BLE001 — UI errors must never
-                    # abort the ingest worker thread.
-                    pass
+                    send_count["n"] += 1
+                    if send_count["n"] == 1 or send_count["n"] % 25 == 0:
+                        log.info(
+                            "progress sent #%d: %s", send_count["n"], message
+                        )
+                except Exception as exc:  # noqa: BLE001 — UI errors must
+                    # never abort the ingest worker thread.
+                    log.warning("progress notification failed: %s", exc)
 
             on_progress = _send
 
