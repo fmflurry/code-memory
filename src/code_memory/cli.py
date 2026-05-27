@@ -27,6 +27,28 @@ def _graph_for(project: str | None) -> FalkorStore:
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="code-memory CLI")
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        from . import __version__
+
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Print version and exit.",
+    ),
+) -> None:
+    """code-memory CLI."""
+
+
 ProjectOpt = typer.Option(
     None,
     "--project",
@@ -1186,6 +1208,39 @@ def autostart_status(
         },
         as_json=as_json,
     )
+
+
+@app.command()
+def update(
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Only print the current/latest state and exit (no changes).",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Re-run the one-liner installer (refresh docker/env/plugins from scratch).",
+    ),
+    bleeding: bool = typer.Option(
+        False,
+        "--bleeding",
+        help="Install CLI from git+main instead of PyPI.",
+    ),
+) -> None:
+    """Smart-update code-memory: refresh only components already installed locally.
+
+    Default behavior detects the CLI install method (uv tool / pipx / pip) and
+    upgrades it in place, then refreshes Docker images, present Ollama models,
+    and registered Claude/OpenCode plugins. Pieces that were never installed
+    stay untouched — no prompts, no re-asking.
+
+    Use ``--check`` for a dry-run, ``--full`` to behave like a fresh install.
+    """
+    from .updater import run_update
+
+    rc = run_update(check_only=check, full=full, bleeding=bleeding)
+    raise typer.Exit(code=rc)
 
 
 if __name__ == "__main__":

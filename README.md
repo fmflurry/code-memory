@@ -17,7 +17,7 @@ Structural symbol graph &nbsp;·&nbsp; semantic vector recall &nbsp;·&nbsp; epi
 [![tree-sitter](https://img.shields.io/badge/parser-tree--sitter-228B22)](https://tree-sitter.github.io/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Jump to:** [Get it running](#installation) &nbsp;·&nbsp; [Plug it into your agent](#mcp-server) &nbsp;·&nbsp; [How it scores vs `rg`](#benchmarks)
+**Jump to:** [Get it running](#installation) &nbsp;·&nbsp; [Update it](#updating) &nbsp;·&nbsp; [Plug it into your agent](#mcp-server) &nbsp;·&nbsp; [How it scores vs `rg`](#benchmarks)
 
 </div>
 
@@ -65,6 +65,22 @@ _Full tables + methodology in [Benchmarks](#benchmarks)._
 ---
 
 ## Installation
+
+> [!TIP]
+> ### 🔄 Already installed? Update in one command.
+>
+> ```bash
+> code-memory update          # smart refresh: CLI + Docker images + present Ollama models + plugins
+> code-memory update --check  # dry-run: print current vs latest, exit non-zero if behind
+> code-memory update --full   # re-run the one-liner installer (adds anything missing)
+> ```
+>
+> `update` is **idempotent and selective** — it only touches components that are already
+> installed locally. No re-prompting for extras you opted out of, no docker churn if
+> compose isn't on this machine. Run it weekly, or after a release announcement.
+>
+> Bleeding edge from `main`: `code-memory update --bleeding`. Full details below in
+> [Updating](#updating).
 
 `code-memory` installs in **one command**. Pick your OS, paste it, you're done.
 
@@ -240,6 +256,54 @@ cd code-memory
 `scripts/install.sh` checks prereqs, creates `.venv`, runs `pip install -e ".[dev]"`, copies `.env.example` → `.env`, starts docker compose, pulls `bge-m3`, runs `pytest -q`, optionally installs OpenCode and/or Claude Code plugins.
 
 </details>
+
+---
+
+## Updating
+
+After the initial install, never run the one-liner again — use the built-in updater:
+
+```bash
+code-memory update            # smart, idempotent, no re-prompts
+code-memory update --check    # dry-run; exit 1 if behind, 0 if current
+code-memory update --full     # behave like a fresh one-liner install
+code-memory update --bleeding # install CLI from git+main instead of PyPI
+```
+
+### What it does
+
+`update` introspects your machine and refreshes **only what is already installed**:
+
+| Component                   | Detection                                              | Refresh action                                    |
+| --------------------------- | ------------------------------------------------------ | ------------------------------------------------- |
+| **CLI**                     | `sys.prefix` (uv tool / pipx / pip / editable)         | upgrade via the same channel                      |
+| **FalkorDB + Qdrant**       | `~/.code-memory/docker/docker-compose.yml` or running  | `docker compose pull && up -d`                    |
+| **Ollama models**           | present in `ollama list` (`bge-m3`, `gemma2:9b`, …)    | `ollama pull <model>` (only for already-pulled)   |
+| **Claude Code plugin**      | `claude plugin list \| grep code-memory`                | `claude plugin install … --force`                 |
+| **OpenCode plugin**         | `npm ls -g code-memory-opencode`                       | `npm i -g code-memory-opencode`                   |
+| **Python extras**           | `FlagEmbedding` / `dnfile` import probe                | covered by the CLI upgrade                        |
+
+Anything you **didn't** install stays untouched. No "do you want gemma?" prompt, no
+docker churn on a machine that hits remote infra, no plugin re-registration if you
+deliberately removed it.
+
+### Sample output
+
+```
+$ code-memory update --check
+code-memory updater  (install: uv-tool)
+  CLI: 0.4.0  →  latest: 0.5.0
+  Components detected locally:
+    • Docker: FalkorDB  (running)
+    • Docker: Qdrant  (running)
+    • Ollama: bge-m3
+    · Ollama: gemma2:9b  [not installed — skip]
+    • Claude Code plugin
+    • Claude Code MCP
+    · OpenCode plugin (npm)  [not installed — skip]
+```
+
+Use `code-memory update --check` from CI or a cron to nudge devs when a release ships.
 
 ---
 
