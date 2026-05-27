@@ -35,6 +35,8 @@ import httpx
 from . import __version__ as _LOCAL_VERSION
 
 PYPI_PACKAGE = "flurryx-code-memory"
+LEGACY_PACKAGE = "code-memory"  # historical dist name still in older uv-tool venvs
+UV_TOOL_NAME = "code-memory"  # entry-point/tool-name; what `uv tool list` shows
 DEFAULT_REPO_URL = os.environ.get(
     "CODEMEMORY_REPO_URL", "https://github.com/fmflurry/code-memory"
 )
@@ -108,21 +110,29 @@ def detect_install_method() -> InstallMethod:
 
 
 def _is_editable_install() -> bool:
-    try:
-        from importlib.metadata import distribution
+    from importlib.metadata import distribution
 
-        d = distribution(PYPI_PACKAGE)
-        raw = d.read_text("direct_url.json") or ""
+    for name in (PYPI_PACKAGE, LEGACY_PACKAGE):
+        try:
+            d = distribution(name)
+        except Exception:  # noqa: BLE001
+            continue
+        try:
+            raw = d.read_text("direct_url.json") or ""
+        except Exception:  # noqa: BLE001
+            raw = ""
         if not raw:
-            return False
-        return bool(json.loads(raw).get("dir_info", {}).get("editable"))
-    except Exception:  # noqa: BLE001
-        return False
+            continue
+        if bool(json.loads(raw).get("dir_info", {}).get("editable")):
+            return True
+    return False
 
 
 def _pip_shows() -> bool:
-    p = _run([sys.executable, "-m", "pip", "show", PYPI_PACKAGE])
-    return p.returncode == 0
+    for name in (PYPI_PACKAGE, LEGACY_PACKAGE):
+        if _run([sys.executable, "-m", "pip", "show", name]).returncode == 0:
+            return True
+    return False
 
 
 def _ollama_models() -> list[str]:
@@ -150,6 +160,30 @@ def _docker_running(service: str) -> bool:
     if p.returncode != 0:
         return False
     return any(service in name for name in p.stdout.splitlines())
+
+
+def _running_compose_file() -> Path | None:
+    """Probe live containers for the compose file that owns them.
+
+    Handles dev installs whose compose file lives in the repo, not under
+    ``~/.code-memory/docker/``. Returns the first compose path found
+    among ``cm-falkordb`` / ``cm-qdrant`` containers, or None.
+    """
+    if not _have("docker"):
+        return None
+    for name in ("cm-falkordb", "cm-qdrant"):
+        p = _run([
+            "docker",
+            "inspect",
+            "-f",
+            "{{ index .Config.Labels \"com.docker.compose.project.config_files\" }}",
+            name,
+        ])
+        if p.returncode == 0:
+            path = p.stdout.strip()
+            if path and Path(path).exists():
+                return Path(path)
+    return None
 
 
 def _claude_plugin_present() -> bool:
@@ -251,17 +285,28 @@ def build_plan() -> UpdatePlan:
 
 
 def upgrade_cli(method: InstallMethod, *, bleeding: bool = False) -> tuple[bool, str]:
-    """Upgrade the CLI in-place via the same channel it was installed from."""
+    """Upgrade the CLI in-place via the same channel it was installed from.
+
+    For uv-tool we always do a ``--reinstall --from <source>`` so legacy
+    installs whose dist is named ``code-memory`` (pre-rename) get cleanly
+    migrated to ``flurryx-code-memory`` without the user noticing.
+    """
     source = f"git+{DEFAULT_REPO_URL}" if bleeding else PYPI_PACKAGE
     if method == "uv-tool":
-        if bleeding:
-            cmd = ["uv", "tool", "install", "--force", "--from", source, "code-memory"]
-        else:
-            cmd = ["uv", "tool", "upgrade", PYPI_PACKAGE]
-    elif method == "pipx":
-        cmd = ["pipx", "upgrade", PYPI_PACKAGE] if not bleeding else [
-            "pipx", "install", "--force", source
+        cmd = [
+            "uv",
+            "tool",
+            "install",
+            "--reinstall",
+            "--force",
+            "--from",
+            source,
+            UV_TOOL_NAME,
         ]
+    elif method == "pipx":
+        # pipx-installed users likely registered under either name; force
+        # a reinstall from <source> so the package name converges to current.
+        cmd = ["pipx", "install", "--force", source]
     elif method == "pip":
         cmd = [sys.executable, "-m", "pip", "install", "--upgrade", source]
     elif method == "editable":
@@ -273,20 +318,27 @@ def upgrade_cli(method: InstallMethod, *, bleeding: bool = False) -> tuple[bool,
 
 
 def upgrade_docker_images() -> tuple[bool, str]:
-    if not _docker_compose_present() or not _have("docker"):
-        return False, "skipped (no compose / docker)"
+    if not _have("docker"):
+        return False, "docker not on PATH"
     compose = CODEMEMORY_HOME / "docker" / "docker-compose.yml"
+    project_dir = CODEMEMORY_HOME
+    if not compose.exists():
+        live = _running_compose_file()
+        if live is None:
+            return False, "no compose file at ~/.code-memory/ and no running cm-* containers"
+        compose = live
+        project_dir = live.parent.parent if live.parent.name == "docker" else live.parent
     pull = _run(
-        ["docker", "compose", "-f", str(compose), "--project-directory", str(CODEMEMORY_HOME), "pull"],
+        ["docker", "compose", "-f", str(compose), "--project-directory", str(project_dir), "pull"],
         capture=False,
     )
     if pull.returncode != 0:
         return False, "docker compose pull failed"
     up = _run(
-        ["docker", "compose", "-f", str(compose), "--project-directory", str(CODEMEMORY_HOME), "up", "-d"],
+        ["docker", "compose", "-f", str(compose), "--project-directory", str(project_dir), "up", "-d"],
         capture=False,
     )
-    return up.returncode == 0, "compose pulled + up"
+    return up.returncode == 0, f"compose pulled + up ({compose})"
 
 
 def upgrade_ollama_model(model: str) -> tuple[bool, str]:
@@ -299,12 +351,17 @@ def upgrade_ollama_model(model: str) -> tuple[bool, str]:
 def upgrade_claude_plugin() -> tuple[bool, str]:
     if not _have("claude"):
         return False, "claude CLI not on PATH"
-    # `claude plugin install` is idempotent — re-pin to latest from marketplace
-    p = _run(
-        ["claude", "plugin", "install", "code-memory@code-memory", "--scope", "user", "--force"],
+    # `claude plugin update <name>` is the canonical refresh path.
+    # `--force` was a previous-version flag; current CLI rejects it.
+    p = _run(["claude", "plugin", "update", "code-memory@code-memory"], capture=False)
+    if p.returncode == 0:
+        return True, "claude plugin updated"
+    # Fall back to install — handles the never-installed-after-marketplace-add edge.
+    p2 = _run(
+        ["claude", "plugin", "install", "code-memory@code-memory", "--scope", "user"],
         capture=False,
     )
-    return p.returncode == 0, "claude plugin refreshed"
+    return p2.returncode == 0, "claude plugin re-installed"
 
 
 def upgrade_npm_pkg(pkg: str = "code-memory-opencode") -> tuple[bool, str]:
