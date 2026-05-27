@@ -796,14 +796,81 @@ sqlite3 ./data/<slug>/claims.db \
 
 ## Installation
 
-### One-shot scripts
+### Zero-clone install (recommended)
 
-We provide cross-platform install scripts under `scripts/`.
+Run one command — no `git clone` required. Installs the `code-memory` CLI via `uv`, drops infra files into `~/.code-memory/` (or `%USERPROFILE%\.code-memory\` on Windows), starts FalkorDB + Qdrant, pulls `bge-m3`, and wires up both the Claude Code plugin (via the marketplace) and the OpenCode plugin (from npm).
 
 #### macOS / Linux
 
 ```bash
-git clone https://github.com/<you>/code-memory.git
+curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.sh | bash
+```
+
+Opt out of pieces:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.sh \
+  | bash -s -- --no-docker --no-ollama --no-claude --no-opencode --no-mcp
+```
+
+Flags: `--no-docker`, `--no-ollama`, `--no-claude`, `--no-opencode`, `--no-mcp`.
+
+#### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/fmflurry/code-memory/main/install.ps1 | iex
+```
+
+Opt out of pieces — download then run with switches:
+
+```powershell
+iwr https://raw.githubusercontent.com/fmflurry/code-memory/main/install.ps1 -OutFile install.ps1
+./install.ps1 -NoDocker -NoOllama -NoClaude -NoOpencode -NoMcp
+```
+
+Switches: `-NoDocker`, `-NoOllama`, `-NoClaude`, `-NoOpencode`, `-NoMcp`.
+
+#### Manual zero-clone (à la carte)
+
+```bash
+# 1. CLI
+uv tool install --from git+https://github.com/fmflurry/code-memory code-memory
+
+# 2. Claude Code plugin + MCP
+claude plugin marketplace add https://github.com/fmflurry/code-memory
+claude plugin install code-memory@code-memory --scope user
+claude mcp add code-memory --scope user \
+  -e CODE_MEMORY_PROJECT=auto \
+  -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
+
+# 3. OpenCode plugin
+npm i -g code-memory-opencode
+code-memory-opencode-install
+```
+
+#### MCP-only (lightest)
+
+If you only want the Claude Code MCP server (no auto-retrieve/record hooks):
+
+```bash
+claude mcp add code-memory \
+  -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
+```
+
+#### Self-hosted infra (no Docker on dev box)
+
+Point `~/.code-memory/.env` at remote FalkorDB / Qdrant / Ollama endpoints (`FALKOR_HOST`, `QDRANT_URL`, `OLLAMA_HOST`) and run the installer with `--no-docker --no-ollama`.
+
+---
+
+### Contributor install (clones repo)
+
+For hacking on code-memory itself — gets you an editable install, the test suite, and lets you point plugins at the source tree.
+
+#### macOS / Linux
+
+```bash
+git clone https://github.com/fmflurry/code-memory.git
 cd code-memory
 ./scripts/install.sh
 ```
@@ -811,7 +878,7 @@ cd code-memory
 #### Windows (PowerShell)
 
 ```powershell
-git clone https://github.com/<you>/code-memory.git
+git clone https://github.com/fmflurry/code-memory.git
 cd code-memory
 ./scripts/install.ps1
 ```

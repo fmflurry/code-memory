@@ -1,11 +1,15 @@
 {
-  "name": "@code-memory/opencode-plugin",
+  "name": "code-memory-opencode",
   "version": "0.3.0",
   "description": "OpenCode plugin: auto-retrieve and auto-learn against a local code-memory backend.",
   "type": "module",
   "main": "src/code-memory.ts",
   "exports": {
     ".": "./src/code-memory.ts"
+  },
+  "bin": {
+    "code-memory-opencode-install": "scripts/install.mjs",
+    "code-memory-opencode-uninstall": "scripts/uninstall.mjs"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -20,8 +24,24 @@
   },
   "files": [
     "src/",
+    "scripts/install.mjs",
+    "scripts/uninstall.mjs",
     "skills/",
     "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fmflurry/code-memory.git",
+    "directory": "plugins/opencode"
+  },
+  "homepage": "https://github.com/fmflurry/code-memory",
+  "bugs": "https://github.com/fmflurry/code-memory/issues",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "code-memory",
+    "mcp",
+    "rag"
   ],
   "license": "MIT"
 }
