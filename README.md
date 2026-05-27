@@ -75,7 +75,7 @@ _Full tables + methodology in [Benchmarks](#benchmarks)._
 It runs entirely on your machine. No OpenAI calls. No cloud. No vendor lock-in. Designed to be _boring infrastructure_ you can wire into any harness via CLI, hooks, or MCP.
 
 <div align="center">
-  <img src="docs/architecture.png" alt="code-memory architecture — agent → orchestrator → extractor / embedder / episodic → FalkorDB + Qdrant + SQLite" width="900">
+  <img src="docs/architecture.png" alt="code-memory architecture — agent → mcp_server/cli → orchestrator → extract / embed / episodic / claims / sync / metrics → FalkorDB + Qdrant + SQLite" width="900">
 </div>
 
 ---
