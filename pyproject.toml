@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "code-memory"
-version = "0.3.0"
+name = "flurryx-code-memory"
+version = "0.4.0"
 description = "Local lightweight memory layer for coding agents: FalkorDB + Qdrant + Ollama (BGE-M3) + tree-sitter"
 requires-python = ">=3.11"
 dependencies = [
