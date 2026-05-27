@@ -64,6 +64,193 @@ _Full tables + methodology in [Benchmarks](#benchmarks)._
 
 ---
 
+## Installation
+
+`code-memory` installs in **one command**. Pick your OS, paste it, you're done.
+
+<table>
+<tr>
+<th align="center" width="33%">🍎 macOS</th>
+<th align="center" width="33%">🐧 Linux</th>
+<th align="center" width="33%">🪟 Windows</th>
+</tr>
+<tr>
+<td>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.sh | bash
+```
+
+</td>
+<td>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.sh | bash
+```
+
+</td>
+<td>
+
+```powershell
+irm https://raw.githubusercontent.com/fmflurry/code-memory/main/install.ps1 | iex
+```
+
+</td>
+</tr>
+</table>
+
+The installer fetches the CLI, drops `docker-compose.yml` into `~/.code-memory/`, starts **FalkorDB** + **Qdrant**, pulls **`bge-m3`**, and wires the **Claude Code** + **OpenCode** plugins. Idempotent — safe to re-run.
+
+### ✅ Verify
+
+```bash
+code-memory --version
+code-memory health
+```
+
+`health` should print 🟢 for FalkorDB, Qdrant, and Ollama. Then point it at a repo:
+
+```bash
+code-memory ingest .
+```
+
+### 📦 Prereqs (auto-pulled where possible)
+
+|                              |                                                                       |
+| ---------------------------- | --------------------------------------------------------------------- |
+| **Python 3.11+**             | Orchestrator + CLI runtime                                            |
+| **Docker + Compose v2**      | FalkorDB (`:6379`) + Qdrant (`:6333`)                                 |
+| **Ollama**                   | Long-running embedding daemon (keeps `bge-m3` warm)                   |
+| **Disk ~3 GB · RAM 8 GB+**   | 16 GB+ recommended for large repos                                    |
+| **OS**                       | macOS / Linux / Windows (WSL2 **or** native PowerShell)               |
+
+Optional: `gemma2:9b` (~5.4 GB) — pull only if you turn on `CLAIMS_EXTRACTION=true` ([see User-claim extraction](#user-claim-extraction-graphiti-style)). Full matrix in [Stack reference](#stack-reference).
+
+### 🎛 Advanced install paths
+
+<details>
+<summary><strong>One-liner flags — opt out of pieces</strong></summary>
+
+**macOS / Linux**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.sh \
+  | bash -s -- --no-docker --no-ollama --no-claude --no-opencode --no-mcp
+```
+
+| Flag            | Effect                                                  |
+| --------------- | ------------------------------------------------------- |
+| `--no-docker`   | Don't start FalkorDB + Qdrant (using remote infra)      |
+| `--no-ollama`   | Don't pull `bge-m3` (already present, or remote)        |
+| `--no-claude`   | Skip Claude Code marketplace + plugin                   |
+| `--no-opencode` | Skip OpenCode plugin                                    |
+| `--no-mcp`      | Skip Claude Code MCP server registration                |
+
+**Windows** — `iex` doesn't accept args, so download then run:
+
+```powershell
+iwr https://raw.githubusercontent.com/fmflurry/code-memory/main/install.ps1 -OutFile install.ps1
+./install.ps1 -NoDocker -NoOllama -NoClaude -NoOpencode -NoMcp
+```
+
+| Switch        | Effect                                                  |
+| ------------- | ------------------------------------------------------- |
+| `-NoDocker`   | Don't start FalkorDB + Qdrant                           |
+| `-NoOllama`   | Don't pull `bge-m3`                                     |
+| `-NoClaude`   | Skip Claude Code marketplace + plugin                   |
+| `-NoOpencode` | Skip OpenCode plugin                                    |
+| `-NoMcp`      | Skip MCP server registration                            |
+
+</details>
+
+<details>
+<summary><strong>Manual install (à la carte, no one-liner)</strong></summary>
+
+```bash
+# 1. CLI (via uv)
+uv tool install --from git+https://github.com/fmflurry/code-memory code-memory
+
+# 2. Infra (compose + env)
+mkdir -p ~/.code-memory/docker
+curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/docker/docker-compose.yml \
+  -o ~/.code-memory/docker/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/.env.example \
+  -o ~/.code-memory/.env
+docker compose -f ~/.code-memory/docker/docker-compose.yml --project-directory ~/.code-memory up -d
+
+# 3. Embedding model
+ollama pull bge-m3
+
+# 4. Claude Code plugin + MCP
+claude plugin marketplace add https://github.com/fmflurry/code-memory
+claude plugin install code-memory@code-memory --scope user
+claude mcp add code-memory --scope user \
+  -e CODE_MEMORY_PROJECT=auto \
+  -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
+
+# 5. OpenCode plugin
+npm i -g code-memory-opencode
+code-memory-opencode-install
+```
+
+</details>
+
+<details>
+<summary><strong>MCP-only (lightest, ~10 s)</strong></summary>
+
+Just the Claude Code MCP server — no auto-retrieve / auto-record hooks, no Docker, no Ollama. Useful when FalkorDB + Qdrant already run elsewhere, or you only want the `codememory_*` tools by hand.
+
+```bash
+claude mcp add code-memory \
+  -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
+```
+
+</details>
+
+<details>
+<summary><strong>Self-hosted infra (no Docker on dev box)</strong></summary>
+
+Edit `~/.code-memory/.env` (or `%USERPROFILE%\.code-memory\.env`) to point at remote endpoints:
+
+```ini
+FALKOR_HOST=falkor.internal
+FALKOR_PORT=6379
+QDRANT_URL=https://qdrant.internal:6333
+OLLAMA_HOST=http://ollama.internal:11434
+```
+
+Re-run the one-liner with `--no-docker --no-ollama` (or `-NoDocker -NoOllama` on Windows).
+
+</details>
+
+<details>
+<summary><strong>Contributor install (clones repo, editable)</strong></summary>
+
+For hacking on code-memory itself — editable `pip install -e .`, test suite, optional plugin pointers to the source tree.
+
+**macOS / Linux**
+
+```bash
+git clone https://github.com/fmflurry/code-memory.git
+cd code-memory
+./scripts/install.sh                  # interactive
+./scripts/install.sh --plugins=all    # non-interactive
+```
+
+**Windows (PowerShell)**
+
+```powershell
+git clone https://github.com/fmflurry/code-memory.git
+cd code-memory
+./scripts/install.ps1
+```
+
+`scripts/install.sh` checks prereqs, creates `.venv`, runs `pip install -e ".[dev]"`, copies `.env.example` → `.env`, starts docker compose, pulls `bge-m3`, runs `pytest -q`, optionally installs OpenCode and/or Claude Code plugins.
+
+</details>
+
+---
+
 ## What is this?
 
 `code-memory` gives a coding agent (Claude Code, OpenCode, Cursor, your own harness) a memory it can actually use:
@@ -774,189 +961,24 @@ sqlite3 ./data/<slug>/claims.db \
 
 ---
 
-## Requirements
+## Stack reference
 
-| Component           | Minimum version                | Notes                                                              |
-| ------------------- | ------------------------------ | ------------------------------------------------------------------ |
-| **Python**          | 3.11                           | Used to build the orchestrator, CLI, and extractor.                |
-| **Docker**          | 20.x (Compose v2)              | Runs FalkorDB and Qdrant locally.                                  |
-| **Ollama**          | latest                         | Default embedding backend (long-running daemon keeps `bge-m3` warm across CLI hooks). |
-| **Embedding model** | `bge-m3`                       | `ollama pull bge-m3` (~1.2 GB). The default; recall champion on the benchmark. Opt-in same-recall paths: `EMBED_BACKEND=flagembed` for in-process dense+sparse via FlagEmbedding (~2.3 GB); `EMBED_BACKEND=tei` for HuggingFace `text-embeddings-inference` (5-10× cold ingest on Linux + NVIDIA, **same `bge-m3` weights**). |
-| **Claims model**    | `gemma2:9b` *(optional)*       | `ollama pull gemma2:9b` (~5.4 GB). Only needed when `CLAIMS_EXTRACTION=true`. See [User-claim extraction](#user-claim-extraction-graphiti-style). |
-| **Disk**            | ~3 GB                          | Ollama model (~1.2 GB) + Docker volumes + Python deps. Add ~5.4 GB if you opt into claim extraction. |
-| **RAM**             | 8 GB+                          | 16 GB+ recommended for large repos.                                |
-| **OS**              | macOS / Linux / Windows (WSL2) | Tested on Apple Silicon (M-series) and Linux x86_64.               |
+What the one-liner actually puts on your machine. Full install commands are in the [Installation](#installation) section at the top.
 
-### Optional
-
-- **Redis CLI** (`brew install redis` / `apt install redis-tools`) for poking at FalkorDB from the terminal.
-- **DB Browser for SQLite** (`brew install --cask db-browser-for-sqlite`) for browsing episodic memory.
-
----
-
-## Installation
-
-Pick your platform, pick your install method. The one-liner is the recommended path — no `git clone`, no Python venv, no manual file copy.
-
-### Pick your install
-
-| Platform        | One-liner (recommended)                                                                                    | Manual (npm + uv)                                                                                                          |
-| --------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **macOS**       | `curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.sh \| bash`                | `uv tool install --from git+https://github.com/fmflurry/code-memory code-memory` then `npm i -g code-memory-opencode`      |
-| **Linux**       | `curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.sh \| bash`                | same as macOS                                                                                                              |
-| **Windows**     | `irm https://raw.githubusercontent.com/fmflurry/code-memory/main/install.ps1 \| iex`                       | same as macOS (works in PowerShell)                                                                                        |
-
-The one-liner installs `uv`, fetches the CLI from GitHub, drops `docker-compose.yml` + `.env` into `~/.code-memory/` (or `%USERPROFILE%\.code-memory\`), starts FalkorDB + Qdrant, pulls `bge-m3`, registers the Claude Code marketplace + plugin + MCP server, and installs the OpenCode plugin from npm. All idempotent.
-
-### One-liner flags
-
-Opt out of pieces without forking the script.
-
-<details>
-<summary><strong>macOS / Linux flags</strong></summary>
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.sh \
-  | bash -s -- --no-docker --no-ollama --no-claude --no-opencode --no-mcp
-```
-
-| Flag            | Effect                                                  |
-| --------------- | ------------------------------------------------------- |
-| `--no-docker`   | Don't start FalkorDB + Qdrant (use remote infra)        |
-| `--no-ollama`   | Don't pull `bge-m3` (model already present, or remote)  |
-| `--no-claude`   | Skip Claude Code marketplace + plugin install           |
-| `--no-opencode` | Skip OpenCode plugin install from npm                   |
-| `--no-mcp`      | Skip Claude Code MCP server registration                |
-
-</details>
-
-<details>
-<summary><strong>Windows switches</strong></summary>
-
-Download then run with switches (piping `iex` doesn't accept args):
-
-```powershell
-iwr https://raw.githubusercontent.com/fmflurry/code-memory/main/install.ps1 -OutFile install.ps1
-./install.ps1 -NoDocker -NoOllama -NoClaude -NoOpencode -NoMcp
-```
-
-| Switch        | Effect                                                  |
-| ------------- | ------------------------------------------------------- |
-| `-NoDocker`   | Don't start FalkorDB + Qdrant                           |
-| `-NoOllama`   | Don't pull `bge-m3`                                     |
-| `-NoClaude`   | Skip Claude Code marketplace + plugin install           |
-| `-NoOpencode` | Skip OpenCode plugin install from npm                   |
-| `-NoMcp`      | Skip MCP server registration                            |
-
-</details>
-
-### Other install paths
-
-<details>
-<summary><strong>Manual à la carte (no one-liner)</strong></summary>
-
-```bash
-# 1. CLI (via uv)
-uv tool install --from git+https://github.com/fmflurry/code-memory code-memory
-
-# 2. Infra (compose + env)
-mkdir -p ~/.code-memory/docker
-curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/docker/docker-compose.yml \
-  -o ~/.code-memory/docker/docker-compose.yml
-curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/.env.example \
-  -o ~/.code-memory/.env
-docker compose -f ~/.code-memory/docker/docker-compose.yml --project-directory ~/.code-memory up -d
-
-# 3. Embedding model
-ollama pull bge-m3
-
-# 4. Claude Code plugin + MCP
-claude plugin marketplace add https://github.com/fmflurry/code-memory
-claude plugin install code-memory@code-memory --scope user
-claude mcp add code-memory --scope user \
-  -e CODE_MEMORY_PROJECT=auto \
-  -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
-
-# 5. OpenCode plugin
-npm i -g code-memory-opencode
-code-memory-opencode-install
-```
-
-</details>
-
-<details>
-<summary><strong>MCP-only (lightest, ~10 seconds)</strong></summary>
-
-Just the Claude Code MCP server — no auto-retrieve / auto-record hooks, no Docker, no Ollama. Useful if you already run FalkorDB + Qdrant elsewhere or only want the manual `codememory_*` tools.
-
-```bash
-claude mcp add code-memory \
-  -- uvx --from git+https://github.com/fmflurry/code-memory code-memory-mcp
-```
-
-</details>
-
-<details>
-<summary><strong>Self-hosted infra (no Docker on dev box)</strong></summary>
-
-Edit `~/.code-memory/.env` (or `%USERPROFILE%\.code-memory\.env`) to point at remote endpoints:
-
-```ini
-FALKOR_HOST=falkor.internal
-FALKOR_PORT=6379
-QDRANT_URL=https://qdrant.internal:6333
-OLLAMA_HOST=http://ollama.internal:11434
-```
-
-Then run the one-liner with `--no-docker --no-ollama` (or `-NoDocker -NoOllama` on Windows).
-
-</details>
-
-<details>
-<summary><strong>Contributor install (clones repo, editable)</strong></summary>
-
-For hacking on code-memory itself — editable `pip install -e .`, test suite, optional plugin symlinks pointing at the source tree.
-
-**macOS / Linux:**
-
-```bash
-git clone https://github.com/fmflurry/code-memory.git
-cd code-memory
-./scripts/install.sh                  # interactive
-./scripts/install.sh --plugins=all    # non-interactive
-```
-
-**Windows (PowerShell):**
-
-```powershell
-git clone https://github.com/fmflurry/code-memory.git
-cd code-memory
-./scripts/install.ps1
-```
-
-`scripts/install.sh` will: check prereqs, create `.venv`, `pip install -e ".[dev]"`, copy `.env.example` → `.env`, start docker compose, pull `bge-m3`, run `pytest -q`, optionally install the OpenCode and/or Claude Code plugins.
-
-</details>
-
-### Stack & dependencies
-
-<details>
-<summary><strong>What you're installing (runtime + transitive)</strong></summary>
-
-**Runtime services (Docker)**
+### Runtime services (Docker)
 
 | Service       | Image                         | Purpose                                                    |
 | ------------- | ----------------------------- | ---------------------------------------------------------- |
 | FalkorDB      | `falkordb/falkordb:latest`    | Redis-protocol graph DB — call/import graph, claim store   |
 | Qdrant        | `qdrant/qdrant:latest`        | Vector DB — semantic chunks (dense, optionally sparse)     |
 
-**Local daemons**
+### Local daemons
 
 | Daemon  | Why                                                                                     |
 | ------- | --------------------------------------------------------------------------------------- |
 | Ollama  | Long-running embedding server; keeps `bge-m3` warm across CLI hook invocations          |
 
-**Python runtime (CLI + MCP server)**
+### Python runtime (CLI + MCP server)
 
 | Package                       | Role                                                                  |
 | ----------------------------- | --------------------------------------------------------------------- |
@@ -970,7 +992,7 @@ cd code-memory
 | `anyio`                       | Async runtime (works under asyncio + trio)                            |
 | `watchdog`                    | Filesystem watcher (incremental re-ingest on save)                    |
 
-**Optional extras**
+### Optional extras
 
 | Extra      | Adds                                                                 | Size       |
 | ---------- | -------------------------------------------------------------------- | ---------- |
@@ -978,21 +1000,34 @@ cd code-memory
 | `[dotnet]` | `dnfile` — .NET DLL metadata reader (Assembly / Type graph nodes)    | ~200 KB    |
 | `[dev]`    | `pytest`, `pytest-asyncio`, `ruff`, `mypy`                           | small      |
 
-**Models**
+### Models
 
 | Model          | Pull command            | Size    | Required?                                        |
 | -------------- | ----------------------- | ------- | ------------------------------------------------ |
 | `bge-m3`       | `ollama pull bge-m3`    | ~1.2 GB | Yes — default embedding model                    |
 | `gemma2:9b`    | `ollama pull gemma2:9b` | ~5.4 GB | Optional — only with `CLAIMS_EXTRACTION=true`    |
 
-**Harness plugins**
+### Harness plugins
 
-| Plugin              | Distribution                                                                          |
-| ------------------- | ------------------------------------------------------------------------------------- |
-| Claude Code         | Local marketplace at `github.com/fmflurry/code-memory` → `claude plugin install`      |
-| OpenCode (`code-memory-opencode`) | npm package, runs `code-memory-opencode-install` to copy into `~/.config/opencode/plugins/` |
+| Plugin              | Distribution                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------- |
+| Claude Code         | Local marketplace at `github.com/fmflurry/code-memory` → `claude plugin install`            |
+| OpenCode            | npm package `code-memory-opencode`; `code-memory-opencode-install` copies into `~/.config/opencode/plugins/` |
 
-**Host tooling the installer expects**
+### Full requirements matrix
+
+| Component           | Minimum version                | Notes                                                              |
+| ------------------- | ------------------------------ | ------------------------------------------------------------------ |
+| **Python**          | 3.11                           | Orchestrator + CLI + extractor                                     |
+| **Docker**          | 20.x (Compose v2)              | FalkorDB + Qdrant locally                                          |
+| **Ollama**          | latest                         | Default embedding daemon (keeps `bge-m3` warm)                     |
+| **Embedding model** | `bge-m3`                       | `ollama pull bge-m3` (~1.2 GB). Default; recall champion. Opt-in alternates: `EMBED_BACKEND=flagembed` (in-process dense+sparse, ~2.3 GB) or `EMBED_BACKEND=tei` (Linux + NVIDIA, 5-10× cold ingest, same weights). |
+| **Claims model**    | `gemma2:9b` *(optional)*       | `ollama pull gemma2:9b` (~5.4 GB). Only with `CLAIMS_EXTRACTION=true`. |
+| **Disk**            | ~3 GB                          | Ollama model + Docker volumes + Python deps. Add ~5.4 GB for claims. |
+| **RAM**             | 8 GB+                          | 16 GB+ for large repos                                             |
+| **OS**              | macOS / Linux / Windows (WSL2) | Tested on Apple Silicon + Linux x86_64                             |
+
+### Host tooling
 
 | Tool                   | Why                                                                          |
 | ---------------------- | ---------------------------------------------------------------------------- |
@@ -1003,7 +1038,10 @@ cd code-memory
 | `npm` (optional)       | OpenCode plugin install                                                      |
 | `curl` (macOS/Linux) / `Invoke-WebRequest` (Windows) | Fetches install.sh + side files                        |
 
-</details>
+### Optional host tools
+
+- **Redis CLI** (`brew install redis` / `apt install redis-tools`) for poking at FalkorDB from the terminal.
+- **DB Browser for SQLite** (`brew install --cask db-browser-for-sqlite`) for browsing episodic memory.
 
 ---
 

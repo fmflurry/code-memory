@@ -4,10 +4,9 @@
 
 .DESCRIPTION
   Sets up code-memory locally on Windows: checks Python/Docker/Ollama,
-  creates a virtualenv, installs the package (with optional [rerank] /
-  [hybrid] extras), starts Docker services, pulls the bge-m3 embedding
-  model, runs the smoke tests, and optionally registers the
-  OpenCode / Claude Code harness plugins.
+  creates a virtualenv, installs the package, starts Docker services,
+  pulls the bge-m3 embedding model, runs the smoke tests, and optionally
+  registers the OpenCode / Claude Code harness plugins.
 
 .PARAMETER NoDocker
   Skip the docker compose step.
@@ -20,15 +19,6 @@
 
 .PARAMETER NoMcp
   Skip the MCP server auto-registration (passed through to plugin installers).
-
-.PARAMETER WithRerank
-  Install the [rerank] extra (sentence-transformers + torch, ~1.5 GB).
-  Cross-encoder rerank fires automatically on Apple Silicon / CUDA.
-
-.PARAMETER WithHybrid
-  Install the [hybrid] extra (FlagEmbedding + torch, ~2.3 GB). Opt-in
-  in-process BGE-M3 for dense+sparse retrieval. Default backend stays
-  Ollama unless you also set EMBED_BACKEND=flagembed.
 
 .PARAMETER WithDotnet
   Install the [dotnet] extra (dnfile, ~200 KB). Enables .NET assembly
@@ -45,14 +35,14 @@
   'project' installs into ./.opencode or ./.claude.
 
 .PARAMETER ExtrasInteractive
-  Set to `$false` to skip the interactive extras prompt. The -WithRerank /
-  -WithHybrid switches still apply.
+  Set to `$false` to skip the interactive extras prompt. The -WithDotnet
+  switch still applies.
 
 .EXAMPLE
   ./scripts/install.ps1
   ./scripts/install.ps1 -NoOllama
-  ./scripts/install.ps1 -WithRerank -Plugins all
-  ./scripts/install.ps1 -WithHybrid -Plugins claudecode -PluginsScope project
+  ./scripts/install.ps1 -WithDotnet -Plugins all
+  ./scripts/install.ps1 -Plugins claudecode -PluginsScope project
 #>
 
 [CmdletBinding()]
@@ -61,8 +51,6 @@ param(
   [switch]$NoOllama,
   [switch]$NoTests,
   [switch]$NoMcp,
-  [switch]$WithRerank,
-  [switch]$WithHybrid,
   [switch]$WithDotnet,
   [string]$Plugins = '',
   [ValidateSet('global', 'project')]
@@ -182,26 +170,18 @@ Ok "pip upgraded"
 
 # ---------- 3. package install ----------
 # Resolve optional extras up front so we do one pip resolve.
-if ($ExtrasInteractive -and -not $WithRerank -and -not $WithHybrid -and -not $WithDotnet) {
+if ($ExtrasInteractive -and -not $WithDotnet) {
   $isTty = [Environment]::UserInteractive -and [Console]::IsInputRedirected -eq $false
   if ($isTty) {
     Step "Optional extras"
-    Write-Host "  [rerank]  cross-encoder rerank stage (sentence-transformers + torch, ~1.5 GB)."
-    Write-Host "            Auto-fires on Apple Silicon / CUDA; CPU stays on bi-encoder."
-    Write-Host "  [hybrid]  in-process BGE-M3 (FlagEmbedding) for dense+sparse retrieval (~2.3 GB)."
-    Write-Host "            Default backend is Ollama (warm across hooks); hybrid is opt-in."
     Write-Host "  [dotnet]  .NET DLL metadata indexing (dnfile, ~200 KB)."
     Write-Host "            Skip if no .csproj / .NET source in repos you ingest."
     Write-Host ""
-    if (Prompt-YesNo "Install [rerank] extra?" $true)        { $WithRerank = $true }
-    if (Prompt-YesNo "Install [hybrid] extra? (heavy)" $false) { $WithHybrid = $true }
-    if (Prompt-YesNo "Install [dotnet] extra?" $false)         { $WithDotnet = $true }
+    if (Prompt-YesNo "Install [dotnet] extra?" $false) { $WithDotnet = $true }
   }
 }
 
 $extras = @('dev')
-if ($WithRerank) { $extras += 'rerank' }
-if ($WithHybrid) { $extras += 'hybrid' }
 if ($WithDotnet) { $extras += 'dotnet' }
 $extrasJoined = ($extras -join ',')
 
@@ -377,8 +357,4 @@ Step "Done"
     FalkorDB  http://localhost:3000
     Qdrant    http://localhost:6333/dashboard
 
-  Optional knobs:
-    `$env:EMBED_BACKEND = "flagembed"    # opt-in in-process BGE-M3 (needs -WithHybrid)
-    `$env:CODEMEMORY_HYBRID = "1"        # dense+sparse RRF (only with flagembed backend)
-    `$env:CODEMEMORY_RERANK = "auto"     # CE rerank (needs -WithRerank; auto-detects MPS/CUDA)
 "@ | Write-Host
