@@ -481,10 +481,6 @@ hybrid = [
     { name = "flagembedding" },
     { name = "torch" },
 ]
-rerank = [
-    { name = "sentence-transformers" },
-    { name = "torch" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -501,15 +497,13 @@ requires-dist = [
     { name = "qdrant-client", specifier = ">=1.12" },
     { name = "rich", specifier = ">=13.7" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
-    { name = "sentence-transformers", marker = "extra == 'rerank'", specifier = ">=3.0" },
     { name = "torch", marker = "extra == 'hybrid'", specifier = ">=2.1" },
-    { name = "torch", marker = "extra == 'rerank'", specifier = ">=2.1" },
     { name = "tree-sitter", specifier = ">=0.23" },
     { name = "tree-sitter-language-pack", specifier = ">=0.7" },
     { name = "typer", specifier = ">=0.12" },
     { name = "watchdog", specifier = ">=4.0" },
 ]
-provides-extras = ["dev", "rerank", "hybrid", "dotnet"]
+provides-extras = ["dev", "hybrid", "dotnet"]
 
 [[package]]
 name = "colorama"

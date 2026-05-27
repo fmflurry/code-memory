@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -727,7 +728,11 @@ def _reingest(args: dict[str, Any]) -> list[TextContent]:
     )
 
 
-def _ingest(args: dict[str, Any]) -> list[TextContent]:
+def _ingest(
+    args: dict[str, Any],
+    *,
+    on_progress: Callable[[int, int | None, str], None] | None = None,
+) -> list[TextContent]:
     project = _require_project(args)
     raw_root = args.get("root")
     if not isinstance(raw_root, str) or not raw_root.strip():
@@ -760,7 +765,9 @@ def _ingest(args: dict[str, Any]) -> list[TextContent]:
         )
 
     pipe = Pipeline(project=project)
-    stats = pipe.ingest_repo(root, mode=mode, since=since, dry_run=dry_run)
+    stats = pipe.ingest_repo(
+        root, mode=mode, since=since, dry_run=dry_run, on_progress=on_progress
+    )
     return _text(
         {
             "project": pipe.slug,
@@ -1517,8 +1524,60 @@ def build_server() -> Server:
         handler = _HANDLERS.get(name)
         if handler is None:
             return _text({"error": f"unknown tool: {name}"})
+
+        # Bridge MCP `notifications/progress` for long-running tools. The
+        # client opts in by sending `_meta.progressToken` on the request;
+        # the SDK exposes it as `request_context.meta.progressToken`. We
+        # hand the ingest pipeline a *sync* callback that schedules the
+        # async send back onto this event loop via `from_thread.run`.
+        progress_token: str | int | None = None
         try:
-            result = await anyio.to_thread.run_sync(lambda: handler(arguments))
+            ctx = server.request_context
+            if ctx.meta is not None:
+                progress_token = ctx.meta.progressToken
+        except LookupError:
+            ctx = None  # type: ignore[assignment]
+
+        on_progress: Callable[[int, int | None, str], None] | None = None
+        if progress_token is not None and ctx is not None:
+            session = ctx.session
+            token = progress_token
+            request_id = str(ctx.request_id) if ctx.request_id is not None else None
+
+            async def _emit(
+                completed: float, total: float | None, message: str
+            ) -> None:
+                await session.send_progress_notification(
+                    token,
+                    completed,
+                    total,
+                    message,
+                    related_request_id=request_id,
+                )
+
+            def _send(completed: int, total: int | None, message: str) -> None:
+                try:
+                    from anyio.from_thread import run as _run_in_loop
+
+                    _run_in_loop(
+                        _emit,
+                        float(completed),
+                        float(total) if total is not None else None,
+                        message,
+                    )
+                except Exception:  # noqa: BLE001 — UI errors must never
+                    # abort the ingest worker thread.
+                    pass
+
+            on_progress = _send
+
+        def _invoke() -> list[TextContent]:
+            if name == "codememory_ingest":
+                return _ingest(arguments, on_progress=on_progress)
+            return handler(arguments)
+
+        try:
+            result = await anyio.to_thread.run_sync(_invoke)
         except Exception as exc:  # surface, don't crash the server
             return _text({"error": type(exc).__name__, "message": str(exc)})
         # Auto-record MCP tool call for efficiency tracking (fire-and-forget)

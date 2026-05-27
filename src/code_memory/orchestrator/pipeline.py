@@ -4,7 +4,7 @@ import hashlib
 import os
 import sys
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +28,8 @@ from .resolver import resolve_graph
 
 IngestMode = Literal["auto", "full", "incremental"]
 
+ProgressCallback = Callable[[int, int | None, str], None]
+
 
 def _id(*parts: str) -> str:
     h = hashlib.sha1("\x00".join(parts).encode()).hexdigest()
@@ -38,27 +40,151 @@ def _id(*parts: str) -> str:
 # stderr so ``--json`` output on stdout stays clean.
 _PROGRESS_EVERY = int(os.environ.get("CODEMEMORY_PROGRESS_EVERY", "50"))
 _PROGRESS_ENABLED = os.environ.get("CODEMEMORY_PROGRESS", "1") != "0"
+# auto = rich TUI when stderr is a TTY, plain text otherwise.
+# rich  = force rich (e.g. forced inside non-TTY harness that handles ANSI).
+# text  = legacy throttled heartbeat lines.
+# none  = silence everything.
+_PROGRESS_STYLE = os.environ.get("CODEMEMORY_PROGRESS_STYLE", "auto").lower()
+
+
+def _want_rich_progress() -> bool:
+    if _PROGRESS_STYLE == "none" or not _PROGRESS_ENABLED:
+        return False
+    if _PROGRESS_STYLE == "rich":
+        return True
+    if _PROGRESS_STYLE == "text":
+        return False
+    try:
+        return bool(sys.stderr.isatty())
+    except Exception:
+        return False
 
 
 class _Heartbeat:
-    """Emit periodic ``files=… symbols=…`` lines to stderr during ingest."""
+    """Render ingest progress.
 
-    def __init__(self, label: str, *, total: int | None = None) -> None:
+    Two render paths share one API:
+
+    * **rich** — `rich.progress.Progress` live bar on stderr with files,
+      symbols, chunks, skipped counters + ETA. Used when stderr is a TTY
+      (or `CODEMEMORY_PROGRESS_STYLE=rich`).
+    * **text** — periodic ``files=… symbols=…`` lines on stderr. Used
+      when stderr is captured (MCP stdio server, CI logs, `bash` from an
+      agent harness) so ANSI escapes don't pollute the transcript.
+    """
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        total: int | None = None,
+        on_progress: ProgressCallback | None = None,
+    ) -> None:
         self.label = label
         self.total = total
         self.start = time.monotonic()
         self.last = self.start
+        self._rich: Any = None
+        self._task: Any = None
+        self._on_progress = on_progress
+        # Throttle out-of-band progress notifications so a 50k-file ingest
+        # doesn't flood the MCP transport. Rich's own refresh loop is
+        # already throttled internally.
+        self._cb_interval = float(
+            os.environ.get("CODEMEMORY_PROGRESS_NOTIFY_INTERVAL", "0.4")
+        )
+        self._cb_last = 0.0
+        if _want_rich_progress():
+            self._init_rich()
+
+    def _init_rich(self) -> None:
+        try:
+            from rich.console import Console
+            from rich.progress import (
+                BarColumn,
+                MofNCompleteColumn,
+                Progress,
+                SpinnerColumn,
+                TextColumn,
+                TimeElapsedColumn,
+                TimeRemainingColumn,
+            )
+        except Exception:  # noqa: BLE001 — rich missing, fall back to text
+            return
+        progress = Progress(
+            SpinnerColumn(style="cyan"),
+            TextColumn("[bold cyan]code-memory[/] {task.description}"),
+            BarColumn(bar_width=None),
+            MofNCompleteColumn(),
+            TextColumn(
+                "[green]{task.fields[symbols]}[/]sym "
+                "[magenta]{task.fields[chunks]}[/]chk "
+                "[yellow]{task.fields[skipped]}[/]skip "
+                "[dim]{task.fields[rate]}/s[/]"
+            ),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=Console(stderr=True),
+            transient=False,
+            refresh_per_second=8,
+        )
+        try:
+            progress.start()
+        except Exception:  # noqa: BLE001
+            return
+        self._rich = progress
+        self._task = progress.add_task(
+            self.label,
+            total=self.total,
+            symbols=0,
+            chunks=0,
+            skipped=0,
+            rate="0.0",
+        )
+
+    def _rate(self, files: int) -> float:
+        elapsed = max(time.monotonic() - self.start, 1e-6)
+        return files / elapsed
+
+    def _notify(self, stats: IngestStats, *, force: bool = False) -> None:
+        if self._on_progress is None:
+            return
+        now = time.monotonic()
+        if not force and now - self._cb_last < self._cb_interval:
+            return
+        self._cb_last = now
+        rate = self._rate(stats.files)
+        msg = (
+            f"{self.label}: files={stats.files} "
+            f"symbols={stats.symbols} chunks={stats.chunks} "
+            f"skipped={stats.skipped} rate={rate:.1f}/s"
+        )
+        try:
+            self._on_progress(stats.files, self.total, msg)
+        except Exception:  # noqa: BLE001 — never let UI break the ingest
+            pass
 
     def tick(self, stats: IngestStats) -> None:
-        if not _PROGRESS_ENABLED:
+        self._notify(stats)
+        if self._rich is not None:
+            self._rich.update(
+                self._task,
+                completed=stats.files,
+                total=self.total,
+                symbols=stats.symbols,
+                chunks=stats.chunks,
+                skipped=stats.skipped,
+                rate=f"{self._rate(stats.files):.1f}",
+            )
+            return
+        if not _PROGRESS_ENABLED or _PROGRESS_STYLE == "none":
             return
         if _PROGRESS_EVERY <= 0:
             return
         if stats.files % _PROGRESS_EVERY != 0 or stats.files == 0:
             return
         now = time.monotonic()
-        elapsed = max(now - self.start, 1e-6)
-        rate = stats.files / elapsed
+        rate = self._rate(stats.files)
         eta = ""
         if self.total and rate > 0:
             remaining = max(self.total - stats.files, 0)
@@ -73,7 +199,25 @@ class _Heartbeat:
         self.last = now
 
     def done(self, stats: IngestStats) -> None:
-        if not _PROGRESS_ENABLED:
+        self._notify(stats, force=True)
+        if self._rich is not None:
+            try:
+                self._rich.update(
+                    self._task,
+                    completed=stats.files,
+                    total=self.total or stats.files or 1,
+                    symbols=stats.symbols,
+                    chunks=stats.chunks,
+                    skipped=stats.skipped,
+                    rate=f"{self._rate(stats.files):.1f}",
+                )
+                self._rich.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._rich = None
+            self._task = None
+            return
+        if not _PROGRESS_ENABLED or _PROGRESS_STYLE == "none":
             return
         elapsed = time.monotonic() - self.start
         sys.stderr.write(
@@ -140,6 +284,7 @@ class Pipeline:
         mode: IngestMode = "auto",
         since: str | None = None,
         dry_run: bool = False,
+        on_progress: ProgressCallback | None = None,
     ) -> IngestStats:
         """Ingest a repository.
 
@@ -156,7 +301,9 @@ class Pipeline:
         is_git = git_delta.is_git_repo(root_path)
 
         if mode == "full" or (mode == "auto" and not is_git):
-            stats = self._ingest_full(root_path, dry_run=dry_run)
+            stats = self._ingest_full(
+                root_path, dry_run=dry_run, on_progress=on_progress
+            )
             if not dry_run:
                 self._run_resolver(stats)
             if is_git and not dry_run:
@@ -173,7 +320,9 @@ class Pipeline:
 
         if base is None:
             # auto + git + no prior + no --since => full walk, then record state
-            stats = self._ingest_full(root_path, dry_run=dry_run)
+            stats = self._ingest_full(
+                root_path, dry_run=dry_run, on_progress=on_progress
+            )
             stats.head_sha = head
             stats.notes.append("no prior ingest state; performed full walk")
             if not dry_run:
@@ -184,7 +333,12 @@ class Pipeline:
         # Incremental
         delta = git_delta.changed_since(root_path, base, include_dirty=True)
         stats = self._ingest_delta(
-            root_path, delta, base_sha=base, head_sha=head, dry_run=dry_run
+            root_path,
+            delta,
+            base_sha=base,
+            head_sha=head,
+            dry_run=dry_run,
+            on_progress=on_progress,
         )
         stats.mode = "incremental"
         if not dry_run:
@@ -222,7 +376,13 @@ class Pipeline:
 
         return prior.last_sha
 
-    def _ingest_full(self, root: Path, *, dry_run: bool) -> IngestStats:
+    def _ingest_full(
+        self,
+        root: Path,
+        *,
+        dry_run: bool,
+        on_progress: ProgressCallback | None = None,
+    ) -> IngestStats:
         extractor = Extractor()
         stats = IngestStats(mode="full")
         sanity = SanitySummary()
@@ -230,7 +390,10 @@ class Pipeline:
         stats.head_sha = head_sha
         if not dry_run:
             self._purge_project_index(root)
-        hb = _Heartbeat("full ingest" + (" (dry-run)" if dry_run else ""))
+        hb = _Heartbeat(
+            "full ingest" + (" (dry-run)" if dry_run else ""),
+            on_progress=on_progress,
+        )
 
         # Buffer chunks across files so the embedder sees a large batch
         # per call, then fan the Qdrant upserts out to a small thread
@@ -714,6 +877,7 @@ class Pipeline:
         base_sha: str,
         head_sha: str,
         dry_run: bool,
+        on_progress: ProgressCallback | None = None,
     ) -> IngestStats:
         stats = IngestStats(mode="incremental", base_sha=base_sha, head_sha=head_sha)
         sanity = SanitySummary()
@@ -724,6 +888,7 @@ class Pipeline:
         hb = _Heartbeat(
             "incremental ingest" + (" (dry-run)" if dry_run else ""),
             total=len(reingest),
+            on_progress=on_progress,
         )
 
         for path in delta.deleted:
