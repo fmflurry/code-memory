@@ -5,21 +5,21 @@ inside Claude Code — same spirit as the
 [OpenCode plugin](../opencode/README.md), adapted to Claude Code's hook
 model.
 
-It auto-retrieves a **Context Pack** when the user asks a substantive
-code question, and auto-learns by re-indexing files the agent
-writes / edits. The plugin sits next to the existing `code-memory` MCP
-server, which stays available for the agent to call manually
-(`codememory_retrieve`, `codememory_record`, `codememory_reingest`,
-`codememory_callers`, …).
+It auto-learns by re-indexing files the agent writes / edits, nudges
+the agent toward the index before it grep/reads the filesystem, and
+records the session as an episode on stop. The plugin sits next to the
+existing `code-memory` MCP server, which stays available for the agent
+to call manually (`codememory_retrieve`, `codememory_record`,
+`codememory_reingest`, `codememory_callers`, …).
 
 ## What it does
 
 | Hook             | Behavior                                                                                                                                                                                              |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SessionStart`   | Background `code-memory ingest <cwd>` (git delta) so the index reflects out-of-band edits (vim, IDE, `git pull`, `git checkout`) since the last session.                                              |
-| `UserPromptSubmit` | (a) Detects substantive code intent → `code-memory retrieve --json` → emits the formatted Context Pack as `additionalContext` for orientation only. 5 min cache, 60 s dedup. (b) Detects durable user assertions (preference / decision / rejection / ownership / location patterns) and injects a nudge reminding the agent to call `codememory_assert_claim`. Resets the per-turn gate flag (see `PreToolUse`). |
+| `UserPromptSubmit` | Detects durable user assertions (preference / decision / rejection / ownership / location patterns) and injects a nudge reminding the agent to call `codememory_assert_claim`. Resets the per-turn gate flag (see `PreToolUse`). |
 | `PreToolUse` (`Read`/`Bash`/`Grep`/`Glob`) | First-tool gate: if no explicit `codememory_*` MCP tool has fired this turn, emits a one-shot soft nudge as `additionalContext` reminding the agent to query the index before scanning the filesystem. Never blocks; the queued tool still runs. Goes silent once any explicit `codememory_*` MCP tool fires, and once per turn either way. |
-| `PostToolUse` (`Write`/`Edit`/`MultiEdit`) | (a) Fires `code-memory reingest <path>`. (b) Invalidates the per-session Context Pack so the next prompt re-fetches. (c) Schedules a debounced `code-memory resolve` to re-point cross-file CALLS edges. |
+| `PostToolUse` (`Write`/`Edit`/`MultiEdit`) | (a) Fires `code-memory reingest <path>`. (b) Schedules a debounced `code-memory resolve` to re-point cross-file CALLS edges. |
 | `PostToolUse` (`mcp__code-memory__codememory_*`) | Marks the gate flag as satisfied so the rest of the turn stays silent. |
 | `Stop`           | Records the session as an episode via `code-memory record` with the first user message + `git diff` as the patch (best-effort).                                                                       |
 
@@ -116,7 +116,6 @@ Everything else lives as inline constants in the script files:
 
 | Constant                                          | File                          | Default | Purpose                                                       |
 | ------------------------------------------------- | ----------------------------- | ------- | ------------------------------------------------------------- |
-| `DEDUP_WINDOW_MS`                                 | `scripts/on-user-prompt.js`   | 60 s    | Same-query suppression to avoid hammering the embedder.       |
 | `RESOLVER_DEBOUNCE_MS`                            | `scripts/resolver-debounce.js`| 1.5 s   | Quiet period after the last write before the resolver re-runs.|
 | Hook timeouts (`SessionStart`/`PostToolUse`/...)  | `hooks/hooks.json`            | 5–12 s  | Maximum wall-clock per hook invocation.                       |
 
@@ -144,10 +143,9 @@ automatically (force a custom-verdict `record`, ad-hoc query, etc.).
 
 ## Bundled skill
 
-`skills/code-memory/SKILL.md` documents the tools, the Context Pack
-format, and when the agent should call retrieve / record / reingest /
-graph tools manually. Claude Code surfaces it automatically when the
-plugin is installed.
+`skills/code-memory/SKILL.md` documents the tools and when the agent
+should call retrieve / record / reingest / graph tools manually. Claude
+Code surfaces it automatically when the plugin is installed.
 
 ## Architecture differences vs the OpenCode plugin
 
@@ -159,7 +157,7 @@ hook**, so this plugin:
 - Persists session state on disk under `$XDG_CACHE_HOME/code-memory/claude-plugin/`
   (or `~/.cache/...`).
 - Reads/writes that state on every hook entry (`loadSession` /
-  `saveSession` / `invalidatePack`).
+  `saveSession`).
 - Debounces the cross-file resolver via a marker file + a detached
   worker process (`resolver-debounce.js`) instead of a JS `setTimeout`.
 
@@ -168,7 +166,7 @@ Hook ↔ event mapping:
 | OpenCode hook                              | Claude Code hook |
 | ------------------------------------------ | ---------------- |
 | First `chat.message` of a session          | `SessionStart`   |
-| `chat.message` + `experimental.chat.system.transform` | `UserPromptSubmit` (does fetch *and* inject in one shot via `additionalContext`) |
+| `chat.message` (claim-intent detection)    | `UserPromptSubmit` |
 | `tool.execute.after` for `write`/`edit`/`patch` | `PostToolUse` matched on `Write|Edit|MultiEdit` |
 | `event` `session.idle`                     | `Stop`           |
 
@@ -176,7 +174,6 @@ Hook ↔ event mapping:
 
 - A missing or broken backend never crashes the session — every hook
   exits cleanly with no output if the CLI is missing.
-- Trivial replies ("yes", "ok", "continue") do not trigger retrieval.
 - A re-ingest after `Write`/`Edit`/`MultiEdit` is fire-and-forget; the
   agent's turn returns immediately.
 - Session episodes are written on `Stop`, with the captured first user
@@ -207,7 +204,6 @@ each.
 | Agent rewrites a file → callers in *other* files now point at deleted/renamed symbols. | After every write, the plugin schedules a debounced `code-memory resolve` via `resolver-debounce.js`. The resolver scans the whole graph and re-points placeholder `name::X` CALLS edges to the real Symbol nodes. |
 | Agent does a 20-file refactor in 2 seconds → resolver would run 20 times back-to-back. | Resolver scheduling is debounced by a marker file + `RESOLVER_DEBOUNCE_MS` (1.5 s). A new write resets the timer; only the worker that wakes up to a stable marker actually fires `resolve`. |
 | File changes outside Claude Code between sessions (vim, IDE, `git pull`, `git checkout`). | `SessionStart` fires a one-shot background `code-memory ingest <cwd>`. The ingest is git-aware and only re-walks files whose hash moved — and it re-runs the resolver. |
-| Session-cached Context Pack still reflects pre-write state. | Any successful write also drops the per-session pack cache (`invalidatePack`). The next prompt re-fetches against the just-updated index instead of replaying stale code hits. |
 | Backend (FalkorDB / Qdrant / Ollama) is down.             | All CLI calls are guarded by per-command timeouts. Failure is silently no-op'd; the agent's turn is never blocked.                                                                                |
 | `code-memory` CLI is missing on PATH.                     | `createMemoryClient` detects this once per hook invocation and short-circuits every method. The plugin stays loaded but inert.                                                                    |
 | Agent never explicitly records what it did.               | `Stop` fires `code-memory record` with the first user message + cumulative `git diff` as the patch (verdict = `"idle"`). Future sessions can recall the episode even without manual record.       |

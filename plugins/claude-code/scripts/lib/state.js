@@ -1,21 +1,15 @@
 /**
  * Disk-backed session state. Hooks are fresh processes, so per-session
- * memory (first user message, last query, last fetched timestamp) must
- * persist between invocations.
+ * memory (first user message, gate flags) must persist between invocations.
  *
  * Layout: $CACHE_DIR/sessions/<session-id>.json
  *
  *   {
  *     "firstUserMessage": "...",
- *     "lastQuery": "...",
- *     "lastFetchedAt": 1737031234000,
  *     "bootstrapped": true,
- *     "autoRetrieveSeen": true,
- *     "retrieveSeen": false
+ *     "retrieveSeen": false,
+ *     "turnGateNudged": false
  *   }
- *
- * The PostToolUse hook drops the "lastQuery" field via `invalidatePack()`
- * so the next UserPromptSubmit refetches against the just-updated index.
  */
 
 const fs = require("node:fs");
@@ -73,29 +67,17 @@ function loadSession(sessionId) {
   if (!data) {
     return {
       firstUserMessage: null,
-      lastQuery: null,
-      lastFetchedAt: 0,
       bootstrapped: false,
-      autoRetrieveSeen: false,
       retrieveSeen: false,
       turnGateNudged: false,
     };
   }
   return {
     firstUserMessage: data.firstUserMessage || null,
-    lastQuery: data.lastQuery || null,
-    lastFetchedAt: Number(data.lastFetchedAt || 0),
     bootstrapped: Boolean(data.bootstrapped),
-    autoRetrieveSeen: Boolean(data.autoRetrieveSeen),
     retrieveSeen: Boolean(data.retrieveSeen),
     turnGateNudged: Boolean(data.turnGateNudged),
   };
-}
-
-function markAutoRetrieveSeen(sessionId) {
-  const s = loadSession(sessionId);
-  s.autoRetrieveSeen = true;
-  saveSession(sessionId, s);
 }
 
 function markRetrieveSeen(sessionId) {
@@ -106,7 +88,6 @@ function markRetrieveSeen(sessionId) {
 
 function resetTurn(sessionId) {
   const s = loadSession(sessionId);
-  s.autoRetrieveSeen = false;
   s.retrieveSeen = false;
   s.turnGateNudged = false;
   saveSession(sessionId, s);
@@ -120,13 +101,6 @@ function markTurnGateNudged(sessionId) {
 
 function saveSession(sessionId, state) {
   writeJson(sessionFile(sessionId), state);
-}
-
-function invalidatePack(sessionId) {
-  const s = loadSession(sessionId);
-  s.lastQuery = null;
-  s.lastFetchedAt = 0;
-  saveSession(sessionId, s);
 }
 
 function pruneExpired() {
@@ -173,12 +147,10 @@ module.exports = {
   cacheRoot,
   loadSession,
   saveSession,
-  invalidatePack,
   pruneExpired,
   touchResolverMarker,
   readResolverMarker,
   resolverMarkerFile,
-  markAutoRetrieveSeen,
   markRetrieveSeen,
   resetTurn,
   markTurnGateNudged,
