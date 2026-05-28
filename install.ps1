@@ -266,8 +266,30 @@ if ($doClaude -and -not $Yes -and (Test-Interactive)) {
 }
 if ($doClaude) {
   if (-not (Test-Cmd 'claude')) {
-    Warn "claude CLI not found — skipping Claude Code plugin"
-    Dim "Install: https://docs.anthropic.com/claude/docs/claude-code"
+    Step "Installing Claude Code CLI"
+    $claudeInstaller = Join-Path ([System.IO.Path]::GetTempPath()) ("claude-install-{0}.ps1" -f ([guid]::NewGuid()))
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+      Invoke-WebRequest -Uri 'https://claude.ai/install.ps1' -OutFile $claudeInstaller -UseBasicParsing
+      $psExe = (Get-Process -Id $PID).Path
+      if (-not $psExe) { $psExe = 'powershell.exe' }
+      & $psExe -NoProfile -ExecutionPolicy Bypass -File $claudeInstaller
+      if ($LASTEXITCODE -ne 0) { Warn "claude installer exited with code $LASTEXITCODE" }
+    } catch {
+      Warn "claude install failed: $($_.Exception.Message)"
+    } finally {
+      Remove-Item $claudeInstaller -ErrorAction SilentlyContinue
+      $ErrorActionPreference = $prevEAP
+    }
+    # Refresh PATH from machine + user so the freshly installed claude shim is visible.
+    $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + `
+                [System.Environment]::GetEnvironmentVariable('Path','User') + ';' + `
+                "$HOME\.local\bin"
+  }
+  if (-not (Test-Cmd 'claude')) {
+    Warn "claude CLI still not found after install attempt — skipping Claude Code plugin"
+    Dim "Install manually: https://docs.anthropic.com/claude/docs/claude-code"
   } else {
     Step "Registering Claude Code plugin + MCP"
     & claude plugin marketplace add $RepoUrl 2>$null

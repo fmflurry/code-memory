@@ -219,6 +219,16 @@ if [ -z "$WANT_CLAUDE" ]; then
   if ask_yn "Install Claude Code plugin + MCP?" "Y"; then WANT_CLAUDE=1; else WANT_CLAUDE=0; fi
 fi
 if [ "$WANT_CLAUDE" -eq 1 ]; then
+  if ! have claude; then
+    step "Installing Claude Code CLI"
+    if have curl; then
+      curl -fsSL https://claude.ai/install.sh | bash || warn "claude install script returned non-zero"
+      export PATH="$HOME/.local/bin:$HOME/.claude/local:$PATH"
+      hash -r 2>/dev/null || true
+    else
+      warn "curl missing — cannot fetch claude installer"
+    fi
+  fi
   if have claude; then
     step "Registering Claude Code plugin + MCP"
     claude plugin marketplace add "$REPO_URL" || warn "marketplace add failed (may already be registered)"
