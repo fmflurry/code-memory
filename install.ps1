@@ -67,12 +67,27 @@ Step "Ensuring uv is installed"
 if (Test-Cmd 'uv') {
   Ok "uv $(uv --version 2>$null)"
 } else {
+  # Run uv installer in a child powershell so its `exit` cannot tear down
+  # the parent session (especially when this script itself was launched via
+  # `irm | iex`). Also temporarily relax ErrorActionPreference so transient
+  # non-terminating warnings from the uv installer don't kill us.
+  $uvInstaller = Join-Path ([System.IO.Path]::GetTempPath()) ("uv-install-{0}.ps1" -f ([guid]::NewGuid()))
+  $prevEAP = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
   try {
-    Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
+    Invoke-WebRequest -Uri 'https://astral.sh/uv/install.ps1' -OutFile $uvInstaller -UseBasicParsing
+    $psExe = (Get-Process -Id $PID).Path
+    if (-not $psExe) { $psExe = 'powershell.exe' }
+    & $psExe -NoProfile -ExecutionPolicy Bypass -File $uvInstaller
+    $uvExit = $LASTEXITCODE
+    if ($uvExit -ne 0) { throw "uv installer exited with code $uvExit" }
   } catch {
     Err "Failed to install uv: $($_.Exception.Message)"
     Err "Install manually:  winget install --id=astral-sh.uv -e   then re-run."
     exit 3
+  } finally {
+    Remove-Item $uvInstaller -ErrorAction SilentlyContinue
+    $ErrorActionPreference = $prevEAP
   }
   $env:Path = "$HOME\.local\bin;$HOME\.cargo\bin;$env:Path"
   if (-not (Test-Cmd 'uv')) {
