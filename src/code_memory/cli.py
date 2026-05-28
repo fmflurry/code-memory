@@ -1243,5 +1243,17 @@ def update(
     raise typer.Exit(code=rc)
 
 
+@app.command()
+def extras() -> None:
+    """Enable optional Python extras (dotnet, hybrid) interactively.
+
+    Detects the current install method (editable / uv-tool / pipx / pip) and
+    picks the right command per extra. Already-installed extras are kept.
+    """
+    from .updater import run_extras_wizard
+
+    raise typer.Exit(code=run_extras_wizard())
+
+
 if __name__ == "__main__":
     app()

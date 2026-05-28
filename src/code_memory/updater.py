@@ -45,6 +45,23 @@ CODEMEMORY_HOME = Path(os.environ.get("CODEMEMORY_HOME", str(Path.home() / ".cod
 InstallMethod = Literal["uv-tool", "pipx", "pip", "editable", "unknown"]
 
 
+# Optional extras advertised in pyproject.toml. The picker below uses this
+# registry to decide what to show, how to detect "is it installed", and
+# which package name to inject for ``pipx``. Keep in sync with
+# ``[project.optional-dependencies]`` — there is no programmatic discovery
+# for installed (wheel-only) builds.
+EXTRAS: dict[str, dict[str, str]] = {
+    "dotnet": {
+        "module": "dnfile",
+        "desc": ".NET assembly metadata indexing (pure-Python PE reader, light).",
+    },
+    "hybrid": {
+        "module": "FlagEmbedding",
+        "desc": "In-process BGE-M3 dense+sparse via FlagEmbedding. Heavy — pulls torch (~2 GB).",
+    },
+}
+
+
 @dataclass
 class ComponentState:
     name: str
@@ -433,6 +450,86 @@ def _print_plan(plan: UpdatePlan) -> None:
         suffix = f"  ({c.detail})" if c.detail else ""
         state = "" if c.present else "  [not installed — skip]"
         print(f"    {mark} {c.name}{suffix}{state}")
+
+
+def install_extra(name: str, method: InstallMethod) -> tuple[bool, str]:
+    """Install a single optional extra using whichever channel owns the CLI.
+
+    Returns ``(ok, detail)`` where detail is the command actually run, or a
+    reason string when the channel cannot install extras (e.g. unknown).
+    """
+    if name not in EXTRAS:
+        return False, f"unknown extra: {name}"
+
+    source_with_extra = f"{PYPI_PACKAGE}[{name}]"
+
+    if method == "editable":
+        repo_root = Path(__file__).resolve().parents[2]
+        if not (repo_root / "pyproject.toml").exists():
+            return False, f"editable install but pyproject.toml not at {repo_root}"
+        cmd = [sys.executable, "-m", "pip", "install", "-e", f".[{name}]"]
+        p = subprocess.run(cmd, cwd=str(repo_root), env={**os.environ}, text=True)
+    elif method == "uv-tool":
+        cmd = [
+            "uv", "tool", "install",
+            "--reinstall", "--force",
+            "--from", source_with_extra,
+            UV_TOOL_NAME,
+        ]
+        p = _run(cmd, capture=False)
+    elif method == "pipx":
+        # pipx inject adds the runtime module into the existing tool venv
+        # without uninstalling/reinstalling code-memory itself.
+        cmd = ["pipx", "inject", PYPI_PACKAGE, EXTRAS[name]["module"]]
+        p = _run(cmd, capture=False)
+    elif method == "pip":
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", source_with_extra]
+        p = _run(cmd, capture=False)
+    else:
+        return False, "unknown install method — re-run the one-liner installer first"
+
+    return p.returncode == 0, " ".join(cmd)
+
+
+def run_extras_wizard() -> int:
+    """Interactive picker to enable optional Python extras post-install.
+
+    Lists every extra defined in :data:`EXTRAS`, shows current state, and
+    asks per-extra whether to install. Already-present extras are skipped
+    silently (use the package manager directly to uninstall).
+    """
+    method = detect_install_method()
+    print(f"code-memory extras  (install: {method})")
+    if method == "unknown":
+        print("  cannot determine install method — aborting.")
+        print("  re-run the one-liner installer or use `pip install` manually.")
+        return 1
+
+    todo: list[str] = []
+    for name, info in EXTRAS.items():
+        present = _python_module_present(info["module"])
+        if present:
+            print(f"  ✓ {name}  — installed ({info['module']})")
+            continue
+        print(f"  · {name}  — not installed")
+        print(f"      {info['desc']}")
+        answer = input(f"      Install `{name}`? [y/N] ").strip().lower()
+        if answer in ("y", "yes"):
+            todo.append(name)
+
+    if not todo:
+        print("Nothing to install.")
+        return 0
+
+    rc = 0
+    for name in todo:
+        print()
+        print(f"Installing extra: {name}")
+        ok, detail = install_extra(name, method)
+        marker = "ok" if ok else "FAILED"
+        print(f"  {marker} — {detail}")
+        rc |= 0 if ok else 1
+    return rc
 
 
 def _run_full_installer() -> int:
