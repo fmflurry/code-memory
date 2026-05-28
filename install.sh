@@ -72,7 +72,7 @@ ok "uv ready"
 
 # ---------- 2. code-memory CLI ----------
 step "Installing code-memory CLI"
-uv tool install --force --from "git+$REPO_URL" code-memory
+uv tool install --force --from "git+$REPO_URL" flurryx-code-memory
 ok "code-memory CLI: $(command -v code-memory 2>/dev/null || echo '~/.local/bin/code-memory')"
 
 # ---------- 3. side files ----------

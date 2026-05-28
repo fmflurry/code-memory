@@ -99,7 +99,7 @@ if (Test-Cmd 'uv') {
 
 # ---------- 2. code-memory CLI ----------
 Step "Installing code-memory CLI"
-& uv tool install --force --from "git+$RepoUrl" code-memory
+& uv tool install --force --from "git+$RepoUrl" flurryx-code-memory
 if ($LASTEXITCODE -ne 0) { Err "uv tool install failed"; exit 1 }
 $cliPath = (Get-Command code-memory -ErrorAction SilentlyContinue)
 Ok "code-memory CLI: $($cliPath.Source)"
