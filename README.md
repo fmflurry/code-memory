@@ -206,7 +206,7 @@ code-memory-opencode-install
 <details>
 <summary><strong>MCP-only (lightest, ~10 s)</strong></summary>
 
-Just the Claude Code MCP server — no auto-retrieve / auto-record hooks, no Docker, no Ollama. Useful when FalkorDB + Qdrant already run elsewhere, or you only want the `codememory_*` tools by hand.
+Just the Claude Code MCP server — no auto-learn / auto-record hooks, no Docker, no Ollama. Useful when FalkorDB + Qdrant already run elsewhere, or you only want the `codememory_*` tools by hand.
 
 ```bash
 claude mcp add code-memory \
@@ -1341,11 +1341,11 @@ uvx --from git+https://github.com/dev/code-memory code-memory-mcp
 ### Harness plugins
 
 The MCP server above exposes manual tools. The **harness plugins** make
-the same backend **ambient** — auto-retrieving a Context Pack on every
-substantive user prompt, auto-reingesting on every `Write` / `Edit`, and
-recording sessions as episodes when the agent stops. The plugins are
-optional and live alongside the MCP server; install both for the best
-experience.
+the same backend **ambient** — steering the agent toward the index
+before grep / read / shell, auto-reingesting on every `Write` / `Edit`,
+recording sessions as episodes when the agent stops, and nudging on
+durable user assertions. The plugins are optional and live alongside
+the MCP server; install both for the best experience.
 
 | Plugin                                          | Hook model                                                                    |
 | ----------------------------------------------- | ----------------------------------------------------------------------------- |
@@ -1354,8 +1354,8 @@ experience.
 
 Both plugins:
 
-- Detect substantive code intent (trivial follow-ups skip retrieval).
-- Dedup the same query within 60 s.
+- Steer the agent toward `codememory_retrieve` via a one-shot gate
+  nudge before grep / read / shell (never blocks).
 - Debounce the cross-file resolver (~1.5 s after the last write) so a
   20-file refactor collapses to exactly one resolver run.
 - Run a one-shot git-delta ingest at session start to catch
@@ -1744,7 +1744,7 @@ See `CHANGELOG.md` for the design rationale.
 - [x] `.gitignore`-aware walker that skips minified bundles + generated junk
 - [x] Resolved call / import edges (bind `CALLS` / `IMPORTS` to real nodes)
 - [x] Lightweight rerank (entrypoint / generated boost, idle-episode filter)
-- [x] Harness plugins for OpenCode and Claude Code (auto-retrieve + auto-learn)
+- [x] Harness plugins for OpenCode and Claude Code (steering + auto-learn)
 - [x] `code-memory reset` CLI + auto-purge on `ingest --full`
 - [x] File-watcher daemon for live re-ingest (cross-platform via `watchdog`)
 - [x] Team-shared snapshots (orphan branch, content-addressed, model-aware verify)
