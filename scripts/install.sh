@@ -11,13 +11,15 @@
 #                                        # user-claim extraction (~5.4 GB)
 #   ./scripts/install.sh --with-dotnet   # install [dotnet] extra (dnfile, ~200 KB; .NET DLL metadata indexing)
 #   ./scripts/install.sh --extras=none   # bypass interactive prompt; install only [dev]
-#   ./scripts/install.sh --plugins=opencode,claudecode
+#   ./scripts/install.sh --plugins=opencode,claudecode,cursor
 #                                        # install named harness plugins (non-interactive)
-#   ./scripts/install.sh --plugins=all   # install both
+#   ./scripts/install.sh --plugins=all   # install all three
 #   ./scripts/install.sh --plugins=none  # skip plugin step entirely
 #   ./scripts/install.sh --plugins-scope=project
-#                                        # install plugins project-local (./.opencode/ or ./.claude/)
-#                                        # default scope is global (~/.config/opencode or ~/.claude)
+#                                        # install plugins project-local
+#                                        # (./.opencode/, ./.claude/, ./.cursor/)
+#                                        # default scope is global (~/.config/opencode,
+#                                        # ~/.claude, ~/.cursor)
 #
 set -euo pipefail
 
@@ -324,9 +326,10 @@ step "Agent harness plugins"
 #   PLUGINS_ARG="" → interactive (only if stdin is a TTY)
 #   PLUGINS_ARG="none" → skip
 #   PLUGINS_ARG="all" → both
-#   PLUGINS_ARG="opencode,claudecode" → comma-separated whitelist
+#   PLUGINS_ARG="opencode,claudecode,cursor" → comma-separated whitelist
 INSTALL_OPENCODE=0
 INSTALL_CLAUDECODE=0
+INSTALL_CURSOR=0
 
 resolve_plugin_selection() {
   local raw="$1"
@@ -334,6 +337,7 @@ resolve_plugin_selection() {
   if [ "$raw" = "all" ]; then
     INSTALL_OPENCODE=1
     INSTALL_CLAUDECODE=1
+    INSTALL_CURSOR=1
     return 0
   fi
   IFS=',' read -r -a parts <<< "$raw"
@@ -341,8 +345,9 @@ resolve_plugin_selection() {
     case "$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in
       opencode)   INSTALL_OPENCODE=1 ;;
       claudecode|claude|claude-code) INSTALL_CLAUDECODE=1 ;;
+      cursor)     INSTALL_CURSOR=1 ;;
       "" ) ;;
-      *) warn "unknown plugin '$p' (expected: opencode, claudecode, all, none)" ;;
+      *) warn "unknown plugin '$p' (expected: opencode, claudecode, cursor, all, none)" ;;
     esac
   done
 }
@@ -351,12 +356,13 @@ if [ -n "$PLUGINS_ARG" ]; then
   resolve_plugin_selection "$PLUGINS_ARG"
 elif [ -t 0 ] && [ -t 1 ]; then
   echo "  Optional: install the code-memory agent-harness plugins."
-  echo "  They make the backend ambient (auto-retrieve / auto-reingest / record)."
+  echo "  They make the backend ambient (steering, auto-reingest, episode record)."
   echo
   if prompt_yes_no "Install OpenCode plugin?" "y"; then INSTALL_OPENCODE=1; fi
   if prompt_yes_no "Install Claude Code plugin?" "y"; then INSTALL_CLAUDECODE=1; fi
-  if [ "$INSTALL_OPENCODE" -eq 1 ] || [ "$INSTALL_CLAUDECODE" -eq 1 ]; then
-    if prompt_yes_no "Install project-local (./.opencode and ./.claude) instead of global?" "n"; then
+  if prompt_yes_no "Install Cursor plugin?" "y"; then INSTALL_CURSOR=1; fi
+  if [ "$INSTALL_OPENCODE" -eq 1 ] || [ "$INSTALL_CLAUDECODE" -eq 1 ] || [ "$INSTALL_CURSOR" -eq 1 ]; then
+    if prompt_yes_no "Install project-local (./.opencode, ./.claude, ./.cursor) instead of global?" "n"; then
       PLUGINS_SCOPE="project"
     fi
   fi
@@ -390,8 +396,23 @@ if [ "$INSTALL_CLAUDECODE" -eq 1 ]; then
   fi
 fi
 
-if [ "$INSTALL_OPENCODE" -eq 0 ] && [ "$INSTALL_CLAUDECODE" -eq 0 ]; then
-  warn "no harness plugin installed; re-run with --plugins=all (or =opencode/=claudecode) later"
+if [ "$INSTALL_CURSOR" -eq 1 ]; then
+  if [ -x "$PROJECT_ROOT/plugins/cursor/install.sh" ]; then
+    # The cursor installer uses `--scope user|project`, not `--project`,
+    # so build its flag string separately.
+    cursor_flags=""
+    [ "$PLUGINS_SCOPE" = "project" ] && cursor_flags="$cursor_flags --scope project"
+    [ "$SKIP_MCP" -eq 1 ] && cursor_flags="$cursor_flags --no-mcp"
+    # shellcheck disable=SC2086 # intentional word-splitting on flag string
+    "$PROJECT_ROOT/plugins/cursor/install.sh" $cursor_flags
+    ok "Cursor plugin installed ($PLUGINS_SCOPE)"
+  else
+    warn "plugins/cursor/install.sh not executable; skipping"
+  fi
+fi
+
+if [ "$INSTALL_OPENCODE" -eq 0 ] && [ "$INSTALL_CLAUDECODE" -eq 0 ] && [ "$INSTALL_CURSOR" -eq 0 ]; then
+  warn "no harness plugin installed; re-run with --plugins=all (or =opencode/=claudecode/=cursor) later"
 fi
 
 # ---------- done ----------

@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "command": "node {{PLUGIN_DIR}}/scripts/on-session-start.js",
+        "timeout": 8,
+        "failClosed": false
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "type": "command",
+        "command": "node {{PLUGIN_DIR}}/scripts/on-before-submit-prompt.js",
+        "timeout": 4,
+        "failClosed": false
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "command": "node {{PLUGIN_DIR}}/scripts/on-pre-tool-use.js",
+        "matcher": "Shell|Read|Grep",
+        "timeout": 3,
+        "failClosed": false
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "type": "command",
+        "command": "node {{PLUGIN_DIR}}/scripts/on-before-mcp-execution.js",
+        "matcher": "codememory_.*",
+        "timeout": 3,
+        "failClosed": false
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "command": "node {{PLUGIN_DIR}}/scripts/on-post-tool-use.js",
+        "timeout": 3,
+        "failClosed": false
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "type": "command",
+        "command": "node {{PLUGIN_DIR}}/scripts/on-after-file-edit.js",
+        "timeout": 8,
+        "failClosed": false
+      }
+    ],
+    "preCompact": [
+      {
+        "type": "command",
+        "command": "node {{PLUGIN_DIR}}/scripts/on-pre-compact.js",
+        "timeout": 12,
+        "failClosed": false
+      }
+    ],
+    "stop": [
+      {
+        "type": "command",
+        "command": "node {{PLUGIN_DIR}}/scripts/on-stop.js",
+        "timeout": 12,
+        "failClosed": false
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "command": "node {{PLUGIN_DIR}}/scripts/on-session-end.js",
+        "timeout": 3,
+        "failClosed": false
+      }
+    ]
+  }
+}

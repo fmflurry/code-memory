@@ -199,6 +199,10 @@ claude mcp add code-memory --scope user \
 # 5. OpenCode plugin
 npm i -g code-memory-opencode
 code-memory-opencode-install
+
+# 6. Cursor plugin (requires repo cloned; package release pending)
+git clone https://github.com/fmflurry/code-memory ~/.code-memory/repo
+~/.code-memory/repo/plugins/cursor/install.sh
 ```
 
 </details>
@@ -1345,14 +1349,15 @@ the same backend **ambient** — steering the agent toward the index
 before grep / read / shell, auto-reingesting on every `Write` / `Edit`,
 recording sessions as episodes when the agent stops, and nudging on
 durable user assertions. The plugins are optional and live alongside
-the MCP server; install both for the best experience.
+the MCP server; install whichever your agent harness uses.
 
-| Plugin                                          | Hook model                                                                    |
-| ----------------------------------------------- | ----------------------------------------------------------------------------- |
-| [`plugins/opencode`](plugins/opencode/README.md)    | Bun-loaded TypeScript module; uses `chat.message`, `experimental.chat.system.transform`, `tool.execute.after`, `session.idle`. |
-| [`plugins/claude-code`](plugins/claude-code/README.md) | Plain Node scripts wired via `hooks.json`; uses `SessionStart`, `UserPromptSubmit`, `PostToolUse` (`Write`/`Edit`/`MultiEdit`), `Stop`. |
+| Plugin                                                 | Hook model                                                                                                                                                                                              |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`plugins/opencode`](plugins/opencode/README.md)       | Bun-loaded TypeScript module; uses `chat.message`, `experimental.chat.system.transform`, `tool.execute.after`, `session.idle`.                                                                          |
+| [`plugins/claude-code`](plugins/claude-code/README.md) | Plain Node scripts wired via `hooks.json`; uses `SessionStart`, `UserPromptSubmit`, `PostToolUse` (`Write`/`Edit`/`MultiEdit`), `Stop`.                                                                  |
+| [`plugins/cursor`](plugins/cursor/README.md)           | Plain Node scripts wired via `hooks.json`; uses `sessionStart`, `beforeSubmitPrompt`, `preToolUse`, `beforeMCPExecution`, `postToolUse`, `afterFileEdit`, `preCompact`, `stop`, `sessionEnd`. |
 
-Both plugins:
+All three plugins:
 
 - Steer the agent toward `codememory_retrieve` via a one-shot gate
   nudge before grep / read / shell (never blocks).
@@ -1361,25 +1366,34 @@ Both plugins:
 - Run a one-shot git-delta ingest at session start to catch
   out-of-band edits (vim, IDE, `git pull`).
 - Record the session as an episode on idle / stop with the first user
-  message + `git diff` as the patch.
+  message + `git diff` as the patch. The Cursor plugin additionally
+  records on `preCompact`, catching state before context compaction.
 - **Detect durable user assertions on every prompt** — preferences
   (`I love X`), decisions (`we use X`), rejections (`don't use Y`),
   ownership (`Alice owns billing`), location (`auth lives at apps/api`)
-  — and inject an in-system-prompt nudge that demands the agent call
+  — and inject an in-prompt nudge that demands the agent call
   `codememory_assert_claim` *before* answering. The nudge is
   polarity-flipped: asserting is the default, skipping requires a
   one-line written justification. See
-  [`plugins/claude-code/scripts/lib/claim-intent.js`](plugins/claude-code/scripts/lib/claim-intent.js)
-  and [`plugins/opencode/src/code-memory-lib/claim-intent.ts`](plugins/opencode/src/code-memory-lib/claim-intent.ts)
-  for the regex patterns and nudge template — they are kept in lockstep.
+  [`plugins/claude-code/scripts/lib/claim-intent.js`](plugins/claude-code/scripts/lib/claim-intent.js),
+  [`plugins/opencode/src/code-memory-lib/claim-intent.ts`](plugins/opencode/src/code-memory-lib/claim-intent.ts),
+  and [`plugins/cursor/scripts/lib/claim-intent.js`](plugins/cursor/scripts/lib/claim-intent.js)
+  for the regex patterns and nudge template — kept in lockstep.
+
+> Cursor caveat: `beforeSubmitPrompt` cannot inject context, so the
+> Cursor plugin stashes the claim nudge on `beforeSubmitPrompt` and
+> drains it on the first `postToolUse` of the turn. If the reply uses
+> no tools, the nudge does not surface for that turn — uncommon in
+> substantive sessions.
 
 Install via the top-level installer:
 
 ```bash
-./scripts/install.sh --plugins=all                       # both, global
-./scripts/install.sh --plugins=claudecode                # Claude Code only
-./scripts/install.sh --plugins=opencode,claudecode       # both, csv form
-./scripts/install.sh --plugins=all --plugins-scope=project   # ./.opencode and ./.claude
+./scripts/install.sh --plugins=all                            # all three, global
+./scripts/install.sh --plugins=claudecode                     # Claude Code only
+./scripts/install.sh --plugins=cursor                         # Cursor only
+./scripts/install.sh --plugins=opencode,claudecode,cursor     # csv form
+./scripts/install.sh --plugins=all --plugins-scope=project    # ./.opencode, ./.claude, ./.cursor
 ```
 
 Or install a single plugin directly without re-running the backend
@@ -1390,6 +1404,8 @@ installer:
 ./plugins/claude-code/install.sh     # registers a local Claude Code
                                      # marketplace at the repo root and runs
                                      # `claude plugin install code-memory@code-memory`
+./plugins/cursor/install.sh          # ~/.cursor/hooks.json + mcp.json
+                                     # (add --scope project for ./.cursor/)
 ```
 
 > **Claude Code only:** symlinking the plugin into `~/.claude/plugins/`

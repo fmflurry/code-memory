@@ -6,7 +6,7 @@
   Sets up code-memory locally on Windows: checks Python/Docker/Ollama,
   creates a virtualenv, installs the package, starts Docker services,
   pulls the bge-m3 embedding model, runs the smoke tests, and optionally
-  registers the OpenCode / Claude Code harness plugins.
+  registers the OpenCode / Claude Code / Cursor harness plugins.
 
 .PARAMETER NoDocker
   Skip the docker compose step.
@@ -27,12 +27,14 @@
 
 .PARAMETER Plugins
   Comma-separated whitelist of harness plugins to install:
-  'opencode', 'claudecode', 'all', or 'none'. Bypasses the interactive
-  prompt. Default: interactive when stdin is a TTY, skip otherwise.
+  'opencode', 'claudecode', 'cursor', 'all', or 'none'. Bypasses the
+  interactive prompt. Default: interactive when stdin is a TTY, skip
+  otherwise.
 
 .PARAMETER PluginsScope
-  'global' (default) installs under ~/.config/opencode or %APPDATA%/Claude;
-  'project' installs into ./.opencode or ./.claude.
+  'global' (default) installs under ~/.config/opencode, %APPDATA%/Claude,
+  or ~/.cursor; 'project' installs into ./.opencode, ./.claude, or
+  ./.cursor.
 
 .PARAMETER ExtrasInteractive
   Set to `$false` to skip the interactive extras prompt. The -WithDotnet
@@ -264,6 +266,7 @@ Step "Agent harness plugins"
 
 $installOpencode   = $false
 $installClaudecode = $false
+$installCursor     = $false
 
 function Resolve-PluginSelection([string]$raw) {
   if ([string]::IsNullOrWhiteSpace($raw)) { return }
@@ -271,6 +274,7 @@ function Resolve-PluginSelection([string]$raw) {
   if ($raw -ieq 'all') {
     $script:installOpencode = $true
     $script:installClaudecode = $true
+    $script:installCursor = $true
     return
   }
   foreach ($p in $raw.Split(',')) {
@@ -280,8 +284,9 @@ function Resolve-PluginSelection([string]$raw) {
       'claudecode'  { $script:installClaudecode = $true }
       'claude'      { $script:installClaudecode = $true }
       'claude-code' { $script:installClaudecode = $true }
+      'cursor'      { $script:installCursor = $true }
       ''            { }
-      default       { Warn "unknown plugin '$p' (expected: opencode, claudecode, all, none)" }
+      default       { Warn "unknown plugin '$p' (expected: opencode, claudecode, cursor, all, none)" }
     }
   }
 }
@@ -290,12 +295,13 @@ if (-not [string]::IsNullOrWhiteSpace($Plugins)) {
   Resolve-PluginSelection $Plugins
 } elseif ([Environment]::UserInteractive -and [Console]::IsInputRedirected -eq $false) {
   Write-Host "  Optional: install the code-memory agent-harness plugins."
-  Write-Host "  They make the backend ambient (auto-retrieve / auto-reingest / record)."
+  Write-Host "  They make the backend ambient (steering, auto-reingest, episode record)."
   Write-Host ""
   if (Prompt-YesNo "Install OpenCode plugin?" $true)    { $installOpencode = $true }
   if (Prompt-YesNo "Install Claude Code plugin?" $true) { $installClaudecode = $true }
-  if (($installOpencode -or $installClaudecode) -and $PluginsScope -eq 'global') {
-    if (Prompt-YesNo "Install project-local (./.opencode and ./.claude) instead of global?" $false) {
+  if (Prompt-YesNo "Install Cursor plugin?" $true)      { $installCursor = $true }
+  if (($installOpencode -or $installClaudecode -or $installCursor) -and $PluginsScope -eq 'global') {
+    if (Prompt-YesNo "Install project-local (./.opencode, ./.claude, ./.cursor) instead of global?" $false) {
       $PluginsScope = 'project'
     }
   }
@@ -303,7 +309,8 @@ if (-not [string]::IsNullOrWhiteSpace($Plugins)) {
   Warn "non-interactive shell and no -Plugins given; skipping plugin step"
 }
 
-function Invoke-PluginInstaller([string]$relativeScript, [string]$label) {
+function Invoke-PluginInstaller([string]$relativeScript, [string]$label, [string]$scopeStyle = 'project') {
+  # scopeStyle: 'project' → `--project` (opencode), 'scope' → `--scope project` (claude-code, cursor)
   $scriptPath = Join-Path $projectRoot $relativeScript
   if (-not (Test-Path $scriptPath)) {
     Warn "$relativeScript not found; skipping $label"
@@ -311,7 +318,10 @@ function Invoke-PluginInstaller([string]$relativeScript, [string]$label) {
   }
   $extension = [System.IO.Path]::GetExtension($scriptPath).ToLower()
   $pluginArgs = @()
-  if ($PluginsScope -eq 'project') { $pluginArgs += '--project' }
+  if ($PluginsScope -eq 'project') {
+    if ($scopeStyle -eq 'scope') { $pluginArgs += '--scope'; $pluginArgs += 'project' }
+    else                          { $pluginArgs += '--project' }
+  }
   if ($SkipMcpEffective)           { $pluginArgs += '--no-mcp' }
 
   if ($extension -eq '.ps1') {
@@ -334,10 +344,13 @@ if ($installOpencode) {
   Invoke-PluginInstaller 'plugins/opencode/install.sh' 'OpenCode'
 }
 if ($installClaudecode) {
-  Invoke-PluginInstaller 'plugins/claude-code/install.sh' 'Claude Code'
+  Invoke-PluginInstaller 'plugins/claude-code/install.sh' 'Claude Code' 'scope'
 }
-if (-not $installOpencode -and -not $installClaudecode) {
-  Warn "no harness plugin installed; re-run with -Plugins all (or =opencode/=claudecode) later"
+if ($installCursor) {
+  Invoke-PluginInstaller 'plugins/cursor/install.sh' 'Cursor' 'scope'
+}
+if (-not $installOpencode -and -not $installClaudecode -and -not $installCursor) {
+  Warn "no harness plugin installed; re-run with -Plugins all (or =opencode/=claudecode/=cursor) later"
 }
 
 # ---------- done ----------
