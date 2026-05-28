@@ -1,8 +1,9 @@
 # @code-memory/opencode-plugin
 
 OpenCode plugin that makes the [`code-memory`](../..) backend ambient:
-auto-retrieves a **Context Pack** when the user asks a substantive code
-question, and auto-learns by re-indexing files the agent writes / edits.
+auto-learns by re-indexing files the agent writes / edits, nudges the
+agent toward the index before it greps / reads the filesystem, and
+records the session as an episode on idle.
 
 The plugin is layered on top of the existing `code-memory` MCP server, which
 remains available for the agent to call manually (`codememory_retrieve`,
@@ -12,12 +13,12 @@ remains available for the agent to call manually (`codememory_retrieve`,
 
 | Hook                                  | Behavior                                                       |
 | ------------------------------------- | -------------------------------------------------------------- |
-| `chat.message` (first message of a session) | Kicks off a background `code-memory ingest <cwd>` (git delta) to catch edits made outside OpenCode since the last session. |
-| `chat.message`                        | Detects substantive code intent → `code-memory retrieve --json` → caches a Context Pack per session for orientation only (5 min TTL, 60 s dedup). Also clears the per-turn gate flag (see `tool.execute.before`). |
-| `experimental.chat.system.transform`  | Appends a fresh Context Pack to the system prompt, with explicit affordances for the 5 topology MCP tools (callers / callees / importers / dependencies / definitions). If a gate nudge is pending from the previous turn (the agent ran a read/shell tool without first making an explicit code-memory MCP call), surfaces a one-shot reminder here. |
-| `tool.execute.before` (`read`/`bash`/`grep`/`glob`) | First-tool gate: if no explicit `codememory_*` MCP call has fired this turn, logs a warning to the OpenCode log and queues a one-shot nudge to drop into the next turn's system prompt. Never blocks. |
-| `tool.execute.after` (`write`/`edit`/`patch`) | (a) Fires `code-memory reingest <path>`. (b) Drops the session's cached Context Pack so the next prompt re-fetches. (c) Schedules a debounced `code-memory resolve` to re-point cross-file CALLS edges. |
-| `tool.execute.after` (`codememory_*` MCP) | Marks the gate flag as satisfied so subsequent reads / shells in the same turn stay silent. Auto-retrieve Context Packs do not satisfy this gate. |
+| `chat.message` (first message of a session) | Kicks off a background `code-memory ingest <cwd>` (git delta) to catch edits made outside OpenCode since the last session. Also installs a launchd / systemd watcher so out-of-session edits keep the index fresh. |
+| `chat.message`                        | Detects durable claim intent in the user message (preference / decision / rejection / ownership / location) and queues a one-shot nudge reminding the agent to call `codememory_assert_claim`. Clears the per-turn gate flag (see `tool.execute.before`). |
+| `experimental.chat.system.transform`  | Drains pending gate nudges and claim nudges into the system prompt at the start of the next turn. |
+| `tool.execute.before` (`read`/`bash`/`grep`/`glob`) | First-tool gate: if no explicit `codememory_*` MCP call has fired this turn, logs a warning and queues a one-shot nudge to drop into the next turn's system prompt. Never blocks. |
+| `tool.execute.after` (`write`/`edit`/`patch`) | (a) Fires `code-memory reingest <path>`. (b) Schedules a debounced `code-memory resolve` to re-point cross-file CALLS edges. |
+| `tool.execute.after` (`codememory_*` MCP) | Marks the gate flag as satisfied so subsequent reads / shells in the same turn stay silent. |
 | `event` (`session.idle`)              | Records the session as an episode via `code-memory record`.    |
 
 All backend calls are best-effort. If `code-memory` is not on PATH, every
@@ -106,8 +107,6 @@ Today the plugin reads no config file. Knobs are inline constants in
 
 | Constant               | Default          | Purpose                                                       |
 | ---------------------- | ---------------- | ------------------------------------------------------------- |
-| `PACK_TTL_MS`          | 5 min            | How long a cached Context Pack stays injectable.              |
-| `DEDUP_WINDOW_MS`      | 60 s             | Same-query suppression to avoid hammering the embedder.       |
 | `RESOLVER_DEBOUNCE_MS` | 1.5 s            | Quiet period after the last write before the resolver re-runs.|
 | `WRITE_TOOLS`          | write/edit/patch | Which tool names trigger auto-reingest + resolver scheduling. |
 
@@ -122,10 +121,9 @@ exec uvx --from git+https://github.com/fmflurry/code-memory code-memory "$@"
 
 ## Bundled skill
 
-`skills/code-memory/SKILL.md` documents the tools, the Context Pack format,
-and when the agent should call retrieve / record / reingest manually.
-Wire it into your skills config the same way you wire any other Anthropic
-Agent Skill.
+`skills/code-memory/SKILL.md` documents the tools and when the agent
+should call retrieve / record / reingest manually. Wire it into your
+skills config the same way you wire any other Anthropic Agent Skill.
 
 ## Development
 
@@ -169,7 +167,6 @@ matrix of failure modes and what the plugin does about each.
 | Agent rewrites a file → callers in *other* files now point at deleted/renamed symbols. | After every write, the plugin schedules a debounced `code-memory resolve`. The resolver scans the whole graph and re-points placeholder `name::X` CALLS edges to the real Symbol nodes.            |
 | Agent does a 20-file refactor in 2 seconds → resolver would run 20 times back-to-back. | Resolver scheduling is debounced by `RESOLVER_DEBOUNCE_MS` (1.5 s). A new write resets the timer, so a burst of edits collapses to exactly one resolver run after the dust settles.                |
 | File changes outside OpenCode between sessions (vim, IDE, `git pull`, `git checkout`). | First `chat.message` of each session triggers a one-shot background `code-memory ingest <cwd>`. The ingest is git-aware and only re-walks files whose hash moved — and it re-runs the resolver. |
-| Session-cached Context Pack still reflects pre-write state. | Any successful write also drops the per-session pack cache. The next prompt re-fetches against the just-updated index instead of replaying stale code hits.                                       |
 | Backend (FalkorDB / Qdrant / Ollama) is down.             | All CLI calls are guarded by per-command timeouts and run fire-and-forget. Failure is logged to the OpenCode log channel and silently no-op'd; the agent's turn is never blocked.                |
 | `code-memory` CLI is missing on PATH.                     | `createMemoryClient` detects this once at plugin init and short-circuits every method. The plugin remains loaded but inert.                                                                       |
 | Agent never explicitly records what it did.               | `session.idle` fires `code-memory record` with the first user message + cumulative `git diff` as the patch (verdict left blank). Future sessions can recall the episode even without manual record. |
@@ -183,21 +180,22 @@ matrix of failure modes and what the plugin does about each.
 
 ### Mental model
 
-Think of the plugin as three concentric refresh loops, each cheaper and more frequent than the next:
+Two refresh loops keep the index honest; the agent retrieves on demand
+via MCP when it needs context:
 
 ```
-session start         every write              every chat turn
-     │                     │                         │
-     ▼                     ▼                         ▼
-delta-ingest        reingest + debounce          retrieve
-+ resolver            resolver + pack            (no I/O if
-(catches OOB         invalidation               dedup'd within
- edits)              (cross-file edge            60 s)
-                      accuracy)
+session start              every write
+     │                          │
+     ▼                          ▼
+delta-ingest              reingest + debounced
++ resolver                resolver (cross-file
+(catches OOB               edge accuracy)
+ edits)
 ```
 
-If any layer fails, the layer above eventually catches up. The system
-is designed so that stale data is a temporary state, not a steady state.
+If either layer fails, the next one eventually catches up. Stale data is a
+temporary state, not a steady state. Context-pack delivery is the agent's
+job — call `codememory_retrieve` when orientation is needed.
 
 ## License
 
