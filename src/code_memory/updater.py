@@ -327,7 +327,7 @@ def upgrade_docker_images() -> tuple[bool, str]:
         if live is None:
             return False, "no compose file at ~/.code-memory/ and no running cm-* containers"
         compose = live
-        project_dir = live.parent.parent if live.parent.name == "docker" else live.parent
+        project_dir = live.parent
     pull = _run(
         ["docker", "compose", "-f", str(compose), "--project-directory", str(project_dir), "pull"],
         capture=False,
