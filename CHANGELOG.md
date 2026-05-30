@@ -8,6 +8,50 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
+## [0.5.2] — 2026-05-30
+
+Release theme: **the watcher stops leaking**. A diagnosis of runaway RAM
+turned up dozens of orphaned `code-memory watch` daemons — one permanent
+launchd agent per directory any MCP server had ever booted in, including
+throwaway per-session dirs. This release stops the bleed and self-heals
+the cruft. Also lands semantic dedupe for near-duplicate user claims.
+
+### Fixed — Unbounded launchd watcher accumulation
+
+**What:** `ensure_autostart()` no longer registers a persistent OS agent
+for ephemeral / per-session directories (`~/.claude/homunculus/*`,
+`.cursor/worktrees/*`, `plugins/cache/*`); the session-scoped in-process
+watcher still covers them. `LaunchdAdapter.prune_stale()` (run on every
+MCP bootstrap) boots out and removes agents whose `WorkingDirectory` is
+gone or ephemeral.
+
+**Reason:** each MCP boot registered a `KeepAlive` + `RunAtLoad` agent for
+its cwd. Ephemeral session dirs got permanent watchers that survived kill
+(launchd relaunched them) and reboot, piling up dozens of daemons and the
+RAM/CPU they pin. `prune_stale` is launchd-only for now; systemd/schtasks
+GC is a follow-up.
+
+### Fixed — Graceful watcher teardown on MCP shutdown
+
+**What:** the MCP server registers `atexit` + `SIGTERM` handlers that call
+`Watcher.stop()`.
+
+**Reason:** the in-process watcher ran as a daemon thread with no clean
+stop, so an in-flight debounced sync was dropped and the watchdog Observer
+never joined cleanly on exit.
+
+### Added — Semantic dedupe of near-duplicate claims
+
+**What:** `ClaimsIndexer` collapses a new claim into the closest open claim
+when cosine similarity is `>= CLAIMS_SEMANTIC_DEDUP_THRESHOLD` (default
+0.90), ahead of the SQL write.
+
+**Reason:** exact (subject, predicate, object) dedupe missed paraphrases
+("project uses flurryx" / "project depends-on flurryx"), so semantically
+identical claims were stored three times. Best-effort — embedder/backend
+errors fall through to the existing SQL-level dedupe; set `>= 1.0` to
+disable.
+
 ## [0.3.0] — 2026-05-26
 
 Release theme: **the claim loop closes**. v0.2.0 shipped the storage
