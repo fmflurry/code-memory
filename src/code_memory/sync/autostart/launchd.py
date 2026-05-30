@@ -92,6 +92,41 @@ class LaunchdAdapter:
             unit_path=str(path),
         )
 
+    def prune_stale(self) -> list[str]:
+        """Boot out + remove watch agents whose target dir is gone or ephemeral.
+
+        Self-heals units left behind by deleted checkouts and per-session
+        worktrees. Returns the removed labels. Best-effort.
+        """
+        from ..safety import is_ephemeral_watch_dir
+
+        agents = Path.home() / "Library" / "LaunchAgents"
+        if not agents.is_dir():
+            return []
+        domain = f"gui/{os.getuid()}"
+        removed: list[str] = []
+        for path in sorted(agents.glob(f"{LABEL_PREFIX}.*.plist")):
+            try:
+                with path.open("rb") as fh:
+                    data = plistlib.load(fh)
+            except (OSError, plistlib.InvalidFileException):
+                continue
+            workdir = data.get("WorkingDirectory")
+            if not workdir:
+                continue
+            target = Path(workdir)
+            if target.is_dir() and not is_ephemeral_watch_dir(target):
+                continue  # live, persistable project — keep
+            label = data.get("Label", path.stem)
+            subprocess.run(
+                ["launchctl", "bootout", domain, str(path)],
+                capture_output=True,
+                check=False,
+            )
+            path.unlink(missing_ok=True)
+            removed.append(label)
+        return removed
+
     def start(self, repo: Path) -> AutostartStatus:
         label = self._label(repo)
         path = self._plist_path(repo)

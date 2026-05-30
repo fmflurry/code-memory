@@ -26,9 +26,11 @@ Transport: stdio. Register via `code-memory-mcp` script entrypoint.
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import os
+import signal
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -1704,8 +1706,15 @@ def _bootstrap_repo() -> Path | None:
     # 1. autostart registration (idempotent)
     if not os.environ.get("CODE_MEMORY_NO_AUTOSTART"):
         try:
-            from .sync.autostart import ensure_autostart
+            from .sync.autostart import ensure_autostart, prune_stale_autostart
 
+            pruned = prune_stale_autostart()
+            if pruned:
+                log.info(
+                    "mcp bootstrap: pruned %d stale autostart agents: %s",
+                    len(pruned),
+                    ", ".join(pruned),
+                )
             st = ensure_autostart(repo)
             log.info(
                 "mcp bootstrap: autostart installed=%s running=%s label=%s",
@@ -1747,6 +1756,44 @@ def _bootstrap_repo() -> Path | None:
 
 
 _BOOTSTRAP_REFS: dict[str, Any] = {}
+
+
+def _teardown_watcher() -> None:
+    """Gracefully stop the in-process watcher started at bootstrap.
+
+    Idempotent + best-effort. Lets the watchdog Observer flush and join
+    cleanly instead of being killed abruptly with the daemon thread on
+    process exit (which would drop an in-flight debounced sync).
+    """
+    w = _BOOTSTRAP_REFS.pop("watcher", None)
+    if w is None:
+        return
+    try:
+        w.stop()
+        log.info("mcp shutdown: in-process watcher stopped")
+    except Exception:  # noqa: BLE001
+        log.exception("mcp shutdown: watcher stop failed")
+
+
+def _install_shutdown_hooks() -> None:
+    """Register atexit + SIGTERM handlers for graceful watcher teardown.
+
+    atexit covers normal exit and SIGINT (KeyboardInterrupt); the SIGTERM
+    handler covers ``kill`` / launchd ``bootout``, which otherwise terminate
+    without running atexit.
+    """
+    atexit.register(_teardown_watcher)
+
+    def _on_sigterm(_signum: int, _frame: Any) -> None:
+        _teardown_watcher()
+        raise SystemExit(0)
+
+    try:
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except ValueError:
+        # Not in the main thread (embedded use / tests) — atexit still
+        # covers interpreter exit; SIGTERM handling is simply unavailable.
+        pass
 
 
 def _check_backends() -> None:
@@ -1809,6 +1856,7 @@ def main() -> None:
         level=os.environ.get("CODE_MEMORY_LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    _install_shutdown_hooks()
     anyio.run(_run)
 
 

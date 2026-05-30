@@ -9,6 +9,7 @@ import pytest
 from code_memory.sync.safety import (
     UnsafeWatchRootError,
     assert_safe_watch_root,
+    is_ephemeral_watch_dir,
 )
 
 
@@ -67,3 +68,58 @@ def test_ensure_autostart_returns_unsafe_status_for_home() -> None:
     assert not st.running
     assert st.label == "<unsafe-root>"
     assert "refusing to watch" in (st.note or "")
+
+
+def _fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+def test_is_ephemeral_detects_homunculus_session_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = _fake_home(tmp_path, monkeypatch)
+    d = home / ".claude" / "homunculus" / "projects" / "65e843763e3b"
+    d.mkdir(parents=True)
+    assert is_ephemeral_watch_dir(d) is True
+
+
+def test_is_ephemeral_detects_cursor_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = _fake_home(tmp_path, monkeypatch)
+    d = home / ".cursor" / "worktrees" / "gc.webapp" / "1v64"
+    d.mkdir(parents=True)
+    assert is_ephemeral_watch_dir(d) is True
+
+
+def test_is_ephemeral_detects_plugin_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = _fake_home(tmp_path, monkeypatch)
+    d = home / ".claude" / "plugins" / "cache" / "code-memory" / "0.3.0"
+    d.mkdir(parents=True)
+    assert is_ephemeral_watch_dir(d) is True
+
+
+def test_is_ephemeral_false_for_real_project(tmp_path: Path) -> None:
+    repo = tmp_path / "Workspace" / "my-repo"
+    repo.mkdir(parents=True)
+    assert is_ephemeral_watch_dir(repo) is False
+
+
+def test_ensure_autostart_skips_ephemeral_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from code_memory.sync.autostart.base import ensure_autostart
+
+    home = _fake_home(tmp_path, monkeypatch)
+    d = home / ".claude" / "homunculus" / "projects" / "abc123"
+    d.mkdir(parents=True)
+    st = ensure_autostart(d)
+    assert not st.installed
+    assert not st.running
+    assert st.label == "<ephemeral>"
+    assert "ephemeral" in (st.note or "")

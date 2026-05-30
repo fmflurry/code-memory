@@ -14,7 +14,12 @@ import platform
 from pathlib import Path
 from typing import Protocol
 
-from .base import AutostartStatus, ensure_autostart, get_adapter
+from .base import (
+    AutostartStatus,
+    ensure_autostart,
+    get_adapter,
+    prune_stale_autostart,
+)
 from .launchd import LaunchdAdapter
 from .schtasks import SchtasksAdapter
 from .systemd import SystemdUserAdapter
@@ -25,6 +30,7 @@ __all__ = [
     "SchtasksAdapter",
     "SystemdUserAdapter",
     "ensure_autostart",
+    "prune_stale_autostart",
     "get_adapter",
     "Adapter",
 ]

@@ -47,6 +47,34 @@ def _system_unsafe_roots() -> set[Path]:
     return out
 
 
+# Contiguous path segments that mark a directory as ephemeral / per-session:
+# it exists now but is created fresh per agent session (or per plugin version)
+# and discarded, so it must never receive a *persistent* OS autostart agent.
+_EPHEMERAL_MARKERS: tuple[tuple[str, ...], ...] = (
+    (".claude", "homunculus"),  # Claude Code per-session worktrees
+    (".cursor", "worktrees"),  # Cursor per-session worktrees
+    (".claude", "plugins", "cache"),  # versioned plugin cache dirs
+)
+
+
+def is_ephemeral_watch_dir(root: Path | str) -> bool:
+    """True if ``root`` lives under a known ephemeral / per-session location.
+
+    Such dirs (agent session worktrees, versioned plugin caches) churn
+    constantly. A session-scoped in-process watcher on one is fine — it dies
+    with the session — but a *persistent* OS autostart agent for each leaks
+    unbounded launchd/systemd/schtasks units. Used to gate persistent
+    registration only, not general watching.
+    """
+    parts = tuple(p.lower() for p in Path(root).expanduser().resolve().parts)
+    for marker in _EPHEMERAL_MARKERS:
+        span = len(marker)
+        for i in range(len(parts) - span + 1):
+            if parts[i : i + span] == marker:
+                return True
+    return False
+
+
 def assert_safe_watch_root(root: Path | str) -> Path:
     """Resolve ``root`` and reject HOME / filesystem roots / system dirs.
 

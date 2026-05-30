@@ -50,7 +50,11 @@ def ensure_autostart(repo: Path, *, project: str | None = None) -> AutostartStat
 
     Idempotent. Safe to call on every MCP server boot.
     """
-    from ..safety import UnsafeWatchRootError, assert_safe_watch_root
+    from ..safety import (
+        UnsafeWatchRootError,
+        assert_safe_watch_root,
+        is_ephemeral_watch_dir,
+    )
 
     try:
         repo = assert_safe_watch_root(repo)
@@ -60,6 +64,16 @@ def ensure_autostart(repo: Path, *, project: str | None = None) -> AutostartStat
             running=False,
             label="<unsafe-root>",
             note=str(e),
+        )
+    if is_ephemeral_watch_dir(repo):
+        return AutostartStatus(
+            installed=False,
+            running=False,
+            label="<ephemeral>",
+            note=(
+                f"{repo} is an ephemeral / per-session directory; skipping "
+                "persistent autostart (session-scoped watcher still applies)."
+            ),
         )
     try:
         adapter = get_adapter()
@@ -79,6 +93,26 @@ def ensure_autostart(repo: Path, *, project: str | None = None) -> AutostartStat
     if status.installed and not status.running:
         status = adapter.start(repo)
     return status
+
+
+def prune_stale_autostart() -> list[str]:
+    """Remove autostart units whose target dir is gone or ephemeral.
+
+    Best-effort and idempotent. Only adapters that implement ``prune_stale``
+    do anything; returns the list of removed unit labels.
+    """
+    try:
+        adapter = get_adapter()
+    except RuntimeError:
+        return []
+    prune = getattr(adapter, "prune_stale", None)
+    if prune is None:
+        return []
+    try:
+        return list(prune())
+    except Exception:  # noqa: BLE001
+        log.exception("autostart prune failed")
+        return []
 
 
 def watcher_command(repo: Path) -> list[str]:

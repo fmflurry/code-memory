@@ -49,6 +49,44 @@ def test_launchd_install_writes_plist(tmp_path: Path, monkeypatch: pytest.Monkey
     assert str(repo).encode() in content
 
 
+@pytest.mark.skipif(platform.system() != "Darwin", reason="launchd only on macOS")
+def test_launchd_prune_removes_dead_and_ephemeral(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import shutil
+
+    from code_memory.sync.autostart import launchd as launchd_mod
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+    # Don't touch the real launchctl during a unit test.
+    monkeypatch.setattr(launchd_mod.subprocess, "run", lambda *a, **k: None)
+
+    adapter = launchd_mod.LaunchdAdapter()
+
+    live = tmp_path / "live-repo"
+    live.mkdir()
+    adapter.install(live)
+
+    dead = tmp_path / "dead-repo"
+    dead.mkdir()
+    adapter.install(dead)
+    shutil.rmtree(dead)  # WorkingDirectory now gone
+
+    eph = fake_home / ".claude" / "homunculus" / "projects" / "abc"
+    eph.mkdir(parents=True)
+    adapter.install(eph)
+
+    removed = adapter.prune_stale()
+
+    assert len(removed) == 2
+    assert adapter._plist_path(live).is_file()
+    assert not adapter._plist_path(dead).is_file()
+    assert not adapter._plist_path(eph).is_file()
+
+
 @pytest.mark.skipif(platform.system() != "Linux", reason="systemd only on Linux")
 def test_systemd_install_writes_unit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from code_memory.sync.autostart.systemd import SystemdUserAdapter
