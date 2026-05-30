@@ -245,6 +245,18 @@ class ClaimsStore:
         ).fetchone()
         return None if row is None else str(row[0])
 
+    def refresh_existing(self, claim_id: str, claim: ClaimRecord) -> None:
+        """Public refresh: update an existing row's metadata in place.
+
+        Used by the semantic-dedup path in :class:`ClaimsIndexer` when a
+        freshly extracted claim is a paraphrastic near-duplicate of an
+        already-stored open claim. The stored row's triple is preserved;
+        only confidence, evidence, recorded_at, head_sha, session_id,
+        source_prompt_id, and entity ids are touched. Commits.
+        """
+        self._refresh_existing(claim_id, claim)
+        self.conn.commit()
+
     def _refresh_existing(self, claim_id: str, claim: ClaimRecord) -> None:
         """Refresh an existing open dupe with the new claim's metadata.
 

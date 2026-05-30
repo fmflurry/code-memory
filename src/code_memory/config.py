@@ -250,6 +250,17 @@ class Config:
     claims_entity_threshold: float = float(
         _env("CLAIMS_ENTITY_THRESHOLD", "0.85")
     )
+    # Cosine similarity at or above which a freshly extracted claim
+    # collapses into the closest existing open claim instead of being
+    # inserted as a new row. Catches paraphrastic near-duplicates
+    # ("project uses flurryx" / "project depends-on flurryx" /
+    # "user wants-to add a skipifcached using flurryx") that escape the
+    # exact (subject, predicate, object) dedupe in ClaimsStore. Threshold
+    # is conservative — false-merges across genuinely-distinct claims
+    # hurt more than letting an occasional duplicate slip through.
+    claims_semantic_dedup_threshold: float = float(
+        _env("CLAIMS_SEMANTIC_DEDUP_THRESHOLD", "0.90")
+    )
 
     def for_project(self, slug: str) -> Config:
         slug = slugify(slug)

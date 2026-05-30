@@ -27,13 +27,16 @@ Design choices:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 from ..config import CONFIG, Config, detect_project_slug
 from ..embed import Embedder, HybridVec, get_embedder
 from ..vector import QdrantStore, VectorHit, VectorRecord
 from .store import ClaimRecord, ClaimsStore, UpsertResult
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,6 +52,12 @@ class ClaimsIndexer:
     vector: QdrantStore
     embedder: Embedder
     collection: str
+    # Cosine threshold for semantic near-duplicate collapse. Default
+    # pulls from the global config so tests can inject a fake value
+    # without monkey-patching CONFIG.
+    semantic_dedup_threshold: float = field(
+        default_factory=lambda: CONFIG.claims_semantic_dedup_threshold
+    )
     _backfilled: bool = False
 
     # ------------------------------------------------------------- write
@@ -61,8 +70,33 @@ class ClaimsIndexer:
         :meth:`ensure_backfilled` call (or the next ``retrieve``) will
         re-embed it. We prefer "Qdrant temporarily behind" over "lose
         the claim entirely."
+
+        Semantic near-duplicate collapse runs BEFORE the SQLite write.
+        When the new claim's embedding sits within
+        ``semantic_dedup_threshold`` cosine of an existing open claim,
+        the existing row is refreshed in place (recorded_at, confidence,
+        evidence) and no new row is inserted. Exact-triple matches still
+        flow through ``store.upsert`` and hit the SQL-level dedupe so
+        single-valued-predicate conflict handling remains intact.
         """
         self.ensure_backfilled()
+
+        near_id = self._find_near_duplicate(claim)
+        if near_id is not None:
+            self.store.refresh_existing(near_id, claim)
+            existing = self.store.by_id(near_id)
+            if existing is not None:
+                self.vector.set_payload(
+                    self.collection,
+                    [near_id],
+                    _payload_for(existing, open_=True),
+                )
+            _LOG.debug(
+                "claims indexer: semantic-dedup collapsed new claim into %s",
+                near_id,
+            )
+            return UpsertResult(near_id, closed_ids=[], was_new=False)
+
         result = self.store.upsert(claim)
 
         # Close path: any predecessor rows closed by this insert get
@@ -173,6 +207,50 @@ class ClaimsIndexer:
         return len(records)
 
     # ------------------------------------------------------------ helpers
+
+    def _find_near_duplicate(self, claim: ClaimRecord) -> str | None:
+        """Return the id of an open claim within cosine threshold, else None.
+
+        Reasons we return ``None`` (and let the SQLite store handle the
+        write):
+
+        * Threshold ``>= 1.0`` — feature disabled.
+        * Collection missing — no points to compare against yet.
+        * Embedder or vector backend raises — semantic dedup is an
+          optimization, never a hard dependency.
+        * Top hit's score below threshold.
+        * Top hit's stored triple matches the new claim exactly — the
+          SQL-level dedupe in :meth:`ClaimsStore.upsert` already handles
+          that case (and preserves single-valued-predicate semantics).
+        """
+        if self.semantic_dedup_threshold >= 1.0:
+            return None
+        if self.vector._inspect_collection(self.collection) == "missing":
+            return None
+        try:
+            hv = self.embedder.embed_one(_text_for(claim))
+            hits = self.vector.search(
+                self.collection,
+                hv,
+                top_k=1,
+                filt={"open": True, "polarity": claim.polarity},
+                mode="dense",
+            )
+        except Exception:  # noqa: BLE001
+            _LOG.debug("claims indexer: semantic dedup search failed", exc_info=True)
+            return None
+        if not hits:
+            return None
+        top = hits[0]
+        if top.score < self.semantic_dedup_threshold:
+            return None
+        if (
+            top.payload.get("subject") == claim.subject
+            and top.payload.get("predicate") == claim.predicate
+            and top.payload.get("object") == claim.object
+        ):
+            return None
+        return str(top.id)
 
     def _embed_and_upsert(self, claim_id: str, claim: ClaimRecord) -> None:
         hv = self.embedder.embed_one(_text_for(claim))

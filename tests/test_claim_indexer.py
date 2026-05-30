@@ -145,15 +145,30 @@ def _claim(
     )
 
 
-def _make_indexer(tmp_path, **kwargs) -> tuple[ClaimsIndexer, _FakeVector, _FakeEmbedder]:
+def _make_indexer(
+    tmp_path,
+    *,
+    semantic_dedup_threshold: float = 1.01,
+    **vector_kwargs,
+) -> tuple[ClaimsIndexer, _FakeVector, _FakeEmbedder]:
+    """Build an indexer wired to in-memory fakes.
+
+    ``semantic_dedup_threshold`` defaults to ``1.01`` so the semantic
+    near-duplicate path is disabled by default — the legacy tests below
+    were written against the exact-triple SQL dedupe and would observe
+    spurious collapses if the fake embedder's uniform 0.9 score tripped
+    the threshold. Tests that exercise semantic dedup pass an explicit
+    lower threshold.
+    """
     store = ClaimsStore(path=tmp_path / "claims.db")
-    vec = _FakeVector(**kwargs)
+    vec = _FakeVector(**vector_kwargs)
     emb = _FakeEmbedder()
     indexer = ClaimsIndexer(
         store=store,
         vector=vec,
         embedder=emb,
         collection="claims__test",
+        semantic_dedup_threshold=semantic_dedup_threshold,
     )
     return indexer, vec, emb
 
@@ -301,6 +316,97 @@ def test_search_swallows_backend_errors(tmp_path) -> None:
 
     # Assert
     assert hits == []
+
+
+def test_semantic_dedup_collapses_paraphrastic_claim(tmp_path) -> None:
+    """A near-duplicate paraphrase refreshes the existing row, no new insert.
+
+    Models the user-reported failure: a single utterance produced
+    ``(project, uses, flurryx)`` AND ``(project, depends-on, flurryx)``
+    as separate rows. With semantic dedup enabled, the second triple's
+    embedding sits within threshold of the first and merges in place.
+    """
+    # Arrange — threshold below fake's uniform 0.9 score so any hit
+    # within the polarity-filtered set counts as a near-duplicate.
+    indexer, vec, emb = _make_indexer(tmp_path, semantic_dedup_threshold=0.85)
+    first = _claim("project", "uses", "flurryx", confidence=0.85)
+    indexer.upsert(first)
+    embed_calls_after_first = len(emb.calls)
+    points_after_first = set(vec._points.keys())
+
+    # Act — paraphrastic restatement with a different predicate.
+    second = _claim("project", "depends-on", "flurryx", confidence=0.85)
+    result = indexer.upsert(second)
+
+    # Assert — second claim merged into the first's row, no new row.
+    assert result.was_new is False
+    assert result.claim_id == first.id
+    assert indexer.store.count() == 1
+    # No new Qdrant point was created; only payload was refreshed.
+    assert set(vec._points.keys()) == points_after_first
+    # One embed call for the second claim's similarity probe; no second
+    # embed for an "insert" path that never ran.
+    assert len(emb.calls) == embed_calls_after_first + 1
+
+
+def test_semantic_dedup_skipped_when_exact_triple_matches(tmp_path) -> None:
+    """Exact (s,p,o) match falls through to SQL dedupe, preserving its semantics."""
+    # Arrange
+    indexer, vec, emb = _make_indexer(tmp_path, semantic_dedup_threshold=0.85)
+    first = _claim("project", "uses", "flurryx", confidence=0.7)
+    indexer.upsert(first)
+
+    # Act — identical triple, stronger confidence.
+    second = _claim("project", "uses", "flurryx", confidence=0.95)
+    result = indexer.upsert(second)
+
+    # Assert — same row id, single SQLite row, confidence raised via the
+    # SQL refresh path (not the semantic one). The refresh payload
+    # update is the canonical signal.
+    assert result.claim_id == first.id
+    assert indexer.store.count() == 1
+    refreshed = indexer.store.by_id(first.id)
+    assert refreshed is not None
+    assert refreshed.confidence == pytest.approx(0.95)
+
+
+def test_semantic_dedup_disabled_when_threshold_at_one(tmp_path) -> None:
+    """Threshold ``>= 1.0`` disables the feature without touching the embedder."""
+    # Arrange
+    indexer, vec, emb = _make_indexer(tmp_path, semantic_dedup_threshold=1.0)
+    first = _claim("project", "uses", "flurryx")
+    indexer.upsert(first)
+    second = _claim("project", "depends-on", "flurryx")
+
+    # Act
+    result = indexer.upsert(second)
+
+    # Assert — second claim is a brand-new row, not a merge.
+    assert result.was_new is True
+    assert indexer.store.count() == 2
+
+
+def test_semantic_dedup_swallows_search_backend_failure(tmp_path) -> None:
+    """A search-time backend hiccup must not block the SQLite write.
+
+    The semantic-dedup probe uses ``vector.search``. If Qdrant is
+    transiently unavailable, we fall back to the insert path instead of
+    raising — the SQLite row is still the authoritative truth and the
+    indexer's normal "Qdrant temporarily behind" recovery applies.
+    """
+    # Arrange — first claim lands normally; second claim's dedup probe
+    # then hits a vector backend that has started raising on search.
+    indexer, vec, emb = _make_indexer(tmp_path, semantic_dedup_threshold=0.85)
+    indexer.upsert(_claim("project", "uses", "flurryx"))
+    vec._search_raises = True  # flip the fake into "outage" mode
+
+    # Act
+    second = _claim("project", "depends-on", "flurryx")
+    result = indexer.upsert(second)
+
+    # Assert — dedup short-circuits to None, normal insert path runs.
+    assert result.was_new is True
+    assert indexer.store.count() == 2
 
 
 def test_text_for_includes_polarity_and_evidence() -> None:
