@@ -14,6 +14,7 @@ pushes for the same commit converge (identical blob = no-op).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -23,17 +24,55 @@ from typing import Iterable
 DEFAULT_BRANCH = "codemem-snapshots"
 
 
+def _git_env() -> dict[str, str]:
+    """Environment for git subprocesses that disables interactive prompts.
+
+    ``GIT_TERMINAL_PROMPT=0`` makes git fail fast on a missing credential
+    instead of blocking on an interactive username/password prompt — so a
+    read-only command like ``status`` never hangs when ``origin`` is an
+    HTTPS remote without cached credentials.
+    """
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    # SSH remotes: never pop an interactive askpass dialog either.
+    env.setdefault("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")
+    return env
+
+
+# Git args that, prepended via ``-c``, disable every configured credential
+# helper for a single invocation. ``GIT_TERMINAL_PROMPT=0`` alone is not
+# enough: a configured helper such as Git Credential Manager
+# (``credential.helper=manager``) is a separate program git still invokes,
+# and it can pop its own interactive dialog. An empty ``credential.helper``
+# value resets the helper list, so combined with the env var git fails fast
+# instead of blocking. We apply this to all best-effort/read operations
+# (fetch, listing, the snapshot status check) so they never block the MCP
+# server boot, the watcher, or ``code-memory status``. Explicit publish
+# (``push``) opts back into credentials so opted-in remotes still work.
+_NO_CREDENTIAL_ARGS: tuple[str, ...] = ("-c", "credential.helper=")
+
+
 class StoreError(RuntimeError):
     pass
 
 
-def _git(repo: Path, *args: str, check: bool = True, timeout: float = 60.0) -> str:
+def _git(
+    repo: Path,
+    *args: str,
+    check: bool = True,
+    timeout: float = 60.0,
+    allow_credentials: bool = False,
+) -> str:
+    prefix = ["git", "-C", str(repo)]
+    if not allow_credentials:
+        prefix += list(_NO_CREDENTIAL_ARGS)
     out = subprocess.run(
-        ["git", "-C", str(repo), *args],
+        [*prefix, *args],
         capture_output=True,
         text=True,
         check=False,
         timeout=timeout,
+        env=_git_env(),
     )
     if check and out.returncode != 0:
         raise StoreError(
@@ -106,6 +145,7 @@ class SnapshotStore:
             ["git", "-C", str(self.repo), "cat-file", "blob", oid],
             capture_output=True,
             check=True,
+            env=_git_env(),
         )
         return out.stdout
 
@@ -179,6 +219,7 @@ class SnapshotStore:
                     self.remote,
                     f"refs/heads/{self.branch}:refs/heads/{self.branch}",
                     check=True,
+                    allow_credentials=True,
                 )
             except StoreError:
                 # remote moved; try once with --force-with-lease after refetch
@@ -190,6 +231,7 @@ class SnapshotStore:
                     f"refs/heads/{self.branch}:refs/heads/{self.branch}",
                     "--force-with-lease",
                     check=False,
+                    allow_credentials=True,
                 )
         return True
 
@@ -241,6 +283,7 @@ class SnapshotStore:
                     self.remote,
                     f"refs/heads/{self.branch}:refs/heads/{self.branch}",
                     "--force-with-lease",
+                    allow_credentials=True,
                 )
             except StoreError:
                 pass
@@ -314,6 +357,7 @@ class SnapshotStore:
             ["git", "-C", str(self.repo), "cat-file", "blob", oid],
             capture_output=True,
             check=True,
+            env=_git_env(),
         )
         try:
             data = json.loads(out.stdout.decode() or "{}")
@@ -385,6 +429,7 @@ def _build_tree(repo: Path, entries: dict[str, tuple[str, str, str]]) -> str:
         capture_output=True,
         text=True,
         check=True,
+        env=_git_env(),
     )
     return out.stdout.strip()
 
