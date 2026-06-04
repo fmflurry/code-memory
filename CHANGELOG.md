@@ -8,6 +8,34 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
+## [0.5.3] — 2026-06-04
+
+Release theme: **git operations never block on credentials**. The
+snapshot store talked to `origin` with plain `git fetch` / `git push`
+and nothing to suppress interactive auth. On any HTTPS remote without
+cached credentials that froze the MCP server at boot and re-prompted on
+every `code-memory status` and watcher tick.
+
+### Fixed — Interactive git credential prompts froze the MCP server
+
+**What:** every best-effort / read git call in `SnapshotStore` (`fetch`,
+listing, the snapshot existence check) now runs with
+`GIT_TERMINAL_PROMPT=0`, `GIT_SSH_COMMAND=ssh -oBatchMode=yes`, and an
+empty `-c credential.helper=` so it fails fast instead of blocking. Only
+the explicit publish path (`push` during `snapshot publish` / `gc`) opts
+back into credentials via `allow_credentials=True`, so opted-in remotes
+still authenticate.
+
+**Reason:** `GIT_TERMINAL_PROMPT=0` alone was not enough — a configured
+credential helper such as Git Credential Manager is a separate program
+git still launches, and it pops its own dialog. The MCP bootstrap runs a
+synchronous `sync_repo(trigger="mcp-boot")` with `fetch=True`; on an
+auth-required remote that `git fetch` hung waiting for a password the
+stdio server could never supply, so OpenCode reported the server as not
+running. The watcher's per-quiet-period sync and `code-memory status`
+hit the same wall. Resetting the helper list makes git return in ~0.1s
+(no remote snapshots) instead of waiting on a human.
+
 ## [0.5.2] — 2026-05-30
 
 Release theme: **the watcher stops leaking**. A diagnosis of runaway RAM
