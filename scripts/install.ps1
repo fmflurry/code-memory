@@ -204,9 +204,25 @@ if (-not (Test-Path '.env')) {
 # ---------- 5. docker infra ----------
 if (-not $NoDocker) {
   Step "Starting FalkorDB + Qdrant (docker compose)"
-  & docker compose -f docker/docker-compose.yml up -d
-  if ($LASTEXITCODE -ne 0) { Die "docker compose up failed" }
-  Ok "Containers up"
+  # Pin an explicit project name. The compose file uses fixed container_names
+  # (cm-falkordb, ...), so they are global singletons: a later `compose up`
+  # under a different project name collides with "container name already in
+  # use". Reuse whatever project already owns the running containers (so their
+  # data volumes, namespaced as <project>_falkor_data, stay attached); fall
+  # back to a stable name for fresh installs. This keeps install and
+  # `code-memory update` on one project without ever orphaning indexed data.
+  $CmProject = (& docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' cm-falkordb 2>$null)
+  if (-not $CmProject) { $CmProject = (& docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' cm-qdrant 2>$null) }
+  if (-not $CmProject) { $CmProject = "code-memory" }
+  $CmProject = "$CmProject".Trim()
+  & docker compose -p $CmProject -f docker/docker-compose.yml up -d --remove-orphans
+  if ($LASTEXITCODE -ne 0) {
+    Warn "compose up hit a container-name conflict — removing stale cm-* containers and retrying (named volumes persist)"
+    & docker rm -f cm-falkordb cm-qdrant cm-tei *> $null
+    & docker compose -p $CmProject -f docker/docker-compose.yml up -d --remove-orphans
+    if ($LASTEXITCODE -ne 0) { Die "docker compose up failed" }
+  }
+  Ok "Containers up (project: $CmProject)"
   Dim "FalkorDB browser: http://localhost:3000"
   Dim "Qdrant dashboard: http://localhost:6333/dashboard"
 } else {
@@ -267,6 +283,7 @@ Step "Agent harness plugins"
 $installOpencode   = $false
 $installClaudecode = $false
 $installCursor     = $false
+$installVibe       = $false
 
 function Resolve-PluginSelection([string]$raw) {
   if ([string]::IsNullOrWhiteSpace($raw)) { return }
@@ -275,18 +292,22 @@ function Resolve-PluginSelection([string]$raw) {
     $script:installOpencode = $true
     $script:installClaudecode = $true
     $script:installCursor = $true
+    $script:installVibe = $true
     return
   }
   foreach ($p in $raw.Split(',')) {
     $key = $p.Trim().ToLower()
     switch ($key) {
-      'opencode'    { $script:installOpencode = $true }
-      'claudecode'  { $script:installClaudecode = $true }
-      'claude'      { $script:installClaudecode = $true }
-      'claude-code' { $script:installClaudecode = $true }
-      'cursor'      { $script:installCursor = $true }
-      ''            { }
-      default       { Warn "unknown plugin '$p' (expected: opencode, claudecode, cursor, all, none)" }
+      'opencode'     { $script:installOpencode = $true }
+      'claudecode'   { $script:installClaudecode = $true }
+      'claude'       { $script:installClaudecode = $true }
+      'claude-code'  { $script:installClaudecode = $true }
+      'cursor'       { $script:installCursor = $true }
+      'vibe'         { $script:installVibe = $true }
+      'mistral'      { $script:installVibe = $true }
+      'mistral-vibe' { $script:installVibe = $true }
+      ''             { }
+      default        { Warn "unknown plugin '$p' (expected: opencode, claudecode, cursor, vibe, all, none)" }
     }
   }
 }
@@ -300,8 +321,9 @@ if (-not [string]::IsNullOrWhiteSpace($Plugins)) {
   if (Prompt-YesNo "Install OpenCode plugin?" $true)    { $installOpencode = $true }
   if (Prompt-YesNo "Install Claude Code plugin?" $true) { $installClaudecode = $true }
   if (Prompt-YesNo "Install Cursor plugin?" $true)      { $installCursor = $true }
-  if (($installOpencode -or $installClaudecode -or $installCursor) -and $PluginsScope -eq 'global') {
-    if (Prompt-YesNo "Install project-local (./.opencode, ./.claude, ./.cursor) instead of global?" $false) {
+  if (Prompt-YesNo "Install Mistral Vibe plugin?" $true) { $installVibe = $true }
+  if (($installOpencode -or $installClaudecode -or $installCursor -or $installVibe) -and $PluginsScope -eq 'global') {
+    if (Prompt-YesNo "Install project-local (./.opencode, ./.claude, ./.cursor, ./.vibe) instead of global?" $false) {
       $PluginsScope = 'project'
     }
   }
@@ -349,8 +371,11 @@ if ($installClaudecode) {
 if ($installCursor) {
   Invoke-PluginInstaller 'plugins/cursor/install.sh' 'Cursor' 'scope'
 }
-if (-not $installOpencode -and -not $installClaudecode -and -not $installCursor) {
-  Warn "no harness plugin installed; re-run with -Plugins all (or =opencode/=claudecode/=cursor) later"
+if ($installVibe) {
+  Invoke-PluginInstaller 'plugins/vibe/install.sh' 'Mistral Vibe' 'scope'
+}
+if (-not $installOpencode -and -not $installClaudecode -and -not $installCursor -and -not $installVibe) {
+  Warn "no harness plugin installed; re-run with -Plugins all (or =opencode/=claudecode/=cursor/=vibe) later"
 }
 
 # ---------- done ----------

@@ -42,6 +42,16 @@ DEFAULT_REPO_URL = os.environ.get(
 )
 CODEMEMORY_HOME = Path(os.environ.get("CODEMEMORY_HOME", str(Path.home() / ".code-memory")))
 
+# Stable compose project name. The compose file pins fixed container_names
+# (``cm-falkordb`` etc.), so the containers are global singletons: only the
+# compose project that originally created them may recreate them. If a later
+# ``compose up`` runs under a *different* project name, Docker refuses with
+# "container name already in use". We therefore always pin ``-p`` to one
+# constant and, when containers already exist, to whatever project actually
+# owns them — so update never collides with install.
+COMPOSE_PROJECT = "code-memory"
+COMPOSE_CONTAINERS = ("cm-falkordb", "cm-qdrant", "cm-tei")
+
 InstallMethod = Literal["uv-tool", "pipx", "pip", "editable", "unknown"]
 
 
@@ -83,8 +93,17 @@ class UpdatePlan:
 
 
 def _run(cmd: list[str], *, check: bool = False, capture: bool = True) -> subprocess.CompletedProcess[str]:
+    # On Windows the CLIs we shell out to (npm, claude) ship as .cmd batch
+    # files. CreateProcess only resolves .exe images by the bare name, so
+    # ``["npm", ...]`` raises WinError 2 even though it is on PATH. Resolve the
+    # real path via PATHEXT-aware which(), and run batch files through cmd.exe.
+    resolved = shutil.which(cmd[0]) or cmd[0]
+    args = [resolved, *cmd[1:]]
+    if os.name == "nt" and resolved.lower().endswith((".cmd", ".bat")):
+        comspec = os.environ.get("COMSPEC", "cmd.exe")
+        args = [comspec, "/c", *args]
     return subprocess.run(
-        cmd, check=check, capture_output=capture, text=True, env={**os.environ}
+        args, check=check, capture_output=capture, text=True, env={**os.environ}
     )
 
 
@@ -201,6 +220,44 @@ def _running_compose_file() -> Path | None:
             if path and Path(path).exists():
                 return Path(path)
     return None
+
+
+def _owning_compose_project() -> str | None:
+    """Compose project name that already owns the cm-* containers, if any.
+
+    Reading the live ``com.docker.compose.project`` label lets the updater
+    recreate the existing containers under their original project instead of
+    guessing a name from a directory basename (which is what caused the
+    "container name already in use" conflict).
+    """
+    if not _have("docker"):
+        return None
+    for name in ("cm-falkordb", "cm-qdrant"):
+        p = _run([
+            "docker",
+            "inspect",
+            "-f",
+            "{{ index .Config.Labels \"com.docker.compose.project\" }}",
+            name,
+        ])
+        if p.returncode == 0:
+            proj = p.stdout.strip()
+            if proj:
+                return proj
+    return None
+
+
+def _remove_conflicting_containers() -> None:
+    """Force-remove the fixed-name cm-* containers.
+
+    Last-resort recovery when ``compose up`` still hits a name conflict (e.g.
+    the existing containers carry no compose project label, or an unmanaged
+    container squatted the name). Named volumes (falkor_data, qdrant_data,
+    tei_data) survive ``rm``, so indexed data is preserved.
+    """
+    if not _have("docker"):
+        return
+    _run(["docker", "rm", "-f", *COMPOSE_CONTAINERS])
 
 
 def _claude_plugin_present() -> bool:
@@ -338,24 +395,40 @@ def upgrade_docker_images() -> tuple[bool, str]:
     if not _have("docker"):
         return False, "docker not on PATH"
     compose = CODEMEMORY_HOME / "docker" / "docker-compose.yml"
-    project_dir = CODEMEMORY_HOME
     if not compose.exists():
         live = _running_compose_file()
         if live is None:
             return False, "no compose file at ~/.code-memory/ and no running cm-* containers"
         compose = live
-        project_dir = live.parent
-    pull = _run(
-        ["docker", "compose", "-f", str(compose), "--project-directory", str(project_dir), "pull"],
-        capture=False,
-    )
+    project_dir = compose.parent
+
+    # Pin the project name so naming never depends on the directory basename.
+    # Prefer the project the running containers already belong to — that is the
+    # only project allowed to recreate the fixed-name cm-* containers, so using
+    # it sidesteps the "container name already in use" conflict.
+    project = _owning_compose_project() or COMPOSE_PROJECT
+
+    base = [
+        "docker", "compose",
+        "-f", str(compose),
+        "--project-directory", str(project_dir),
+        "-p", project,
+    ]
+
+    pull = _run([*base, "pull"], capture=False)
     if pull.returncode != 0:
         return False, "docker compose pull failed"
-    up = _run(
-        ["docker", "compose", "-f", str(compose), "--project-directory", str(project_dir), "up", "-d"],
-        capture=False,
-    )
-    return up.returncode == 0, f"compose pulled + up ({compose})"
+
+    up = _run([*base, "up", "-d", "--remove-orphans"], capture=False)
+    if up.returncode == 0:
+        return True, f"compose pulled + up (project={project}, {compose})"
+
+    # Recovery: a stale or unmanaged container is squatting the fixed name.
+    # Drop the cm-* containers (named volumes persist) and recreate cleanly.
+    print("  Docker: name conflict — removing stale cm-* containers and retrying")
+    _remove_conflicting_containers()
+    up_retry = _run([*base, "up", "-d", "--remove-orphans"], capture=False)
+    return up_retry.returncode == 0, f"compose recreated after conflict (project={project}, {compose})"
 
 
 def upgrade_ollama_model(model: str) -> tuple[bool, str]:

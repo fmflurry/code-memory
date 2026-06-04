@@ -220,8 +220,22 @@ fi
 # ---------- 5. docker infra ----------
 if [ "$SKIP_DOCKER" -eq 0 ]; then
   step "Starting FalkorDB + Qdrant (docker compose)"
-  docker compose -f docker/docker-compose.yml up -d
-  ok "Containers up"
+  # Pin an explicit project name. The compose file uses fixed container_names
+  # (cm-falkordb, ...), so they are global singletons: a later `compose up`
+  # under a different project name collides with "container name already in
+  # use". Reuse whatever project already owns the running containers (so their
+  # data volumes, namespaced as <project>_falkor_data, stay attached); fall
+  # back to a stable name for fresh installs. This keeps install and
+  # `code-memory update` on one project without ever orphaning indexed data.
+  CM_PROJECT="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' cm-falkordb 2>/dev/null || true)"
+  [ -z "$CM_PROJECT" ] && CM_PROJECT="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' cm-qdrant 2>/dev/null || true)"
+  [ -z "$CM_PROJECT" ] && CM_PROJECT="code-memory"
+  if ! docker compose -p "$CM_PROJECT" -f docker/docker-compose.yml up -d --remove-orphans; then
+    warn "compose up hit a container-name conflict — removing stale cm-* containers and retrying (named volumes persist)"
+    docker rm -f cm-falkordb cm-qdrant cm-tei >/dev/null 2>&1 || true
+    docker compose -p "$CM_PROJECT" -f docker/docker-compose.yml up -d --remove-orphans || die "docker compose up failed"
+  fi
+  ok "Containers up (project: $CM_PROJECT)"
   printf "${DIM}  FalkorDB browser: http://localhost:3000\n  Qdrant dashboard: http://localhost:6333/dashboard${RST}\n"
 else
   warn "Docker step skipped"
@@ -326,10 +340,11 @@ step "Agent harness plugins"
 #   PLUGINS_ARG="" → interactive (only if stdin is a TTY)
 #   PLUGINS_ARG="none" → skip
 #   PLUGINS_ARG="all" → both
-#   PLUGINS_ARG="opencode,claudecode,cursor" → comma-separated whitelist
+#   PLUGINS_ARG="opencode,claudecode,cursor,vibe" → comma-separated whitelist
 INSTALL_OPENCODE=0
 INSTALL_CLAUDECODE=0
 INSTALL_CURSOR=0
+INSTALL_VIBE=0
 
 resolve_plugin_selection() {
   local raw="$1"
@@ -338,6 +353,7 @@ resolve_plugin_selection() {
     INSTALL_OPENCODE=1
     INSTALL_CLAUDECODE=1
     INSTALL_CURSOR=1
+    INSTALL_VIBE=1
     return 0
   fi
   IFS=',' read -r -a parts <<< "$raw"
@@ -346,8 +362,9 @@ resolve_plugin_selection() {
       opencode)   INSTALL_OPENCODE=1 ;;
       claudecode|claude|claude-code) INSTALL_CLAUDECODE=1 ;;
       cursor)     INSTALL_CURSOR=1 ;;
+      vibe|mistral|mistral-vibe) INSTALL_VIBE=1 ;;
       "" ) ;;
-      *) warn "unknown plugin '$p' (expected: opencode, claudecode, cursor, all, none)" ;;
+      *) warn "unknown plugin '$p' (expected: opencode, claudecode, cursor, vibe, all, none)" ;;
     esac
   done
 }
@@ -361,8 +378,9 @@ elif [ -t 0 ] && [ -t 1 ]; then
   if prompt_yes_no "Install OpenCode plugin?" "y"; then INSTALL_OPENCODE=1; fi
   if prompt_yes_no "Install Claude Code plugin?" "y"; then INSTALL_CLAUDECODE=1; fi
   if prompt_yes_no "Install Cursor plugin?" "y"; then INSTALL_CURSOR=1; fi
-  if [ "$INSTALL_OPENCODE" -eq 1 ] || [ "$INSTALL_CLAUDECODE" -eq 1 ] || [ "$INSTALL_CURSOR" -eq 1 ]; then
-    if prompt_yes_no "Install project-local (./.opencode, ./.claude, ./.cursor) instead of global?" "n"; then
+  if prompt_yes_no "Install Mistral Vibe plugin?" "y"; then INSTALL_VIBE=1; fi
+  if [ "$INSTALL_OPENCODE" -eq 1 ] || [ "$INSTALL_CLAUDECODE" -eq 1 ] || [ "$INSTALL_CURSOR" -eq 1 ] || [ "$INSTALL_VIBE" -eq 1 ]; then
+    if prompt_yes_no "Install project-local (./.opencode, ./.claude, ./.cursor, ./.vibe) instead of global?" "n"; then
       PLUGINS_SCOPE="project"
     fi
   fi
@@ -411,8 +429,22 @@ if [ "$INSTALL_CURSOR" -eq 1 ]; then
   fi
 fi
 
-if [ "$INSTALL_OPENCODE" -eq 0 ] && [ "$INSTALL_CLAUDECODE" -eq 0 ] && [ "$INSTALL_CURSOR" -eq 0 ]; then
-  warn "no harness plugin installed; re-run with --plugins=all (or =opencode/=claudecode/=cursor) later"
+if [ "$INSTALL_VIBE" -eq 1 ]; then
+  if [ -x "$PROJECT_ROOT/plugins/vibe/install.sh" ]; then
+    # The vibe installer uses `--scope user|project`, like cursor.
+    vibe_flags=""
+    [ "$PLUGINS_SCOPE" = "project" ] && vibe_flags="$vibe_flags --scope project"
+    [ "$SKIP_MCP" -eq 1 ] && vibe_flags="$vibe_flags --no-mcp"
+    # shellcheck disable=SC2086 # intentional word-splitting on flag string
+    "$PROJECT_ROOT/plugins/vibe/install.sh" $vibe_flags
+    ok "Mistral Vibe plugin installed ($PLUGINS_SCOPE)"
+  else
+    warn "plugins/vibe/install.sh not executable; skipping"
+  fi
+fi
+
+if [ "$INSTALL_OPENCODE" -eq 0 ] && [ "$INSTALL_CLAUDECODE" -eq 0 ] && [ "$INSTALL_CURSOR" -eq 0 ] && [ "$INSTALL_VIBE" -eq 0 ]; then
+  warn "no harness plugin installed; re-run with --plugins=all (or =opencode/=claudecode/=cursor/=vibe) later"
 fi
 
 # ---------- done ----------
