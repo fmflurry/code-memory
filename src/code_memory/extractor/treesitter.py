@@ -28,6 +28,8 @@ LANG_BY_EXT: dict[str, str] = {
     # Laravel/Zend/WordPress for view files mixing PHP + HTML; same grammar.
     ".php": "php",
     ".phtml": "php",
+    # Dart / Flutter
+    ".dart": "dart",
 }
 
 SYMBOL_NODE_TYPES = {
@@ -65,6 +67,26 @@ SYMBOL_NODE_TYPES = {
     # the C#/TS/Py names above (class_declaration, interface_declaration,
     # enum_declaration, method_declaration, function_definition are reused).
     "trait_declaration",
+    # Dart — only the node names that are unambiguously Dart-specific go
+    # here. ``class_definition`` and ``enum_declaration`` are already
+    # listed above. ``constructor_signature`` is distinct from TS's
+    # ``construct_signature`` (note the spelling), so it's collision-free.
+    # The bare ``function_signature`` / ``getter_signature`` /
+    # ``setter_signature`` names DO collide with TypeScript ambient/
+    # interface members, so they live in ``_DART_SIGNATURE_SYMBOL_NODES``
+    # and are gated on ``lang == "dart"`` to avoid changing TS output.
+    "constructor_signature",
+    "mixin_declaration",
+    "extension_declaration",
+    "type_alias",
+}
+
+# Dart callable-signature symbol nodes whose tree-sitter names overlap
+# TypeScript's. Captured as symbols only when the file is Dart.
+_DART_SIGNATURE_SYMBOL_NODES = {
+    "function_signature",
+    "getter_signature",
+    "setter_signature",
 }
 
 CALL_NODE_TYPES = {
@@ -84,6 +106,12 @@ CALL_NODE_TYPES = {
     "function_call_expression",
     "member_call_expression",
     "scoped_call_expression",
+    # Dart has no single call-expression node. A call is an
+    # ``identifier`` / ``selector`` followed by a ``selector`` wrapping an
+    # ``argument_part`` (the ``(args)`` part). We key on ``argument_part``
+    # and walk back to its preceding sibling to recover the callee — see
+    # ``_dart_callee``. Dart-only node name, so global registration is safe.
+    "argument_part",
 }
 
 # Nodes that carry a type expression via a field named "type" (or "returns").
@@ -160,6 +188,11 @@ _PRIMITIVE_TYPE_NAMES: frozenset[str] = frozenset({
     # TS/JS
     "any", "unknown", "never", "number", "boolean", "undefined", "null",
     "this", "symbol", "bigint",
+    # Dart core scalars / sentinels — these surface as plain
+    # ``type_identifier`` nodes (Dart has no ``predefined_type`` wrapper),
+    # so they'd otherwise flood "who references X" with noise. ``void`` is
+    # already skipped structurally as ``void_type``.
+    "num", "String", "Object", "Null", "Never", "Function", "dynamic",
 })
 
 IMPORT_NODE_TYPES = {
@@ -170,6 +203,12 @@ IMPORT_NODE_TYPES = {
     "imports_statement",  # VB
     "import_decl",  # F#
     "namespace_use_declaration",  # PHP ``use Foo\Bar;``
+    # Dart ``import 'package:...';`` / ``export 'src/...';``. The URI is
+    # buried under ``configurable_uri > uri``; ``_dart_import_uri`` digs
+    # it out. ``export`` is included because a re-export is a real file
+    # dependency. Both names are Dart-specific.
+    "library_import",
+    "library_export",
 }
 
 # Razor / Blazor ``@inject TypeName Member`` directives. Each one is
@@ -379,6 +418,12 @@ _CALLABLE_KINDS = {
     "delegate_declaration",
     "arrow_function",
     "function_or_value_defn",  # F#
+    # Dart callable signatures. ``getter_signature`` carries no parameter
+    # list, so ``_param_count`` returns ``None`` for it — harmless.
+    "function_signature",
+    "getter_signature",
+    "setter_signature",
+    "constructor_signature",
 }
 
 
@@ -408,6 +453,47 @@ _CLASS_DECL_NODE_TYPES = frozenset(
     {"class_declaration", "abstract_class_declaration", "class"}
 )
 
+# Dart callable-signature nodes whose declared name is a positional
+# ``identifier`` child that follows the (optional) return type. The
+# generic ``_symbol_name`` fallback would return the leading return-type
+# ``type_identifier`` instead, so these get a dedicated first-``identifier``
+# lookup. Only reached for Dart: the TS nodes of the same name carry a
+# ``name`` field, which ``_symbol_name`` resolves before this branch.
+_DART_SIGNATURE_NAME_NODES = frozenset(
+    {
+        "function_signature",
+        "getter_signature",
+        "setter_signature",
+        "constructor_signature",
+    }
+)
+
+# Dart type-reference parents whose ENTIRE subtree is type names
+# (inheritance clauses — only ``type_identifier`` tokens plus keywords).
+_DART_TYPE_WHOLE_NODES = frozenset({"superclass", "interfaces"})
+
+# Dart type-reference parents whose LEADING children carry the type
+# (field/parameter/return-type positions). We harvest only the type-
+# bearing direct children so the declared name (an ``identifier``) and any
+# body / initializer are left out. ``declaration`` covers class fields;
+# when it instead wraps a ``function_signature`` (abstract method) the
+# return type is harvested when the walk reaches that inner node.
+_DART_TYPE_LEADING_NODES = frozenset(
+    {
+        "declaration",
+        "formal_parameter",
+        "function_signature",
+        "getter_signature",
+        "setter_signature",
+        "extension_declaration",
+    }
+)
+
+# Direct-child node types that ARE the type in a Dart leading-type parent.
+_DART_TYPE_CHILD_NODES = frozenset(
+    {"type_identifier", "type_arguments", "nullable_type", "function_type"}
+)
+
 
 def _walk(
     node: Node,
@@ -419,15 +505,10 @@ def _walk(
     t = node.type
     pushed_ns = False
     pushed_class = False
-    if t in _CLASS_DECL_NODE_TYPES:
-        body = None
-        for child in node.children:
-            if child.type == "class_body":
-                body = child
-                break
-        if body is not None:
-            class_stack.append(_ts_class_field_types(body, source))
-            pushed_class = True
+    field_map = _class_field_types(node, source, ex.lang)
+    if field_map is not None:
+        class_stack.append(field_map)
+        pushed_class = True
     if t in _BLOCK_NAMESPACE_NODE_TYPES:
         ns = _namespace_name(node, source)
         if ns:
@@ -450,7 +531,9 @@ def _walk(
             if any(c.type == "compound_statement" for c in node.children):
                 pushed_ns = True
 
-    if t in SYMBOL_NODE_TYPES:
+    if t in SYMBOL_NODE_TYPES or (
+        ex.lang == "dart" and t in _DART_SIGNATURE_SYMBOL_NODES
+    ):
         name = _symbol_name(node, source)
         if name:
             partial = (
@@ -473,6 +556,10 @@ def _walk(
         if t == "namespace_use_declaration":
             # PHP allows multiple clauses per statement; emit each FQCN.
             ex.imports.extend(_php_use_imports(node, source))
+        elif t in {"library_import", "library_export"}:
+            uri = _dart_import_uri(node, source)
+            if uri:
+                ex.imports.append(uri)
         else:
             mod = _import_module(node, source)
             if mod:
@@ -493,7 +580,7 @@ def _walk(
             if callee:
                 receiver_type: str | None = None
                 if class_stack:
-                    field = _this_field_receiver(node, source)
+                    field = _receiver_field(node, source, ex.lang)
                     if field:
                         receiver_type = class_stack[-1].get(field)
                 ex.calls.append(
@@ -530,6 +617,18 @@ def _walk(
         for child in node.children:
             if child.type in _PHP_TYPE_WRAPPER_NODE_TYPES:
                 _collect_type_refs(child, source, ex.references)
+    if ex.lang == "dart":
+        # Dart type positions are positional (no ``type`` field) and the
+        # node names (``declaration``, ``formal_parameter``,
+        # ``function_signature``) collide with other grammars, so harvest
+        # them only for Dart. Inheritance clauses are pure type subtrees;
+        # field/param/return positions expose the type as leading children.
+        if t in _DART_TYPE_WHOLE_NODES:
+            _collect_type_refs(node, source, ex.references)
+        elif t in _DART_TYPE_LEADING_NODES:
+            for child in node.children:
+                if child.type in _DART_TYPE_CHILD_NODES:
+                    _collect_type_refs(child, source, ex.references)
     # C# pattern / cast / typeof: tree-sitter doesn't expose a `type`
     # field on these, so collect the type child positionally.
     if t == "cast_expression":
@@ -623,6 +722,15 @@ def _symbol_name(node: Node, source: bytes) -> str | None:
         return _slice(source, name)
     if node.type in _FSHARP_DEEP_NAME_NODES:
         return _first_identifier_deep(node, source)
+    if node.type in _DART_SIGNATURE_NAME_NODES:
+        # The declared name is the first ``identifier`` child; any leading
+        # ``type_identifier`` / ``void_type`` is the return type, not the
+        # name. (TS nodes of the same name expose a ``name`` field and
+        # were already handled above.)
+        for child in node.children:
+            if child.type == "identifier":
+                return _slice(source, child)
+        return None
     for child in node.children:
         if child.type in {"identifier", "type_identifier", "property_identifier"}:
             return _slice(source, child)
@@ -680,6 +788,7 @@ _PARAMETER_LIST_TYPES = {
     "parameter_list",
     "formal_parameters",
     "parameters",  # F# / Python
+    "formal_parameter_list",  # Dart
 }
 
 _PARAMETER_NODE_TYPES = {
@@ -695,6 +804,7 @@ _PARAMETER_NODE_TYPES = {
     "simple_parameter",
     "variadic_parameter",
     "property_promotion_parameter",  # PHP 8 ctor promotion
+    "formal_parameter",  # Dart
 }
 
 
@@ -937,6 +1047,364 @@ def _this_field_receiver(node: Node, source: bytes) -> str | None:
     return _slice(source, inner_prop)
 
 
+# ---------------------------------------------------------------------------
+# Receiver-type inference (cross-language)
+#
+# Resolving ``this.<field>.<method>()`` requires knowing ``<field>``'s
+# declared type so the resolver can narrow ``<method>`` to the methods
+# defined on that type. Each language exposes a class-body field→type map
+# (built once when the walk enters the class) and a call-site receiver
+# extractor (which recovers the accessed field name). The resolver
+# matching is purely on the bare type name, so all we must emit is that
+# bare identifier — see ``resolver.py`` tier 2.5.
+# ---------------------------------------------------------------------------
+
+_TS_LANGS = frozenset({"typescript", "tsx", "javascript"})
+
+
+def _bare_type_name(node: Node, source: bytes) -> str | None:
+    """Reduce a type expression to its bare, resolvable identifier.
+
+    ``IFooRepo`` → ``IFooRepo``; ``App.Data.UserRepo`` → ``UserRepo``;
+    ``List<Foo>`` → ``List``; ``Foo?`` / ``Foo[]`` → ``Foo``. Primitive
+    / predefined types return ``None`` — they have no graph symbol to
+    narrow against, so tagging a call with them only blocks the fallback
+    tiers.
+    """
+    t = node.type
+    if t in {
+        "predefined_type", "primitive_type", "void_type",
+        "implicit_type", "this_type", "function_type",
+    }:
+        return None
+    if t in {"identifier", "type_identifier", "name"}:
+        name = _slice(source, node).strip()
+        return name or None
+    if t == "qualified_name":
+        last = None
+        for child in node.children:
+            if child.type in {
+                "identifier", "type_identifier", "name",
+                "generic_name", "qualified_name",
+            }:
+                last = child
+        return _bare_type_name(last, source) if last is not None else None
+    if t in {"generic_name", "named_type"}:
+        for child in node.children:
+            if child.type in {"identifier", "type_identifier", "name"}:
+                nm = _slice(source, child).strip()
+                if nm:
+                    return nm
+    # Wrappers: nullable_type, array_type, pointer_type, optional_type,
+    # union_type, nullable_type — recurse to the first resolvable name.
+    for child in node.children:
+        resolved = _bare_type_name(child, source)
+        if resolved:
+            return resolved
+    return None
+
+
+def _class_field_types(
+    node: Node, source: bytes, lang: str
+) -> dict[str, str] | None:
+    """Return ``field_name → bare_type_name`` if ``node`` is a class-like
+    declaration for ``lang``, else ``None`` (so the walker doesn't push a
+    class scope). An empty dict is a valid result (class with no typed
+    fields) and still establishes a scope.
+    """
+    t = node.type
+    if lang in _TS_LANGS:
+        if t in _CLASS_DECL_NODE_TYPES:
+            for child in node.children:
+                if child.type == "class_body":
+                    return _ts_class_field_types(child, source)
+            return {}
+        return None
+    if lang == "csharp":
+        if t in {"class_declaration", "record_declaration", "struct_declaration"}:
+            return _csharp_field_types(node, source)
+        return None
+    if lang == "php":
+        if t in {"class_declaration", "trait_declaration"}:
+            return _php_field_types(node, source)
+        return None
+    if lang == "dart":
+        if t == "class_definition":
+            return _dart_field_types(node, source)
+        return None
+    return None
+
+
+def _receiver_field(node: Node, source: bytes, lang: str) -> str | None:
+    """Recover the receiver field name from a call site, per language."""
+    if lang in _TS_LANGS:
+        return _this_field_receiver(node, source)
+    if lang == "csharp":
+        return _csharp_receiver_field(node, source)
+    if lang == "php":
+        return _php_receiver_field(node, source)
+    if lang == "dart":
+        return _dart_receiver_field(node, source)
+    return None
+
+
+def _csharp_field_types(node: Node, source: bytes) -> dict[str, str]:
+    """Map ``field/property/primary-ctor-param → type`` for a C# type.
+
+    Covers the three DI-bearing shapes: ``private readonly IFoo _x;``
+    (``field_declaration``), ``public IFoo X { get; }``
+    (``property_declaration``), and C# 12 primary-constructor parameters
+    (``class Svc(IFoo x)``). Constructor-assigned fields are read off
+    their own ``field_declaration``, so the body scan covers them.
+    """
+    out: dict[str, str] = {}
+    # C# 12 primary constructor parameters become fields.
+    for child in node.children:
+        if child.type == "parameter_list":
+            for param in child.children:
+                if param.type != "parameter":
+                    continue
+                type_node = param.child_by_field_name("type")
+                name_node = param.child_by_field_name("name")
+                _record_field(out, type_node, name_node, source)
+    body = None
+    for child in node.children:
+        if child.type == "declaration_list":
+            body = child
+            break
+    if body is None:
+        return out
+    for member in body.children:
+        if member.type == "field_declaration":
+            var_decl = None
+            for c in member.children:
+                if c.type == "variable_declaration":
+                    var_decl = c
+                    break
+            if var_decl is None:
+                continue
+            type_node = var_decl.child_by_field_name("type")
+            if type_node is None:
+                # positional: first non-declarator child is the type
+                for c in var_decl.children:
+                    if c.type != "variable_declarator":
+                        type_node = c
+                        break
+            tname = _bare_type_name(type_node, source) if type_node else None
+            if not tname:
+                continue
+            for c in var_decl.children:
+                if c.type == "variable_declarator":
+                    for sub in c.children:
+                        if sub.type == "identifier":
+                            out[_slice(source, sub)] = tname
+                            break
+        elif member.type == "property_declaration":
+            type_node = member.child_by_field_name("type")
+            name_node = member.child_by_field_name("name")
+            _record_field(out, type_node, name_node, source)
+    return out
+
+
+def _php_field_types(node: Node, source: bytes) -> dict[str, str]:
+    """Map ``field → type`` for a PHP class/trait.
+
+    Covers explicit ``private UserRepo $repo;`` (``property_declaration``)
+    and PHP 8 constructor promotion (``__construct(private OrderRepo
+    $orders)``). The map key is the field name without the ``$`` sigil,
+    matching what ``$this->repo`` exposes at the call site.
+    """
+    out: dict[str, str] = {}
+    body = None
+    for child in node.children:
+        if child.type == "declaration_list":
+            body = child
+            break
+    if body is None:
+        return out
+    for member in body.children:
+        if member.type == "property_declaration":
+            tname: str | None = None
+            for c in member.children:
+                if c.type in _PHP_TYPE_WRAPPER_NODE_TYPES:
+                    tname = _bare_type_name(c, source)
+                    break
+            if not tname:
+                continue
+            for c in member.children:
+                if c.type == "property_element":
+                    fname = _php_variable_name(c, source)
+                    if fname:
+                        out[fname] = tname
+        elif member.type == "method_declaration":
+            name_node = member.child_by_field_name("name")
+            if name_node is None or _slice(source, name_node) != "__construct":
+                continue
+            params = member.child_by_field_name("parameters")
+            if params is None:
+                for c in member.children:
+                    if c.type == "formal_parameters":
+                        params = c
+                        break
+            if params is None:
+                continue
+            for param in params.children:
+                if param.type != "property_promotion_parameter":
+                    continue
+                promo_type: str | None = None
+                for c in param.children:
+                    if c.type in _PHP_TYPE_WRAPPER_NODE_TYPES:
+                        promo_type = _bare_type_name(c, source)
+                        break
+                if not promo_type:
+                    continue
+                fname = _php_variable_name(param, source)
+                if fname:
+                    out[fname] = promo_type
+    return out
+
+
+def _php_variable_name(node: Node, source: bytes) -> str | None:
+    """Return the bare name (no ``$``) of a ``variable_name`` descendant."""
+    for child in node.children:
+        if child.type == "variable_name":
+            for sub in child.children:
+                if sub.type == "name":
+                    return _slice(source, sub)
+    return None
+
+
+def _dart_field_types(node: Node, source: bytes) -> dict[str, str]:
+    """Map ``field → type`` for a Dart class.
+
+    Only typed instance fields contribute (``final Repo repo;`` /
+    ``Repo repo;``). Untyped (``final x = ...``) and ``this.x``
+    constructor parameters carry no type at the declaration site, so the
+    type is sourced from the explicit field declaration.
+    """
+    out: dict[str, str] = {}
+    body = None
+    for child in node.children:
+        if child.type == "class_body":
+            body = child
+            break
+    if body is None:
+        return out
+    for decl in body.children:
+        if decl.type != "declaration":
+            continue
+        type_node = None
+        id_list = None
+        for c in decl.children:
+            if c.type == "type_identifier" and type_node is None:
+                type_node = c
+            elif c.type == "initialized_identifier_list":
+                id_list = c
+        if type_node is None or id_list is None:
+            continue
+        tname = _bare_type_name(type_node, source)
+        if not tname:
+            continue
+        for ii in id_list.children:
+            if ii.type == "initialized_identifier":
+                for sub in ii.children:
+                    if sub.type == "identifier":
+                        out[_slice(source, sub)] = tname
+                        break
+    return out
+
+
+def _record_field(
+    out: dict[str, str],
+    type_node: Node | None,
+    name_node: Node | None,
+    source: bytes,
+) -> None:
+    """Store ``name → bare(type)`` when both resolve. Shared by the C#
+    property / primary-constructor paths."""
+    if type_node is None or name_node is None:
+        return
+    tname = _bare_type_name(type_node, source)
+    if tname:
+        out[_slice(source, name_node)] = tname
+
+
+def _csharp_receiver_field(node: Node, source: bytes) -> str | None:
+    """Recover the receiver field of a C# ``invocation_expression``.
+
+    Handles both idiomatic shapes: bare field access ``_repo.Get()`` and
+    explicit ``this.Repo.Get()``. The bare case is safe because the field
+    map only contains real fields — a local variable or static type name
+    simply misses the lookup and yields no receiver type.
+    """
+    fn = node.child_by_field_name("function")
+    if fn is None or fn.type != "member_access_expression":
+        return None
+    recv = fn.child_by_field_name("expression")
+    if recv is None:
+        return None
+    if recv.type == "identifier":
+        return _slice(source, recv)
+    if recv.type == "member_access_expression":
+        inner = recv.child_by_field_name("expression")
+        if inner is not None and inner.type == "this":
+            name = recv.child_by_field_name("name")
+            if name is not None:
+                return _slice(source, name)
+    return None
+
+
+def _php_receiver_field(node: Node, source: bytes) -> str | None:
+    """Recover the receiver field of a PHP ``$this->field->method()``.
+
+    PHP instance fields are always accessed through ``$this->``, so only
+    that shape yields a receiver; ``$local->method()`` (a local variable)
+    deliberately returns ``None``.
+    """
+    obj = node.child_by_field_name("object")
+    if obj is None or obj.type != "member_access_expression":
+        return None
+    inner = obj.child_by_field_name("object")
+    if inner is None or inner.type != "variable_name":
+        return None
+    if _slice(source, inner).strip() != "$this":
+        return None
+    name = obj.child_by_field_name("name")
+    return _slice(source, name) if name is not None else None
+
+
+def _dart_receiver_field(node: Node, source: bytes) -> str | None:
+    """Recover the receiver field of a Dart ``field.method(...)`` call.
+
+    ``node`` is the ``argument_part``; its parent ``selector`` wraps the
+    args, the preceding ``selector`` carries the method name, and the one
+    before that is the receiver — a bare ``identifier`` (``repo.save()``)
+    or a ``.field`` accessor selector (``this.repo.save()``). Direct
+    calls (``foo()`` / ``Widget()``) have no receiver and return ``None``.
+    """
+    sel = node.parent
+    if sel is None or sel.type != "selector":
+        return None
+    method_sel = sel.prev_named_sibling
+    if method_sel is None or method_sel.type != "selector":
+        return None
+    recv = method_sel.prev_named_sibling
+    if recv is None:
+        return None
+    if recv.type == "identifier":
+        return _slice(source, recv)
+    if recv.type == "selector":
+        for child in recv.children:
+            if child.type in {
+                "unconditional_assignable_selector",
+                "conditional_assignable_selector",
+            }:
+                for sub in child.children:
+                    if sub.type == "identifier":
+                        return _slice(source, sub)
+    return None
+
+
 def _angular_inject_token(node: Node, source: bytes) -> str | None:
     """Pull the DI token out of an Angular ``inject(Token)`` call.
 
@@ -1025,8 +1493,60 @@ CALLEE_STOPLIST: frozenset[str] = frozenset(
         # Generic test helpers
         "describe", "it", "test", "expect", "beforeEach", "afterEach",
         "beforeAll", "afterAll", "jest", "vi", "spyOn",
+        # Dart core builtins that are pure noise as call edges.
+        "print",
     }
 )
+
+
+def _dart_import_uri(node: Node, source: bytes) -> str | None:
+    """Extract the URI of a Dart ``import`` / ``export`` directive.
+
+    The target is buried under ``configurable_uri > uri`` as a quoted
+    ``string_literal``. Returns the unquoted module string, e.g.
+    ``package:flutter/material.dart``, ``dart:async``, or ``src/foo.dart``.
+    """
+    queue: list[Node] = [node]
+    while queue:
+        cur = queue.pop(0)
+        if cur.type == "uri":
+            return _slice(source, cur).strip().strip("'\"")
+        queue.extend(cur.children)
+    return None
+
+
+def _dart_callee(node: Node, source: bytes) -> str | None:
+    """Resolve the callee of a Dart ``argument_part`` call site.
+
+    Dart has no single call-expression node: a call is an
+    ``identifier`` / ``selector`` followed by a ``selector`` that wraps the
+    ``argument_part`` (the ``(args)``). The callee is the immediately
+    preceding sibling of that wrapping selector:
+
+    - a bare ``identifier`` → ``foo(...)`` / ``Widget(...)`` → that name
+    - a ``.name`` accessor selector → ``obj.method(...)`` → ``method``
+
+    Anything else (chained calls, index access, cascades) returns ``None``.
+    """
+    sel = node.parent
+    if sel is None or sel.type != "selector":
+        return None
+    prev = sel.prev_named_sibling
+    if prev is None:
+        return None
+    if prev.type == "selector":
+        for child in prev.children:
+            if child.type in {
+                "unconditional_assignable_selector",
+                "conditional_assignable_selector",
+            }:
+                for sub in child.children:
+                    if sub.type == "identifier":
+                        return _slice(source, sub)
+        return None
+    if prev.type == "identifier":
+        return _slice(source, prev)
+    return None
 
 
 def _callee_name(node: Node, source: bytes) -> str | None:
@@ -1039,6 +1559,13 @@ def _callee_name(node: Node, source: bytes) -> str | None:
     Returns ``None`` for callees in :data:`CALLEE_STOPLIST` so they don't
     enter the graph as noise.
     """
+    # Dart: the call site is an ``argument_part``; recover the callee from
+    # the surrounding selector chain rather than a callee field.
+    if node.type == "argument_part":
+        name = _dart_callee(node, source)
+        if name is None or name in CALLEE_STOPLIST:
+            return None
+        return name
     # ``new Foo()`` exposes the constructor target under the ``type`` field;
     # plain calls use ``function`` / ``callee``. Without the ``type`` branch
     # the first-child fallback would land on the ``new`` keyword and miss

@@ -1772,6 +1772,7 @@ See `CHANGELOG.md` for the design rationale.
 - [x] `code-memory vacuum --before <sha>` / `--older-than` / `--all` (tombstone GC)
 - [x] MCP tools: `codememory_drift`, `codememory_at_sha`, `codememory_callers_at_sha`
 - [x] .NET ecosystem (C#, Razor, VB.NET, F#)
+- [x] Dart / Flutter (classes, mixins, enums, extensions, typedefs, imports/exports, calls, type refs)
 - [ ] More languages (Rust, Go, Java)
 - [ ] Cursor hook recipe
 - [ ] PyPI release (drops the `--from git+…` from the `uvx` install)
