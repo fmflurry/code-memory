@@ -8,6 +8,53 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
+## [0.6.0] — 2026-06-04
+
+Release theme: **Dart joins the graph, and `this.field.method()` resolves
+across languages**. The extractor gains a ninth language and the
+receiver-type tier — previously TypeScript-only — now narrows method
+calls in C#, PHP, and Dart too.
+
+### Added — Dart / Flutter language support
+
+**What:** `.dart` files are now parsed. Symbols cover classes, mixins,
+enums, extensions, typedefs, top-level functions, methods,
+getters/setters, and constructors (with parameter arity); imports and
+re-exports surface their URI (`package:…`, `dart:…`, relative); calls and
+type references (inheritance, field/parameter/return types, generic
+arguments) are extracted. Dart's grammar differs structurally from the
+other languages — function names follow the return type inside
+`function_signature`, calls are a `selector` + `argument_part` chain
+rather than a single call-expression node, and import URIs are nested
+under `configurable_uri > uri` — so each needed dedicated handling.
+Node-type names that collide with TypeScript (`function_signature`,
+`declaration`, …) are gated on `lang == "dart"` so TS output is
+unchanged.
+
+**Reason:** Flutter/Dart codebases were a blind spot — every `.dart`
+file was skipped at `lang_for`, so half of a mobile + backend stack had
+no graph topology, leaving retrieval to dense vectors alone.
+
+### Added — Cross-language receiver-type inference (C#, PHP, Dart)
+
+**What:** the `this.<field>.<method>()` narrowing that let the resolver
+disambiguate a call against the methods of the field's declared type now
+works beyond TypeScript. The class-scope stack is language-aware: C#
+reads fields, properties, and C# 12 primary-constructor parameters and
+resolves both `_repo.Get()` and `this.Bar.Save()`; PHP reads properties
+and PHP 8 constructor promotion and resolves `$this->repo->m()`; Dart
+reads typed fields and resolves `repo.m()` / `this.repo.m()`. A shared
+`_bare_type_name` reduces qualified / generic / nullable types to the
+bare identifier the resolver matches on, dropping primitives.
+
+**Reason:** the resolver's receiver tier is language-agnostic — it
+matches a bare type name against files defining that symbol — but the
+extractor only ever emitted `receiver_type` for TS. On C#/PHP/Dart, a
+method call like `byId` collapsed to a bare identifier that the resolver
+could never narrow against the dozens of same-named methods elsewhere in
+the codebase. Emitting the inferred receiver type fixes that with no
+resolver changes.
+
 ## [0.5.3] — 2026-06-04
 
 Release theme: **git operations never block on credentials**. The
