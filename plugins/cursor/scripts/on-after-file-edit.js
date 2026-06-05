@@ -32,6 +32,17 @@ const { touchResolverMarker } = require("./lib/state");
     process.env.CURSOR_PROJECT_DIR ||
     process.cwd();
 
+  // Guard: only reingest files that live inside the project root (cwd).
+  // Resolving against cwd handles relative paths; the sep-suffix check
+  // prevents false positives like /foo/bar matching the prefix of /foo/baz.
+  const projectRoot = path.resolve(cwd);
+  const absFilePath = path.resolve(cwd, filePath);
+  if (absFilePath !== projectRoot && !absFilePath.startsWith(projectRoot + path.sep)) {
+    // File is outside the project — silently skip ingestion.
+    done();
+    return;
+  }
+
   const mem = await createMemoryClient({ cwd, log: () => {} });
   if (!mem.available) {
     done();

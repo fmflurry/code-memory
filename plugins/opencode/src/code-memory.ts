@@ -15,6 +15,7 @@
 
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
+import * as nodePath from "node:path";
 
 import type { Plugin } from "@opencode-ai/plugin";
 
@@ -323,6 +324,16 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
 
       const path = pickToolPath(output.args) ?? pickToolPath(output.metadata);
       if (!path) return;
+
+      // Guard: only reingest files that live inside the project root (cwd).
+      // Resolving against cwd handles relative paths; the sep-suffix check
+      // prevents false positives like /foo/bar matching the prefix of /foo/baz.
+      const projectRoot = nodePath.resolve(cwd);
+      const absPath = nodePath.resolve(cwd, path);
+      if (absPath !== projectRoot && !absPath.startsWith(projectRoot + nodePath.sep)) {
+        // File is outside the project — silently skip ingestion.
+        return;
+      }
 
       // 1. Re-ingest the single file (fast, background).
       void memory.reingest(path);
