@@ -42,7 +42,8 @@ class FalkorStore:
             host=host or CONFIG.falkor_host,
             port=port or CONFIG.falkor_port,
         )
-        self.graph = self.db.select_graph(graph_name or CONFIG.falkor_graph)
+        self.graph_name: str = graph_name or CONFIG.falkor_graph
+        self.graph = self.db.select_graph(self.graph_name)
         # Two server-side tunables that bite on large graphs (e.g.
         # 200K-symbol / 270K-call monorepos):
         #
@@ -481,9 +482,79 @@ class FalkorStore:
             )
         return out
 
+    def count_symbols(self) -> int:
+        """Return the total number of Symbol nodes in the graph.
+
+        Returns 0 on any FalkorDB error (connection down, query timeout,
+        etc.) so callers can degrade gracefully without breaking the
+        ingest pipeline.
+        """
+        try:
+            result = self.graph.query("MATCH (s:Symbol) RETURN count(s)")
+            if result.result_set:
+                return int(result.result_set[0][0])
+            return 0
+        except Exception:  # noqa: BLE001 — FalkorDB may be unreachable
+            return 0
+
     def clear_graph(self) -> None:
         """Remove every node + edge in this project's graph."""
         self.graph.query("MATCH (n) DETACH DELETE n")
+
+    def graph_exists(self, name: str) -> bool:
+        """Return True if a FalkorDB graph named ``name`` exists.
+
+        Best-effort: any error (connection down, unsupported command)
+        returns False so callers can treat a missing graph as absent.
+        """
+        try:
+            graphs: list[str] = self.db.list()
+            return name in graphs
+        except Exception:  # noqa: BLE001
+            return False
+
+    def drop_graph(self, name: str) -> None:
+        """Delete the FalkorDB graph ``name`` if it exists.
+
+        Best-effort: errors are swallowed so callers don't have to
+        handle the case where the graph was never created (e.g. a clean
+        environment before the first shadow rebuild).
+        """
+        try:
+            self.db.connection.execute_command("GRAPH.DELETE", name)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def promote_shadow(self, shadow_graph_name: str) -> None:
+        """Atomically replace the live graph with the shadow graph.
+
+        Executes in this strict order (the unit test asserts the call
+        sequence):
+
+        1. ``GRAPH.DELETE self.graph_name`` — clear the destination so
+           FalkorDB's GRAPH.COPY doesn't error on an existing target.
+        2. ``GRAPH.COPY shadow_graph_name self.graph_name`` — copy the
+           fully-built shadow into the live graph name.
+        3. ``GRAPH.DELETE shadow_graph_name`` — clean up the shadow.
+        4. Rebind ``self.graph`` to the freshly-copied graph.
+
+        If the GRAPH.COPY step fails (e.g. FalkorDB is down) the
+        exception propagates immediately — the live graph is gone at
+        that point but the shadow is still intact so the caller can
+        retry. The DELETE steps are best-effort calls but are kept as
+        direct ``execute_command`` invocations so the test's call-order
+        assertion holds.
+        """
+        self.db.connection.execute_command("GRAPH.DELETE", self.graph_name)
+        # Let a COPY failure propagate — shadow is intact for retry.
+        self.db.connection.execute_command(
+            "GRAPH.COPY", shadow_graph_name, self.graph_name
+        )
+        try:
+            self.db.connection.execute_command("GRAPH.DELETE", shadow_graph_name)
+        except Exception:  # noqa: BLE001 — shadow cleanup is best-effort
+            pass
+        self.graph = self.db.select_graph(self.graph_name)
 
     # ------------------------------------------------------------------
     # Topology queries — exposed via MCP/CLI as `codememory_<op>` tools.

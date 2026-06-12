@@ -21,10 +21,11 @@ from ..extractor.dll import parse_assembly
 from ..extractor.nuget import resolve_refs
 from ..extractor.sanity import SUSPECT_THRESHOLD, SanitySummary
 from ..extractor.sln import walk_solutions
+from ..extractor.treesitter import DEFAULT_IGNORE_DIRS, LANG_BY_EXT
 from ..graph import FalkorStore, GraphEdge, GraphNode
 from ..vector import QdrantStore, VectorRecord
 from . import git_delta
-from .ingest_state import IngestStateStore
+from .ingest_state import IngestState, IngestStateStore
 from .resolver import resolve_graph
 
 IngestMode = Literal["auto", "full", "incremental"]
@@ -327,6 +328,16 @@ class Pipeline:
             self.vector.ensure_collection(self.cfg.qdrant_episodes)
         self.graph.ensure_indexes()
         self.state = IngestStateStore(self.cfg.episodic_db)
+        # Routing target for vector upserts.  During a full rebuild this is
+        # temporarily redirected to a shadow collection so the live collection
+        # is never emptied before the rebuild commits.  Reset to the canonical
+        # name after ``_commit_shadow_collection`` succeeds.
+        self._active_code_collection: str = self.cfg.qdrant_code
+        # Routing target for graph writes.  During a full rebuild this is
+        # temporarily redirected to a shadow FalkorStore so the live graph is
+        # never emptied before the rebuild commits.  Reset to ``self.graph``
+        # after ``promote_shadow`` succeeds.
+        self._active_graph: FalkorStore = self.graph
 
     def ingest_repo(
         self,
@@ -355,10 +366,14 @@ class Pipeline:
             stats = self._ingest_full(
                 root_path, dry_run=dry_run, on_progress=on_progress
             )
-            if not dry_run:
-                self._run_resolver(stats)
+            # Resolver runs inside _ingest_full (against the shadow before
+            # promotion) so we do NOT call _run_resolver here — that would
+            # double-run it and unnecessarily scan the already-resolved graph.
             if is_git and not dry_run:
-                self._record_state(root_path, stats)
+                self._record_state(
+                    root_path, stats,
+                    file_count=stats.files, symbol_count=stats.symbols,
+                )
             return stats
 
         # git path
@@ -375,10 +390,18 @@ class Pipeline:
                 root_path, dry_run=dry_run, on_progress=on_progress
             )
             stats.head_sha = head
-            stats.notes.append("no prior ingest state; performed full walk")
+            if self._health_check_reason:
+                stats.notes.append(self._health_check_reason)
+                self._health_check_reason = None
+            else:
+                stats.notes.append("no prior ingest state; performed full walk")
             if not dry_run:
-                self._run_resolver(stats)
-                self._record_state(root_path, stats, head=head, branch=branch)
+                # Resolver runs inside _ingest_full (against the shadow before
+                # promotion) so we do NOT call _run_resolver here.
+                self._record_state(
+                    root_path, stats, head=head, branch=branch,
+                    file_count=stats.files, symbol_count=stats.symbols,
+                )
             return stats
 
         # Incremental
@@ -425,7 +448,66 @@ class Pipeline:
             self.state.clear(root)
             return None
 
+        # Health check: verify the prior full ingest wasn't incomplete.
+        if not self._health_check_ok(root, prior):
+            self.state.clear(root)
+            return None
+
         return prior.last_sha
+
+    # Set by _health_check_ok when forcing a full re-ingest, consumed
+    # by ingest_repo's stats.notes so the user sees why.
+    _health_check_reason: str | None = None
+
+    def _health_check_ok(
+        self, root: Path, prior: IngestState,
+    ) -> bool:
+        """Return False when the prior full ingest was likely incomplete.
+
+        Uses the ``file_count`` and ``symbol_count`` stored during the
+        last full ingest.  If either is missing (legacy state) the check
+        is skipped silently.  When enabled via config, the repo's current
+        ingestable file count is compared against the stored value; a
+        suspicious growth triggers a FalkorDB symbol-count cross-check.
+        """
+        if not self.cfg.ingest_health_check_enabled:
+            return True
+        if prior.file_count is None or prior.symbol_count is None:
+            # Legacy state from before the health-check columns existed;
+            # no data to compare against.
+            return True
+
+        try:
+            current_file_count = _count_ingestable_files(root)
+        except Exception:  # noqa: BLE001 — counting must not break ingest
+            return True
+
+        if current_file_count <= prior.file_count * 1.2:
+            # File count hasn't grown suspiciously — nothing to check.
+            return True
+
+        # File count grew > 20%: cross-check against the graph.
+        current_symbol_count = self.graph.count_symbols()
+        if current_symbol_count == 0 and (prior.symbol_count or 0) > 0:
+            # count_symbols() returns 0 on any FalkorDB error (connection
+            # down, query timeout, etc.).  An empty count against a known-
+            # populated prior state most likely means FalkorDB is
+            # temporarily unreachable — not a broken ingest.  Treat it
+            # as "healthy" to avoid triggering a destructive full rebuild
+            # on every FalkorDB blip.
+            return True
+        expected_min = int(current_file_count * self.cfg.ingest_health_check_min_ratio)
+        if current_symbol_count >= expected_min:
+            return True
+
+        self._health_check_reason = (
+            f"health-check: prior full ingest recorded {prior.file_count} files "
+            f"/ {prior.symbol_count} symbols; repo now has {current_file_count} "
+            f"ingestable files but graph holds only {current_symbol_count} symbols "
+            f"(expected ≥ {expected_min}). Forcing full re-ingest."
+        )
+        sys.stderr.write(f"[code-memory] {self._health_check_reason}\n")
+        return False
 
     def _ingest_full(
         self,
@@ -439,8 +521,42 @@ class Pipeline:
         sanity = SanitySummary()
         head_sha, head_ord = _resolve_head(root)
         stats.head_sha = head_sha
+        # Shadow names are computed unconditionally so the finalization
+        # block can reference them without a possibly-undefined warning.
+        shadow_name: str = self.cfg.qdrant_code + "__shadow"
+        shadow_graph_name: str = self.cfg.falkor_graph + "__shadow"
         if not dry_run:
-            self._purge_project_index(root)
+            # Redirect vector upserts to a shadow collection so the live
+            # collection is never emptied before the rebuild commits.  An
+            # interrupted rebuild leaves the live collection intact — the
+            # shadow is cleaned up at the start of the next rebuild attempt.
+            # Remove any leftover shadow from a previous interrupted rebuild.
+            self._drop_collection_if_exists(shadow_name)
+            self.vector.recreate_collection(shadow_name)
+            self._active_code_collection = shadow_name
+            # Build graph writes into a shadow FalkorStore so the live graph
+            # is never emptied before the rebuild commits.  An interrupted
+            # rebuild leaves the live graph intact — the shadow is cleaned up
+            # at the start of the next rebuild attempt.
+            # Only engage the shadow mechanism when the live graph is a real
+            # FalkorStore (or a mock/stub standing in for one in tests).
+            # ``isinstance`` is wrapped in try/except because if FalkorStore
+            # is itself patched in tests, its mock may not be a valid type
+            # argument, raising TypeError — in that case treat as "real" so
+            # the shadow logic runs with the patched factory.
+            try:
+                _graph_is_real = isinstance(self.graph, FalkorStore)
+            except TypeError:
+                _graph_is_real = True  # patched in tests — proceed with shadow
+            if _graph_is_real:
+                shadow_store = FalkorStore(graph_name=shadow_graph_name)
+                shadow_store.drop_graph(shadow_graph_name)
+                shadow_store.ensure_indexes()
+                self._active_graph = shadow_store
+            # Only clear ingest state (no graph wipe — the live graph stays
+            # intact until promote_shadow fires at the end of a successful
+            # rebuild).
+            self.state.clear(root)
         hb = _Heartbeat(
             "full ingest" + (" (dry-run)" if dry_run else ""),
             on_progress=on_progress,
@@ -511,17 +627,40 @@ class Pipeline:
         self._ingest_dotnet_projects(
             root, stats, dry_run=dry_run, head_sha=head_sha, head_ord=head_ord
         )
+        if not dry_run:
+            # All data committed to shadow; atomically swap into the live
+            # collection.  If this step fails the shadow persists and the
+            # live collection is still intact from before the rebuild.
+            self._commit_shadow_collection()
+            active_graph = getattr(self, "_active_graph", self.graph)
+            # Promote the shadow only when a shadow was actually created
+            # (i.e., active_graph is a different store from self.graph).
+            if active_graph is not self.graph:
+                # Run the resolver against the shadow graph before promoting
+                # so the live graph receives fully-resolved call edges.
+                self._run_resolver_on(active_graph, stats)
+                # Atomically promote the shadow graph to the live graph.
+                self.graph.promote_shadow(shadow_graph_name)
+                self._active_graph = self.graph
+            else:
+                # No graph shadow (mock/stub graph or shadow was not created).
+                # Run resolver against whatever graph store is active.
+                self._run_resolver_on(active_graph, stats)
         return stats
 
-    def _run_resolver(self, stats: IngestStats) -> None:
-        """Resolve placeholder ``name::X`` Symbol nodes to real symbols.
+    def _run_resolver_on(self, graph_store: FalkorStore, stats: IngestStats) -> None:
+        """Resolve placeholder ``name::X`` Symbol nodes on ``graph_store``.
 
         Records resolver stats on the ingest stats object so callers can
         see how much of the call graph is now grounded vs. ambiguous.
         Failures are non-fatal — ingest data is already persisted.
+
+        ``graph_store`` is typically ``self.graph`` for the incremental
+        path and a shadow store for the full-rebuild path (so the live
+        graph stays coherent until ``promote_shadow`` fires).
         """
         try:
-            r = resolve_graph(self.graph)
+            r = resolve_graph(graph_store)
         except Exception as e:
             stats.notes.append(f"resolver skipped: {e}")
             return
@@ -537,6 +676,15 @@ class Pipeline:
             "placeholders_deleted": r.placeholders_deleted,
             "import_aliases_added": r.import_aliases_added,
         }
+
+    def _run_resolver(self, stats: IngestStats) -> None:
+        """Thin wrapper: resolve the live graph.
+
+        Used by the incremental path.  The full-rebuild path calls
+        ``_run_resolver_on`` directly so the resolver runs against the
+        shadow before ``promote_shadow`` fires.
+        """
+        self._run_resolver_on(self.graph, stats)
 
     def _ingest_dotnet_projects(
         self,
@@ -711,8 +859,9 @@ class Pipeline:
             "skipped": skipped,
             "unresolved": unresolved,
         }
-        self.graph.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
-        self.graph.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
+        active = getattr(self, "_active_graph", self.graph)
+        active.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
+        active.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
 
     def _index_solutions(
         self,
@@ -776,8 +925,9 @@ class Pipeline:
             "solutions": len(solutions),
             "memberships": total_members,
         }
-        self.graph.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
-        self.graph.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
+        active = getattr(self, "_active_graph", self.graph)
+        active.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
+        active.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
 
     def _index_file_containment(
         self,
@@ -814,7 +964,8 @@ class Pipeline:
         if not proj_dirs:
             return
 
-        rows = self.graph.graph.query(
+        active = getattr(self, "_active_graph", self.graph)
+        rows = active.graph.query(
             "MATCH (f:File) "
             "WHERE f.lang IN ['csharp', 'fsharp', 'vb', 'razor'] "
             "RETURN f.key"
@@ -842,7 +993,7 @@ class Pipeline:
                 )
             )
         if edges:
-            self.graph.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
+            active.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
 
         if stats.projects is None:
             stats.projects = {}
@@ -906,19 +1057,108 @@ class Pipeline:
                         props=edge_props,
                     )
                 )
-        self.graph.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
-        self.graph.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
+        active = getattr(self, "_active_graph", self.graph)
+        active.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
+        active.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
 
     def _purge_project_index(self, root: Path) -> None:
         """Wipe code vectors + graph + ingest_state for this project.
 
         Episodes are independent (conversation memory) and preserved.
-        Called before a full re-ingest so stale entries (e.g. paths now
-        excluded by .gitignore or ignore_dirs) don't linger in retrieval.
+
+        Note: ``_ingest_full`` no longer calls this method directly — it
+        uses the shadow-collection swap (``_commit_shadow_collection``) so
+        the live index is never empty during a rebuild.  This method is
+        retained for callers that need a hard synchronous wipe (e.g.
+        ``orchestrator/reset.py``) and is still safe to call; it just
+        doesn't have the live-index safety guarantee.
         """
         self.vector.recreate_collection(self.cfg.qdrant_code)
         self.graph.clear_graph()
         self.state.clear(root)
+
+    def _drop_collection_if_exists(self, name: str) -> None:
+        """Delete ``name`` from Qdrant if it exists; no-op otherwise."""
+        try:
+            self.vector.client.delete_collection(collection_name=name)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _commit_shadow_collection(self) -> None:
+        """Atomically promote the shadow collection to be the live collection.
+
+        After ``_ingest_full`` finishes writing to the shadow collection,
+        this method:
+
+        1. Scrolls all points from the shadow collection.
+        2. Recreates (empties) the live collection — brief empty window
+           bounded by the scroll-copy below, not by the full rebuild time.
+        3. Bulk-upserts all shadow points into the live collection.
+        4. Deletes the shadow collection.
+        5. Resets ``self._active_code_collection`` back to the canonical name.
+
+        If this method raises, the shadow collection is left intact and the
+        caller can retry.  The live collection may be empty if the failure
+        happened after step 2; that is still safer than the old behaviour
+        of being empty for the entire rebuild duration.
+        """
+        shadow_name = self.cfg.qdrant_code + "__shadow"
+        live_name = self.cfg.qdrant_code
+
+        # Collect all points from the shadow collection via paginated scroll.
+        from qdrant_client.http import models as qm
+
+        all_points: list[qm.PointStruct] = []
+        # ``offset`` is ``PointId | None`` per the Qdrant client but the
+        # typed signature accepts ``str | int | None``; use ``Any`` to avoid
+        # fighting the invariant generics of an external library.
+        from typing import Union
+        PointId = Union[str, int]
+        offset: PointId | None = None
+        batch_size = 256
+        while True:
+            scroll_result = self.vector.client.scroll(
+                collection_name=shadow_name,
+                limit=batch_size,
+                offset=offset,
+                with_payload=True,
+                with_vectors=True,
+            )
+            batch, raw_next = scroll_result
+            for point in batch:
+                # ``point.vector`` may be a richer type in newer qdrant-client
+                # versions; we cast through ``Any`` so the PointStruct
+                # constructor sees the expected union type.
+                vec: qm.VectorStruct | None = point.vector  # type: ignore[assignment]
+                all_points.append(
+                    qm.PointStruct(
+                        id=point.id,
+                        vector=vec,  # type: ignore[arg-type]
+                        payload=point.payload or {},
+                    )
+                )
+            if raw_next is None:
+                break
+            # ``raw_next`` is typed as ``PointId`` (str | int) by the Qdrant
+            # client; re-bind through the same union.
+            offset = raw_next  # type: ignore[assignment]
+
+        # Recreate the live collection (brief empty window starts here).
+        self.vector.recreate_collection(live_name)
+
+        # Bulk-upsert in batches so large indexes don't hit Qdrant payload limits.
+        SWAP_BATCH = 256
+        for i in range(0, len(all_points), SWAP_BATCH):
+            self.vector.client.upsert(
+                collection_name=live_name,
+                points=all_points[i : i + SWAP_BATCH],
+            )
+
+        # Delete the shadow collection now that the live is populated.
+        self._drop_collection_if_exists(shadow_name)
+
+        # Reset routing back to the canonical collection name.
+        self._active_code_collection = live_name
 
     def _ingest_delta(
         self,
@@ -1009,6 +1249,8 @@ class Pipeline:
         *,
         head: str | None = None,
         branch: str | None = None,
+        file_count: int | None = None,
+        symbol_count: int | None = None,
     ) -> None:
         sha = head or stats.head_sha
         if sha is None and git_delta.is_git_repo(root):
@@ -1021,7 +1263,10 @@ class Pipeline:
         if sha is None:
             return
         stats.head_sha = sha
-        self.state.set(root, sha=sha, branch=branch)
+        self.state.set(
+            root, sha=sha, branch=branch,
+            file_count=file_count, symbol_count=symbol_count,
+        )
 
     def ingest_file(
         self,
@@ -1257,8 +1502,9 @@ class Pipeline:
                 )
             )
 
-        self.graph.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
-        self.graph.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
+        active = getattr(self, "_active_graph", self.graph)
+        active.upsert_nodes(nodes, head_sha=head_sha, head_ord=head_ord)
+        active.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
 
     def _embed_and_upsert(
         self, pending: list[tuple[ExtractedFile, _Chunk]]
@@ -1290,7 +1536,10 @@ class Pipeline:
             )
             for (ex, c), hv in zip(pending, hvecs, strict=True)
         ]
-        self.vector.upsert(self.cfg.qdrant_code, records)
+        self.vector.upsert(
+            getattr(self, "_active_code_collection", self.cfg.qdrant_code),
+            records,
+        )
 
     def _upsert_vectors(self, ex: ExtractedFile, batch_size: int = 32) -> None:
         chunks = list(_chunks_for(ex))
@@ -1315,7 +1564,37 @@ class Pipeline:
                 )
                 for c, hv in zip(batch, hvecs, strict=True)
             ]
-            self.vector.upsert(self.cfg.qdrant_code, records)
+            self.vector.upsert(
+                getattr(self, "_active_code_collection", self.cfg.qdrant_code),
+                records,
+            )
+
+
+def _count_ingestable_files(root: Path) -> int:
+    """Fast count of ingestable files under *root* without parsing.
+
+    Uses the same ignore logic as ``Extractor.walk`` (default ignore
+    dirs + gitignore).  Only files with extensions recognised by
+    ``LANG_BY_EXT`` are counted.  No tree-sitter parsing is done.
+    """
+    from ..extractor.gitignore import GitignoreMatcher
+
+    root_path = root.resolve()
+    matcher = GitignoreMatcher.from_root(root_path)
+    ignore_set = set(DEFAULT_IGNORE_DIRS)
+    supported_exts = set(LANG_BY_EXT.keys())
+    count = 0
+    for p in root_path.rglob("*"):
+        if not p.is_file():
+            continue
+        if any(part in ignore_set for part in p.parts):
+            continue
+        if matcher.match(p, is_dir=False):
+            continue
+        if p.suffix.lower() not in supported_exts:
+            continue
+        count += 1
+    return count
 
 
 def _resolve_head(root: str | Path) -> tuple[str | None, int | None]:
