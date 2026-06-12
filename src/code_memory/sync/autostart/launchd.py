@@ -98,7 +98,7 @@ class LaunchdAdapter:
         Self-heals units left behind by deleted checkouts and per-session
         worktrees. Returns the removed labels. Best-effort.
         """
-        from ..safety import is_ephemeral_watch_dir
+        from ..safety import is_non_persistent_watch_dir
 
         agents = Path.home() / "Library" / "LaunchAgents"
         if not agents.is_dir():
@@ -115,7 +115,7 @@ class LaunchdAdapter:
             if not workdir:
                 continue
             target = Path(workdir)
-            if target.is_dir() and not is_ephemeral_watch_dir(target):
+            if target.is_dir() and not is_non_persistent_watch_dir(target):
                 continue  # live, persistable project — keep
             label = data.get("Label", path.stem)
             subprocess.run(

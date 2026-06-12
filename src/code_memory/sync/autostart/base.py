@@ -53,7 +53,7 @@ def ensure_autostart(repo: Path, *, project: str | None = None) -> AutostartStat
     from ..safety import (
         UnsafeWatchRootError,
         assert_safe_watch_root,
-        is_ephemeral_watch_dir,
+        is_non_persistent_watch_dir,
     )
 
     try:
@@ -65,14 +65,15 @@ def ensure_autostart(repo: Path, *, project: str | None = None) -> AutostartStat
             label="<unsafe-root>",
             note=str(e),
         )
-    if is_ephemeral_watch_dir(repo):
+    if is_non_persistent_watch_dir(repo):
         return AutostartStatus(
             installed=False,
             running=False,
             label="<ephemeral>",
             note=(
-                f"{repo} is an ephemeral / per-session directory; skipping "
-                "persistent autostart (session-scoped watcher still applies)."
+                f"{repo} is an ephemeral / per-session dir or a linked git "
+                "worktree; skipping persistent autostart (the main repo's "
+                "watcher / session-scoped watcher still applies)."
             ),
         )
     try:
