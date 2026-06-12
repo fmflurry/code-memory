@@ -8,6 +8,207 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
+## [0.7.0] — 2026-06-12
+
+Release theme: **Worktree resilience, atomic graph rebuilds, and fresh
+indexes**. The index now survives interrupted full ingests; linked git
+worktrees reuse the main repo's index instead of forcing a cold re-ingest;
+and queries trigger non-blocking background rebuilds when the index drifts
+from HEAD.
+
+### Added — Linked git worktree awareness
+
+**What:** a new `_git_toplevel()` helper resolves linked git worktrees
+to the main repo's root by running `git rev-parse --git-common-dir`
+after the baseline `--show-toplevel` call. In a linked worktree, the
+two paths differ; in the main worktree, they're the same. The project
+slug is now derived from the main repo's directory name, so all worktrees
+of the same project reuse the same Qdrant / Falkor namespace without
+requiring a cold re-ingest.
+
+**Reason:** developers working in linked worktrees (e.g. `git worktree add
+../feature-branch`) saw no code-memory functionality because the ingest
+system minted a separate Qdrant collection and Falkor graph for each
+worktree. A single repo with 3–5 active worktrees accumulated 3–5 cold
+ingests. The main repo and each worktree now share the same index.
+
+### Added — Non-persistent autostart for linked worktrees
+
+**What:** two new gates in the autostart system:
+
+- `is_linked_git_worktree(path)` — checks whether *path* is inside a
+  linked worktree via git CLI.
+- `is_non_persistent_watch_dir(path)` — returns True for ephemeral
+  session dirs OR linked worktrees; used by `ensure_autostart()` to skip
+  registering a persistent OS agent for directories that are temporary or
+  share the main repo's watcher.
+- `LaunchdAdapter.prune_stale()` (run on every MCP bootstrap) removes
+  launchd agents whose `WorkingDirectory` is gone or is a linked worktree.
+
+**Reason:** the prior release fixed the watcher's per-session accumulation;
+this release prevents the same bleed on linked worktrees. A developer with
+2 linked worktrees no longer gets 3 persistent `code-memory watch` units.
+
+### Added — Shadow-graph atomic promotion (graph durability fix)
+
+**What:** the full ingest pipeline now builds into a shadow FalkorDB
+graph named `<project_graph>__shadow` and atomically promotes it only
+after the rebuild succeeds:
+
+1. At ingest start, drop any leftover shadow from a prior interrupted
+   rebuild.
+2. Redirect all graph writes to the shadow FalkorStore instance.
+3. On successful completion, execute `GRAPH.DELETE <live>`, then
+   `GRAPH.COPY <shadow> <live>`, then `GRAPH.DELETE <shadow>`.
+4. If the copy fails, the live graph is cleared but the shadow stays
+   intact — the caller can retry without losing data.
+
+**Reason:** before this, an interrupted full ingest (network loss,
+Ollama timeout, Falkor down, user kills the process) left the live
+graph empty so subsequent `callers` / `definitions` / `callees` queries
+returned nothing until a manual full re-ingest. The graph now survives
+interruption — the shadow is cleaned up on the next rebuild attempt.
+
+### Added — Health-check guard for stale rebuilds
+
+**What:** the ingest state now records `file_count` and `symbol_count`
+from each successful full rebuild. Before starting an incremental ingest,
+`_health_check_ok()` compares the current ingestable file count against
+the stored baseline; if it grew more than 20% and the graph symbol count
+is suspiciously low (below a ratio threshold), a full rebuild is forced
+with a diagnostic message to stderr.
+
+Config:
+- `CODE_MEMORY_INGEST_HEALTH_CHECK_ENABLED` (default `true`)
+- `CODE_MEMORY_INGEST_HEALTH_CHECK_MIN_RATIO` (default `0.3` = expect ≥30%
+  of file count as symbol count)
+
+**Reason:** a transient FalkorDB outage or an incomplete prior ingest
+could leave the graph permanently empty while incremental ingests reported
+success. The health check detects this silently-failed state and forces a
+rebuild, with no user intervention needed.
+
+### Added — Single-flight ingest lock
+
+**What:** new `src/code_memory/sync/single_flight.py` module provides
+in-process (`asyncio.Lock`) + cross-process (PID file) guards to prevent
+concurrent full ingests for the same (root, project) pair.
+
+- `try_acquire(root, project)` — returns True if no rebuild is running,
+  False if the slot is taken.
+- `release(root, project)` — releases the slot unconditionally.
+- Stale PID files (dead process or age > 30 min) are silently removed.
+
+The Claude Code and Cursor plugins' `on-session-start.js` fast-path-skip a
+spawn when a live ingest is detected, preventing thundering-herd `code-memory
+ingest` calls on boot.
+
+**Reason:** on slow machines or large repos, overlapping `code-memory ingest`
+calls could queue up and queue up (especially if the embedder is I/O-bound),
+causing a session to take 5+ minutes to boot. The lock ensures at most one
+rebuild runs; fast-path skips spare the overhead.
+
+### Added — Ingest safety guards
+
+**What:** new `assert_safe_ingest_root()` function in `sync/safety.py`
+refuses to ingest:
+
+1. System/HOME roots (same set as the watcher guard: HOME, /, /tmp,
+   /var, /etc, /usr, /System, /Library, /opt, /Applications, C:/, etc.)
+2. Non-git directories (checked via `is_inside_git_worktree()`).
+
+Bypass via `CODE_MEMORY_UNSAFE_INGEST=1` env var (env-only, not a CLI
+flag, to prevent accidental use).
+
+**Reason:** `code-memory ingest ~` could walk every IDE cache, checkout,
+and node_modules on disk. `ingest` is more dangerous than `watch` because
+it stores results; a non-git directory ingest mints an arbitrary project
+slug. The guard is invoked by the CLI `ingest` entry point and by hooks.
+
+### Added — IPv4-default service URLs
+
+**What:** the default `OLLAMA_URL`, `QDRANT_URL`, and `FALKOR_URL` now
+use `127.0.0.1` instead of `localhost`. This works around a Windows
+quirk where `localhost` may resolve to `::1` (IPv6) and hang on socket
+connect.
+
+Config example (all in `.code-memoryrc` or env):
+```
+OLLAMA_URL=http://127.0.0.1:11434
+QDRANT_URL=http://127.0.0.1:6333
+FALKOR_URL=redis://127.0.0.1:6379
+```
+
+**Reason:** on some Windows setups, the TCP stack prefers IPv6 and
+binds localhost to `::1`, while the service listens on `127.0.0.1`.
+Callers then hang waiting for a timeout (seconds to minutes). Using
+the explicit IPv4 address is more reliable.
+
+### Added — Non-blocking `_ensure_fresh` for MCP queries
+
+**What:** the pre-query guard `_ensure_fresh()` no longer blocks on a
+sync. Instead:
+
+1. Spawn a quick freshness check (`_is_index_stale()`) in a bounded
+   daemon thread (`_FRESHNESS_PROBE_TIMEOUT`, default 2.0 s).
+2. If the index is stale AND the check finished in time, fire a
+   background `_background_rebuild()` in a detached daemon thread
+   protected by the single-flight lock.
+3. Return immediately so the query gets the current (possibly stale)
+   index while the rebuild runs in the background.
+
+**Reason:** MCP queries were blocking on a full ingest in the worst case,
+causing Claude Code / OpenCode / Cursor to hang for minutes. Now the agent
+gets an answer immediately while background sync keeps the index fresh.
+
+### Fixed — Ollama embed connect timeout
+
+**What:** `OllamaEmbedder` now uses split connect/read timeouts:
+
+- `_DEFAULT_CONNECT_TIMEOUT = 5.0 s` — fail fast on wrong stack (IPv6
+  vs IPv4) or misconfigured host.
+- `_DEFAULT_READ_TIMEOUT = 300.0 s` — Ollama's cold-load model phase
+  happens during read, not connect.
+
+Configurable via `OLLAMA_CONNECT_TIMEOUT` and `OLLAMA_READ_TIMEOUT`
+env vars.
+
+**Reason:** the old single `timeout=300` param applied to connect, which
+could hang for 300 s waiting on a misconfigured IPv6 address. A 5 s
+connect timeout with 3 retries fails fast (~15 s worst case) instead.
+
+### Added — Vibe plugin
+
+**What:** new `plugins/vibe/` brings code-memory to Mistral Vibe. Vibe
+lacks lifecycle hooks (unlike Claude Code, Cursor, OpenCode), so the
+plugin delivers:
+
+- **Skill** (`/code-memory`) with orientation guidance and manual command
+  runner.
+- **MCP server** registration in `config.toml`.
+- **OS autostart watcher** for file-edit → auto-reingest (since hooks
+  aren't available).
+
+Install: `./plugins/vibe/install.sh` (default user scope, with flags for
+project scope, no-mcp, no-watch, uninstall).
+
+**Reason:** Vibe is a code-aware LLM editor with a different extension
+model. Bundling the same code-memory integration surfaces our topology
+queries to Vibe users without reimplementation.
+
+### Added — Ingest state enhancements
+
+**What:** the ingest state now stores:
+
+- `file_count` / `symbol_count` from each full rebuild (used by the
+  health check).
+- `file_count` and `symbol_count` are populated by the pipeline during
+  ingest and read by the health-check predicate before deciding to
+  rebuild.
+
+**Reason:** enables the health-check guard to detect silently-failed
+ingests.
+
 ## [0.6.0] — 2026-06-04
 
 Release theme: **Dart joins the graph, and `this.field.method()` resolves
