@@ -118,14 +118,37 @@ def ingest(
 
     Default: git-aware incremental — diff prior state to HEAD.
     """
-    slug = project or detect_project_slug(root)
-    pipe = Pipeline(project=slug, skip_vectors=no_vectors)
-    stats = pipe.ingest_repo(
-        root,
-        mode="full" if full else "auto",
-        since=since,
-        dry_run=dry_run,
-    )
+    from .sync.safety import UnsafeIngestRootError, assert_safe_ingest_root
+    from .sync.single_flight import release, try_acquire
+
+    # --- Phase 3a: refuse HOME / filesystem roots / non-git dirs ----------
+    try:
+        safe_root = assert_safe_ingest_root(root)
+    except UnsafeIngestRootError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    slug = project or detect_project_slug(safe_root)
+
+    # --- Phase 3b: single-flight lock — skip if an ingest is already live --
+    if not try_acquire(safe_root, slug):
+        typer.echo(
+            f"skipped: ingest already running for project={slug!r} root={safe_root}",
+            err=True,
+        )
+        raise typer.Exit(code=0)
+
+    try:
+        pipe = Pipeline(project=slug, skip_vectors=no_vectors)
+        stats = pipe.ingest_repo(
+            safe_root,
+            mode="full" if full else "auto",
+            since=since,
+            dry_run=dry_run,
+        )
+    finally:
+        release(safe_root, slug)
+
     _emit(
         {"project": slug, "dry_run": dry_run, "ingested": asdict(stats)},
         as_json=as_json,
@@ -289,6 +312,25 @@ def reingest(
     as_json: bool = JsonOpt,
 ) -> None:
     """Re-ingest a single file."""
+    from .config import is_inside_git_worktree
+
+    # --- Phase 4: skip files that are not inside any git worktree ---------
+    # This backstop catches edits to files under ~/.claude/..., C:\Users\...,
+    # or any other non-project path that the cwd-containment guard in the JS
+    # hook can't catch when cwd itself is not a git directory.  Without this
+    # guard, detect_project_slug falls back to the raw directory name and
+    # mints parasitic Qdrant collections like "code_chunks__on-session-start-js".
+    if not is_inside_git_worktree(path.resolve().parent):
+        _emit(
+            {
+                "skipped": True,
+                "reason": "not inside a git worktree",
+                "path": str(path),
+            },
+            as_json=as_json,
+        )
+        raise typer.Exit(code=0)
+
     slug = project or detect_project_slug(path)
     pipe = Pipeline(project=slug)
     ex = pipe.reingest_file(path)

@@ -94,6 +94,25 @@ def slugify(name: str) -> str:
 
 
 def _git_toplevel(start: Path) -> Path | None:
+    """Return the main repo root for *start*, resolving linked worktrees.
+
+    Inside a **linked git worktree** ``git rev-parse --show-toplevel``
+    returns the worktree's own directory, not the main repo root.  That
+    causes a slug mismatch: the worktree mints its own Qdrant / Falkor
+    namespace instead of sharing the main repo's.
+
+    Resolution: after obtaining the ``--show-toplevel`` baseline we run a
+    second call with ``--path-format=absolute --git-common-dir``.
+
+    * In a linked worktree: returns the absolute path to the MAIN repo's
+      ``.git`` dir → ``Path(result).parent`` is the main repo root.
+    * In the main worktree: returns ``<root>/.git`` → ``.parent`` equals
+      the same root ``--show-toplevel`` already gave (no regression).
+
+    Any failure in the second call (old git, missing binary, bad output,
+    non-absolute path that can't be resolved, non-existent directory) is
+    silently ignored and the ``--show-toplevel`` result is returned as-is.
+    """
     try:
         out = subprocess.run(
             ["git", "-C", str(start), "rev-parse", "--show-toplevel"],
@@ -107,7 +126,48 @@ def _git_toplevel(start: Path) -> Path | None:
     if out.returncode != 0:
         return None
     top = out.stdout.strip()
-    return Path(top) if top else None
+    if not top:
+        return None
+    baseline = Path(top)
+
+    # Second call: resolve linked worktree → main repo root.
+    try:
+        common = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(start),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return baseline
+
+    if common.returncode != 0:
+        return baseline
+
+    git_common_raw = common.stdout.strip()
+    if not git_common_raw:
+        return baseline
+
+    git_common = Path(git_common_raw)
+    # Guard against older git ignoring --path-format and returning a
+    # relative path; resolve it relative to start before taking .parent.
+    if not git_common.is_absolute():
+        git_common = (start / git_common).resolve()
+
+    main_root = git_common.parent
+    # Only adopt the common-dir-derived root when it actually exists.
+    if not main_root.is_dir():
+        return baseline
+
+    return main_root
 
 
 # Populate os.environ from rc files *before* the ``Config`` dataclass
@@ -168,6 +228,81 @@ def resolve_embed_dim(model_name: str, override: int = 0) -> int:
     return 1024
 
 
+def is_linked_git_worktree(path: Path | None = None) -> bool:
+    """Return ``True`` when *path* is inside a **linked** git worktree.
+
+    A linked worktree shares the main repo's object store but has its own
+    ``HEAD``.  ``git rev-parse --git-dir`` returns a worktree-private path
+    (``<main>/.git/worktrees/<name>``), while ``git rev-parse --git-common-dir``
+    returns the shared ``<main>/.git``.  The two paths differ in a linked
+    worktree; they are equal in the main worktree.
+
+    Contract:
+    * Pure boolean — never raises; missing git binary, non-git path, or any
+      subprocess error returns ``False``.
+    * Default *path* is :func:`Path.cwd`.  If the resolved path is a file,
+      its parent directory is used.
+    * Main worktree and non-git dirs both return ``False``.
+    """
+    start: Path = path if path is not None else Path.cwd()
+    if not start.is_dir():
+        start = start.parent
+
+    def _run_git(args: list[str]) -> str | None:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(start)] + args,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=2,
+            )
+        except (FileNotFoundError, subprocess.SubprocessError):
+            return None
+        if result is None or result.returncode != 0:
+            return None
+        out = result.stdout.strip()
+        return out if out else None
+
+    raw_git_dir = _run_git(["rev-parse", "--git-dir"])
+    if raw_git_dir is None:
+        return False
+
+    raw_common_dir = _run_git(["rev-parse", "--git-common-dir"])
+    if raw_common_dir is None:
+        return False
+
+    def _resolve_git_path(raw: str) -> Path:
+        p = Path(raw)
+        if p.is_absolute():
+            return p.resolve()
+        return (start / p).resolve()
+
+    git_dir = _resolve_git_path(raw_git_dir)
+    common_dir = _resolve_git_path(raw_common_dir)
+    return git_dir != common_dir
+
+
+def is_inside_git_worktree(path: Path | None = None) -> bool:
+    """Return ``True`` when *path* (default: cwd) is inside a git worktree.
+
+    This is a lightweight predicate used by callers that need to decide
+    whether to skip reingest of files that landed outside any known git
+    repository.  A ``False`` result means there is no ``.git`` directory
+    in the ancestry chain — the path is not part of a tracked project and
+    slug-based collection routing would produce an arbitrary name derived
+    from the raw directory name.
+
+    Contract:
+    * Pure boolean — never raises; unknown/missing git binary returns ``False``.
+    * Does **not** require the path to be a git toplevel; any subdirectory
+      inside a worktree returns ``True``.
+    * Suitable as a fast guard before calling :func:`detect_project_slug`.
+    """
+    check = path or Path.cwd()
+    return _git_toplevel(check if check.is_dir() else check.parent) is not None
+
+
 def detect_project_slug(root: str | Path | None = None) -> str:
     """Resolve project slug.
 
@@ -175,6 +310,14 @@ def detect_project_slug(root: str | Path | None = None) -> str:
       1. explicit `root` (path) -> git toplevel basename, else dir name
       2. CODE_MEMORY_PROJECT env var
       3. cwd -> git toplevel basename, else cwd name
+
+    The returned slug is always a non-empty string — it never signals
+    "not a git repo" by itself.  Callers that want to *skip* processing
+    for paths outside any git worktree should call
+    :func:`is_inside_git_worktree` first and branch on that result.
+    The name-based fallback (dir basename) is intentionally preserved so
+    that legitimate non-git projects (archives, temp checkout trees) can
+    still be indexed under a stable namespace.
     """
     if root is not None:
         p = Path(root).resolve()
@@ -192,21 +335,27 @@ def detect_project_slug(root: str | Path | None = None) -> str:
 
 @dataclass(frozen=True)
 class Config:
-    ollama_url: str = _env("OLLAMA_URL", "http://localhost:11434")
+    # Default to 127.0.0.1 rather than ``localhost`` to avoid Windows
+    # DNS resolving ``localhost`` → ``::1`` (IPv6) first when Ollama /
+    # Qdrant / FalkorDB bind IPv4-only, which causes httpx to hang for
+    # up to 300 s waiting for a connection that will never succeed.
+    # Operators who explicitly export OLLAMA_URL / QDRANT_URL / etc.
+    # retain full control — these are pure default-value changes.
+    ollama_url: str = _env("OLLAMA_URL", "http://127.0.0.1:11434")
     # TEI (text-embeddings-inference) server URL. Used only when
     # ``EMBED_BACKEND=tei``. The enterprise-deploy story: stand TEI up
     # on a GPU host (Linux + CUDA), point ``TEI_URL`` at it, get a
     # 5-10× cold-ingest speedup over Ollama with the same bge-m3
     # weights. On Mac there's no GPU advantage and Ollama's Metal path
     # is faster — leave on the default backend there.
-    tei_url: str = _env("TEI_URL", "http://localhost:8080")
+    tei_url: str = _env("TEI_URL", "http://127.0.0.1:8080")
     embed_model: str = _env("EMBED_MODEL", "bge-m3")
     # ``embed_dim`` defaults to the dimension of the configured model
     # so users don't have to keep two env vars in sync. Override with
     # ``EMBED_DIM`` when running a model not in the known-dim table.
     embed_dim: int = int(_env("EMBED_DIM", "0"))
 
-    qdrant_url: str = _env("QDRANT_URL", "http://localhost:6333")
+    qdrant_url: str = _env("QDRANT_URL", "http://127.0.0.1:6333")
     qdrant_code: str = _env("QDRANT_COLLECTION_CODE", "code_chunks")
     qdrant_episodes: str = _env("QDRANT_COLLECTION_EPISODES", "episodes")
     qdrant_claim_entities: str = _env(
@@ -220,7 +369,7 @@ class Config:
     # remains source of truth; this collection is rebuildable.
     qdrant_claims: str = _env("QDRANT_COLLECTION_CLAIMS", "claims")
 
-    falkor_host: str = _env("FALKOR_HOST", "localhost")
+    falkor_host: str = _env("FALKOR_HOST", "127.0.0.1")
     falkor_port: int = int(_env("FALKOR_PORT", "6379"))
     falkor_graph: str = _env("FALKOR_GRAPH", "code_graph")
 
@@ -247,6 +396,22 @@ class Config:
     # subject/object reuses an existing entity instead of creating a new
     # one. 0.85 is a conservative default — false-merges hurt more than
     # extra entities (they propagate to every downstream claim).
+    # Ingest health check: when ``file_count`` is stored from a prior full
+    # ingest, the incremental path compares the repo's current ingestable
+    # file count against the stored value.  If files grew by >20 % the
+    # symbol count is cross-checked against the graph; a low ratio forces
+    # a full re-ingest.  Disable by setting ``INGEST_HEALTH_CHECK=false``.
+    ingest_health_check_enabled: bool = (
+        _env("INGEST_HEALTH_CHECK", "true").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    # Minimum expected symbols-per-file ratio.  Repos with large generated
+    # or declaration-heavy code may average > 5 symbols/file; a value
+    # below 0.5 suggests the graph is incomplete.
+    ingest_health_check_min_ratio: float = float(
+        _env("INGEST_HEALTH_CHECK_MIN_RATIO", "0.5")
+    )
+
     claims_entity_threshold: float = float(
         _env("CLAIMS_ENTITY_THRESHOLD", "0.85")
     )

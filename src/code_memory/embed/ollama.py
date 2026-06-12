@@ -38,14 +38,31 @@ class OllamaEmbedder:
     degrade to dense-only for this point.
     """
 
+    # Default connect timeout: 5 s is generous for a loopback service
+    # but still short enough that a wrong-stack (IPv6 vs IPv4) or
+    # misconfigured host fails fast.  The read timeout is kept long
+    # (300 s) because Ollama loads the model on the first request — that
+    # cold-load phase happens during the *read* phase, not the connect.
+    # With with_retry(max_retries=3) the worst-case wall time drops from
+    # ~1 200 s (4 × 300 s connect hangs) to ~15 s (3 × 5 s retries).
+    _DEFAULT_CONNECT_TIMEOUT: float = 5.0
+    _DEFAULT_READ_TIMEOUT: float = 300.0
+
     def __init__(
         self,
         url: str | None = None,
         model: str | None = None,
-        timeout: float = 300.0,
+        connect_timeout: float = _DEFAULT_CONNECT_TIMEOUT,
+        read_timeout: float = _DEFAULT_READ_TIMEOUT,
     ) -> None:
         self.url = (url or CONFIG.ollama_url).rstrip("/")
         self.model = model or CONFIG.embed_model
+        timeout = httpx.Timeout(
+            connect=connect_timeout,
+            read=read_timeout,
+            write=read_timeout,
+            pool=connect_timeout,
+        )
         self._client = httpx.Client(timeout=timeout)
 
     def embed(self, texts: Sequence[str]) -> list[HybridVec]:

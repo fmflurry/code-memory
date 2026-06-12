@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import signal
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -668,10 +669,20 @@ def _text(payload: Any) -> list[TextContent]:
 
 
 def _ensure_fresh(project: str) -> None:
-    """Pre-query guard: sync the active repo if HEAD has drifted.
+    """Pre-query guard: fire a background rebuild if the index looks stale.
 
-    Cheap no-op when state already matches HEAD and the worktree is
-    clean. Skipped entirely when ``CODE_MEMORY_NO_GUARD`` is set.
+    Immediately returns so ``_retrieve`` is never blocked on a full reingest.
+    The caller gets the current (possibly stale/empty) index while the
+    rebuild runs in a detached daemon thread.
+
+    Strategy:
+    - Hard bypass when ``CODE_MEMORY_NO_GUARD`` is set (regression guard).
+    - Short-circuit when the repo has no ``.git`` directory.
+    - Quick freshness probe (wall-clock bounded to ``_FRESHNESS_PROBE_TIMEOUT``).
+      If the probe itself would block, we skip it and rely on the background
+      watcher to keep the index current.
+    - When stale: fire a single background rebuild via ``single_flight`` so
+      concurrent retrieves start at most ONE rebuild.
     """
     if os.environ.get("CODE_MEMORY_NO_GUARD"):
         return
@@ -679,11 +690,132 @@ def _ensure_fresh(project: str) -> None:
     if not (repo / ".git").exists():
         return
     try:
-        from .sync import sync_repo
-
-        sync_repo(repo, project=project, trigger="pre-query", fetch=False)
+        _maybe_trigger_background_rebuild(repo, project)
     except Exception:  # noqa: BLE001
-        log.exception("pre-query guard sync failed")
+        log.exception("pre-query guard: freshness check failed")
+
+
+# Maximum seconds the freshness probe is allowed to run before we give up
+# and serve stale.  Chosen to be small enough not to block MCP round-trips.
+_FRESHNESS_PROBE_TIMEOUT: float = float(
+    os.environ.get("CODE_MEMORY_FRESHNESS_PROBE_TIMEOUT", "2.0")
+)
+
+
+def _is_index_stale(repo: Path, project: str) -> bool:
+    """Return True when the local ingest state is missing or HEAD has moved.
+
+    Bounded to ``_FRESHNESS_PROBE_TIMEOUT``.  Returns ``False`` (serve stale)
+    on any error or timeout so the query path is never blocked.
+    """
+    result: list[bool] = []
+    exc_holder: list[BaseException] = []
+
+    def _probe() -> None:
+        try:
+            from .orchestrator import git_delta
+            from .orchestrator.ingest_state import IngestStateStore
+
+            cfg = CONFIG.for_project(project)
+            state_store = IngestStateStore(cfg.episodic_db)
+            prior = state_store.get(repo)
+            if prior is None:
+                result.append(True)
+                return
+            try:
+                head = git_delta.head_sha(repo)
+            except Exception:
+                # Can't determine HEAD — treat as fresh to avoid thrashing.
+                result.append(False)
+                return
+            result.append(prior.last_sha != head)
+        except Exception as exc:
+            exc_holder.append(exc)
+
+    t = threading.Thread(target=_probe, daemon=True)
+    t.start()
+    t.join(timeout=_FRESHNESS_PROBE_TIMEOUT)
+
+    if t.is_alive():
+        # Probe timed out — serve stale, don't block.
+        log.debug("pre-query freshness probe timed out; serving stale index")
+        return False
+
+    if exc_holder:
+        log.debug("pre-query freshness probe error: %s", exc_holder[0])
+        return False
+
+    return bool(result and result[0])
+
+
+def _background_rebuild(repo: Path, project: str) -> None:
+    """Run a sync (auto-mode, no fetch) in a daemon thread.
+
+    This function assumes the caller has already acquired the single-flight
+    slot via ``try_acquire`` and will call ``release`` on behalf of the
+    caller — ownership of the slot is transferred to this function.
+
+    Do NOT call this directly from ``_maybe_trigger_background_rebuild``
+    without first having acquired the slot: use the wrapper below.
+    """
+    from .sync import sync_repo
+    from .sync.single_flight import release
+
+    try:
+        log.info(
+            "background rebuild started: project=%s root=%s", project, repo
+        )
+        result = sync_repo(repo, project=project, trigger="pre-query", fetch=False)
+        log.info(
+            "background rebuild done: project=%s action=%s head=%s",
+            project,
+            result.action,
+            (result.head_sha or "")[:12],
+        )
+    except Exception:
+        log.exception(
+            "background rebuild failed: project=%s root=%s", project, repo
+        )
+    finally:
+        # Always release — slot was transferred to us by the triggering thread.
+        release(repo, project)
+
+
+def _maybe_trigger_background_rebuild(repo: Path, project: str) -> None:
+    """Fire a background rebuild if the index is stale, single-flighted.
+
+    Acquires the single-flight slot atomically before starting the thread.
+    The slot stays held through thread start so no concurrent caller can
+    sneak in between the acquire-check and the thread's first instruction.
+    The daemon thread inherits slot ownership and releases on completion.
+    """
+    from .sync.single_flight import release, try_acquire
+
+    if not _is_index_stale(repo, project):
+        return
+
+    # Acquire slot atomically.  If another thread or process already holds it,
+    # a rebuild is in flight — skip silently.
+    if not try_acquire(repo, project):
+        log.debug("pre-query: rebuild already in flight for project=%s", project)
+        return
+
+    # Slot is now held.  Transfer ownership to the daemon thread.
+    try:
+        t = threading.Thread(
+            target=_background_rebuild,
+            args=(repo, project),
+            daemon=True,
+            name=f"codememory-rebuild-{project}",
+        )
+        t.start()
+        log.info(
+            "pre-query guard: triggered background rebuild for project=%s", project
+        )
+    except Exception:
+        # Failed to start thread — release the slot so a future call can retry.
+        release(repo, project)
+        raise
 
 
 def _retrieve(args: dict[str, Any]) -> list[TextContent]:

@@ -20,6 +20,11 @@ CREATE TABLE IF NOT EXISTS ingest_state (
 );
 """
 
+_MIGRATIONS = [
+    "ALTER TABLE ingest_state ADD COLUMN file_count INTEGER",
+    "ALTER TABLE ingest_state ADD COLUMN symbol_count INTEGER",
+]
+
 
 @dataclass(frozen=True)
 class IngestState:
@@ -27,6 +32,8 @@ class IngestState:
     last_sha: str
     last_ts: float
     branch: str | None = None
+    file_count: int | None = None
+    symbol_count: int | None = None
 
 
 class IngestStateStore:
@@ -37,26 +44,65 @@ class IngestStateStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.path)
         self.conn.executescript(SCHEMA)
+        for stmt in _MIGRATIONS:
+            try:
+                self.conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass  # column already exists
         self.conn.commit()
 
     def get(self, repo_root: str | Path) -> IngestState | None:
-        row = self.conn.execute(
-            "SELECT repo_root, last_sha, last_ts, branch FROM ingest_state WHERE repo_root = ?",
-            (str(Path(repo_root).resolve()),),
-        ).fetchone()
+        # Attempt to read with the extended columns; fall back to the
+        # legacy 4-column schema if the columns don't exist yet.
+        try:
+            row = self.conn.execute(
+                "SELECT repo_root, last_sha, last_ts, branch, "
+                "       file_count, symbol_count "
+                "FROM ingest_state WHERE repo_root = ?",
+                (str(Path(repo_root).resolve()),),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = self.conn.execute(
+                "SELECT repo_root, last_sha, last_ts, branch "
+                "FROM ingest_state WHERE repo_root = ?",
+                (str(Path(repo_root).resolve()),),
+            ).fetchone()
+            if row is None:
+                return None
+            return IngestState(
+                repo_root=row[0], last_sha=row[1], last_ts=row[2], branch=row[3]
+            )
         if row is None:
             return None
-        return IngestState(repo_root=row[0], last_sha=row[1], last_ts=row[2], branch=row[3])
+        return IngestState(
+            repo_root=row[0],
+            last_sha=row[1],
+            last_ts=row[2],
+            branch=row[3],
+            file_count=row[4],
+            symbol_count=row[5],
+        )
 
-    def set(self, repo_root: str | Path, sha: str, branch: str | None = None) -> None:
+    def set(
+        self,
+        repo_root: str | Path,
+        sha: str,
+        branch: str | None = None,
+        file_count: int | None = None,
+        symbol_count: int | None = None,
+    ) -> None:
         self.conn.execute(
-            "INSERT INTO ingest_state(repo_root, last_sha, last_ts, branch) "
-            "VALUES (?, ?, ?, ?) "
+            "INSERT INTO ingest_state(repo_root, last_sha, last_ts, branch, "
+            "                        file_count, symbol_count) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(repo_root) DO UPDATE SET "
             "  last_sha = excluded.last_sha, "
             "  last_ts  = excluded.last_ts, "
-            "  branch   = excluded.branch",
-            (str(Path(repo_root).resolve()), sha, time.time(), branch),
+            "  branch   = excluded.branch, "
+            "  file_count   = excluded.file_count, "
+            "  symbol_count = excluded.symbol_count",
+            (str(Path(repo_root).resolve()), sha, time.time(), branch,
+             file_count, symbol_count),
         )
         self.conn.commit()
 

@@ -7,6 +7,8 @@
  */
 
 const { execFile } = require("node:child_process");
+const fs = require("node:fs");
+const nodePath = require("node:path");
 
 const DEFAULT_BINARY = process.env.CODE_MEMORY_BIN || "code-memory";
 const DEFAULT_PROJECT = process.env.CODE_MEMORY_PROJECT || null;
@@ -37,6 +39,82 @@ async function detectAvailable(binary, log) {
   const { ok, err } = await run(binary, ["--help"], { timeout: 3000 });
   if (!ok) log("debug", `binary ${binary} unavailable: ${err && err.message ? err.message : String(err)}`);
   return ok;
+}
+
+/**
+ * Derive the lock directory used by code-memory's single_flight module.
+ * Mirrors the Python logic in sync/single_flight.py:_lock_dir().
+ * Returns null if the directory cannot be determined.
+ */
+function _lockDir() {
+  const override = process.env.CODE_MEMORY_LOCK_DIR;
+  if (override) return override;
+  const stateHome =
+    process.env.XDG_STATE_HOME ||
+    nodePath.join(
+      process.env.HOME || process.env.USERPROFILE || "",
+      ".local",
+      "state",
+    );
+  return nodePath.join(stateHome, "code-memory", "locks");
+}
+
+/**
+ * Fast-path check: return true if a live ingest is already running for
+ * (resolvedRoot, slug).  Mirrors Python single_flight._is_stale() logic:
+ * a lockfile is considered live when it exists, is not older than the TTL,
+ * and its PID is still running.
+ *
+ * This is JS-side best-effort only — the Python ingest entry point is the
+ * authoritative single-flight guard.  We check here solely to avoid
+ * spawning a new process that would immediately lose the race.
+ *
+ * @param {string} resolvedRoot - Absolute resolved path of the repo root.
+ * @param {string} slug - Project slug.
+ * @returns {boolean} true when a live ingest appears to be running.
+ */
+function _ingestLockLive(resolvedRoot, slug) {
+  try {
+    const lockDir = _lockDir();
+    if (!lockDir) return false;
+
+    // Replicate the Python filename derivation:
+    //   name = f"{root_part[:64]}__{project_part[:32]}.lock"
+    const rootPart = resolvedRoot.replace(/[/\\]/g, "_").replace(/ /g, "_").slice(0, 64);
+    const slugPart = slug.replace(/\//g, "_").replace(/ /g, "_").slice(0, 32);
+    const lockFile = nodePath.join(lockDir, `${rootPart}__${slugPart}.lock`);
+
+    let stat;
+    try {
+      stat = fs.statSync(lockFile);
+    } catch {
+      return false; // file does not exist — no live ingest
+    }
+
+    const ttl = parseFloat(process.env.CODE_MEMORY_REBUILD_LOCK_TTL || "3600");
+    const ageSecs = (Date.now() - stat.mtimeMs) / 1000;
+    if (ageSecs > ttl) return false; // stale by age
+
+    let pid;
+    try {
+      pid = parseInt(fs.readFileSync(lockFile, "utf8").trim(), 10);
+    } catch {
+      return false; // unreadable → treat as stale
+    }
+    if (!pid || isNaN(pid)) return false;
+
+    // Check if the PID is alive (POSIX: signal 0; Windows: tasklist not used,
+    // fall back to optimistic "assume live" to avoid a subprocess spawn).
+    try {
+      process.kill(pid, 0);
+      return true; // PID exists and is alive
+    } catch (e) {
+      if (e.code === "EPERM") return true; // exists but we lack permission
+      return false; // ESRCH — process is dead
+    }
+  } catch {
+    return false; // any unexpected error → don't block
+  }
 }
 
 /**
@@ -115,6 +193,13 @@ async function createMemoryClient(opts = {}) {
 
     ingestDetached({ full = false } = {}) {
       if (!available) return false;
+      // Fast-path: skip spawn if the Python single-flight lock shows a live
+      // ingest is already running for this root.  The CLI is the authoritative
+      // guard; this avoids spawning a process that would immediately lose the
+      // race and exit with code 0.
+      const resolvedCwd = nodePath.resolve(cwd);
+      const slug = project || nodePath.basename(resolvedCwd);
+      if (_ingestLockLive(resolvedCwd, slug)) return false;
       return spawnDetached(
         binary,
         ["ingest", cwd, "--json", ...(full ? ["--full"] : []), ...baseArgs(project)],
