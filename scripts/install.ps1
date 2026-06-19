@@ -403,7 +403,7 @@ if (-not $installOpencode -and -not $installClaudecode -and -not $installCursor 
 
 # ---------- done ----------
 Step "Done"
-@"
+$doneMessage = @"
 
   Activate the virtualenv:
     . .venv\Scripts\Activate.ps1
@@ -418,4 +418,5 @@ Step "Done"
     FalkorDB  http://localhost:3000
     Qdrant    http://localhost:6333/dashboard
 
-"@ | Write-Host
+"@
+Write-Host $doneMessage

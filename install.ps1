@@ -373,7 +373,7 @@ if ($doOpencode) {
 
 # ---------- done ----------
 Step "Done"
-@"
+$doneMessage = @"
 
   Side files:    $HomeDir\
   CLI:           $(if ($cliPath) { $cliPath.Source } else { 'code-memory (not on PATH)' })
@@ -389,4 +389,5 @@ Step "Done"
     Qdrant    http://localhost:6333/dashboard
 
   Edit defaults: $HomeDir\.env
-"@ | Write-Host
+"@
+Write-Host $doneMessage
