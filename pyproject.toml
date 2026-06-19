@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "flurryx-code-memory"
-version = "0.7.3"
+version = "0.7.4"
 description = "Local lightweight memory layer for coding agents: FalkorDB + Qdrant + Ollama (BGE-M3) + tree-sitter"
 requires-python = ">=3.11"
 dependencies = [

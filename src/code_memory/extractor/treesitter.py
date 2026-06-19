@@ -4,9 +4,10 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import cast
 
 from tree_sitter import Language, Node, Parser
-from tree_sitter_language_pack import get_language
+from tree_sitter_language_pack import SupportedLanguage, get_language, get_parser
 
 LANG_BY_EXT: dict[str, str] = {
     ".ts": "typescript",
@@ -276,8 +277,17 @@ class ExtractedFile:
 
 @lru_cache(maxsize=16)
 def _parser_for(lang: str) -> Parser:
-    language: Language = get_language(lang)
-    return Parser(language)
+    supported_lang = cast(SupportedLanguage, lang)
+    language: Language = get_language(supported_lang)
+    try:
+        return Parser(language)
+    except TypeError as exc:
+        # Some Windows wheels of tree-sitter-language-pack have returned a
+        # builtins.Language object that tree_sitter.Parser rejects even though
+        # the language pack can still create a compatible parser itself.
+        if "tree_sitter.Language" not in str(exc):
+            raise
+        return get_parser(supported_lang)
 
 
 def lang_for(path: str | Path) -> str | None:
