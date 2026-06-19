@@ -68,6 +68,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# PowerShell 7.3+ promotes native-command stderr to a terminating error when
+# $ErrorActionPreference='Stop'. Docker CLI writes benign WARNINGs (e.g. the
+# credential-plugin naming check) to stderr; we gate on $LASTEXITCODE instead,
+# so do not let stderr alone abort the script.
+$PSNativeCommandUseErrorActionPreference = $false
 
 $RepoUrl  = if ($env:CODEMEMORY_REPO_URL)  { $env:CODEMEMORY_REPO_URL }  else { 'https://github.com/fmflurry/code-memory' }
 $RawUrl   = if ($env:CODEMEMORY_RAW_URL)   { $env:CODEMEMORY_RAW_URL }   else { 'https://raw.githubusercontent.com/fmflurry/code-memory/main' }
@@ -185,7 +190,7 @@ if ($doDocker) {
   Step "Starting FalkorDB + Qdrant"
   if (Wait-ForCmd 'docker' 'Docker Desktop' 'https://www.docker.com/products/docker-desktop') {
     # ensure daemon up
-    & docker info *>$null
+    & docker info 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
       Warn "Docker CLI present but daemon not running. Start Docker Desktop."
       if (Test-Interactive) {

@@ -61,6 +61,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# PowerShell 7.3+ promotes native-command stderr to a terminating error when
+# $ErrorActionPreference='Stop'. Docker CLI writes benign WARNINGs (e.g. the
+# credential-plugin naming check) to stderr; we gate on $LASTEXITCODE instead,
+# so do not let stderr alone abort the script.
+$PSNativeCommandUseErrorActionPreference = $false
 
 function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Ok($msg)   { Write-Host "[ok]   $msg" -ForegroundColor Green }
