@@ -373,21 +373,21 @@ if ($doOpencode) {
 
 # ---------- done ----------
 Step "Done"
-$doneMessage = @"
-
-  Side files:    $HomeDir\
-  CLI:           $(if ($cliPath) { $cliPath.Source } else { 'code-memory (not on PATH)' })
-
-  Ingest a repo:
-    code-memory ingest C:\path\to\repo
-
-  Query:
-    code-memory retrieve "where is the auth middleware?"
-
-  Browse:
-    FalkorDB  http://localhost:3000
-    Qdrant    http://localhost:6333/dashboard
-
-  Edit defaults: $HomeDir\.env
-"@
-Write-Host $doneMessage
+$doneLines = @(
+  ''
+  "  Side files:    $HomeDir\"
+  "  CLI:           $(if ($cliPath) { $cliPath.Source } else { 'code-memory (not on PATH)' })"
+  ''
+  '  Ingest a repo:'
+  '    code-memory ingest C:\path\to\repo'
+  ''
+  '  Query:'
+  '    code-memory retrieve "where is the auth middleware?"'
+  ''
+  '  Browse:'
+  '    FalkorDB  http://localhost:3000'
+  '    Qdrant    http://localhost:6333/dashboard'
+  ''
+  "  Edit defaults: $HomeDir\.env"
+)
+Write-Host ($doneLines -join [Environment]::NewLine)

@@ -99,8 +99,13 @@ curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.s
 **🪟 Windows**
 
 ```powershell
-irm https://raw.githubusercontent.com/fmflurry/code-memory/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/fmflurry/code-memory/main/install.ps1 -Headers @{ 'Cache-Control' = 'no-cache' } | iex
 ```
+
+If PowerShell reports a parser error at `install.ps1:392` showing the old
+here-string terminator piped to `Write-Host`, you are running a stale
+release/checkout. Update to `main`, or delete and re-download the installer
+from the `main` URL above before running it.
 
 The installer fetches the CLI, drops `docker-compose.yml` into `~/.code-memory/`, starts **FalkorDB** + **Qdrant**, pulls **`bge-m3`**, and wires the **Claude Code** + **OpenCode** plugins. Idempotent — safe to re-run.
 
@@ -152,7 +157,7 @@ curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.s
 **Windows** — `iex` doesn't accept args, so download then run:
 
 ```powershell
-iwr https://raw.githubusercontent.com/fmflurry/code-memory/main/install.ps1 -OutFile install.ps1
+iwr https://raw.githubusercontent.com/fmflurry/code-memory/main/install.ps1 -Headers @{ 'Cache-Control' = 'no-cache' } -OutFile install.ps1
 ./install.ps1 -NoDocker -NoOllama -NoClaude -NoOpencode -NoMcp
 ```
 

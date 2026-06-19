@@ -403,20 +403,20 @@ if (-not $installOpencode -and -not $installClaudecode -and -not $installCursor 
 
 # ---------- done ----------
 Step "Done"
-$doneMessage = @"
-
-  Activate the virtualenv:
-    . .venv\Scripts\Activate.ps1
-
-  Ingest a repo:
-    code-memory ingest C:\path\to\repo
-
-  Query memory:
-    code-memory retrieve "where is the auth middleware?"
-
-  Browse:
-    FalkorDB  http://localhost:3000
-    Qdrant    http://localhost:6333/dashboard
-
-"@
-Write-Host $doneMessage
+$doneLines = @(
+  ''
+  '  Activate the virtualenv:'
+  '    . .venv\Scripts\Activate.ps1'
+  ''
+  '  Ingest a repo:'
+  '    code-memory ingest C:\path\to\repo'
+  ''
+  '  Query memory:'
+  '    code-memory retrieve "where is the auth middleware?"'
+  ''
+  '  Browse:'
+  '    FalkorDB  http://localhost:3000'
+  '    Qdrant    http://localhost:6333/dashboard'
+  ''
+)
+Write-Host ($doneLines -join [Environment]::NewLine)
