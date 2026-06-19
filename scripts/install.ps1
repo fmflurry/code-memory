@@ -67,6 +67,24 @@ $ErrorActionPreference = 'Stop'
 # so do not let stderr alone abort the script.
 $PSNativeCommandUseErrorActionPreference = $false
 
+# Run a native command whose benign stderr (e.g. Docker CLI credential-plugin
+# warnings) must NOT abort the script. Windows PowerShell 5.1 turns redirected
+# native stderr into terminating NativeCommandError records under
+# $ErrorActionPreference='Stop'; relaxing EAP for the call fixes it on 5.1 and
+# 7+. Callers gate on $LASTEXITCODE. Returns nothing; sets $LASTEXITCODE.
+function Invoke-NativeQuiet {
+  param([Parameter(Mandatory)][scriptblock] $Command)
+  $prevEAP = $ErrorActionPreference
+  $ErrorActionPreference = 'SilentlyContinue'
+  try { & $Command 2>&1 | Out-Null } finally { $ErrorActionPreference = $prevEAP }
+}
+function Invoke-NativeVisible {
+  param([Parameter(Mandatory)][scriptblock] $Command)
+  $prevEAP = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { & $Command 2>&1 | ForEach-Object { Write-Host $_ } } finally { $ErrorActionPreference = $prevEAP }
+}
+
 function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Ok($msg)   { Write-Host "[ok]   $msg" -ForegroundColor Green }
 function Warn($msg) { Write-Host "[warn] $msg" -ForegroundColor Yellow }
@@ -110,7 +128,7 @@ if (-not $pythonBin) { Die "Python 3.11+ not found. Install from https://www.pyt
 
 if (-not $NoDocker) {
   if (-not (Test-Cmd 'docker'))     { Die "Docker not found. Install Docker Desktop: https://www.docker.com/." }
-  & docker compose version *> $null
+  Invoke-NativeQuiet { docker compose version }
   if ($LASTEXITCODE -ne 0)          { Die "Docker Compose v2 not available (need 'docker compose')." }
   Ok "Docker present"
 }
@@ -223,7 +241,7 @@ if (-not $NoDocker) {
   & docker compose -p $CmProject -f docker/docker-compose.yml up -d --remove-orphans
   if ($LASTEXITCODE -ne 0) {
     Warn "compose up hit a container-name conflict — removing stale cm-* containers and retrying (named volumes persist)"
-    & docker rm -f cm-falkordb cm-qdrant cm-tei *> $null
+    Invoke-NativeQuiet { docker rm -f cm-falkordb cm-qdrant cm-tei }
     & docker compose -p $CmProject -f docker/docker-compose.yml up -d --remove-orphans
     if ($LASTEXITCODE -ne 0) { Die "docker compose up failed" }
   }
@@ -239,7 +257,7 @@ if (-not $NoOllama) {
   Step "Pulling embedding model (bge-m3)"
 
   $daemonReady = $false
-  & ollama list *> $null
+  Invoke-NativeQuiet { ollama list }
   if ($LASTEXITCODE -eq 0) { $daemonReady = $true }
 
   if (-not $daemonReady) {
@@ -251,7 +269,7 @@ if (-not $NoOllama) {
 
     for ($i = 0; $i -lt 30; $i++) {
       Start-Sleep -Seconds 1
-      & ollama list *> $null
+      Invoke-NativeQuiet { ollama list }
       if ($LASTEXITCODE -eq 0) { $daemonReady = $true; break }
     }
   }

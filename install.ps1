@@ -74,6 +74,24 @@ $ErrorActionPreference = 'Stop'
 # so do not let stderr alone abort the script.
 $PSNativeCommandUseErrorActionPreference = $false
 
+# Run a native command whose benign stderr (e.g. Docker CLI credential-plugin
+# warnings) must NOT abort the script. Windows PowerShell 5.1 turns redirected
+# native stderr into terminating NativeCommandError records under
+# $ErrorActionPreference='Stop'; relaxing EAP for the call fixes it on 5.1 and
+# 7+. Callers gate on $LASTEXITCODE. Returns nothing; sets $LASTEXITCODE.
+function Invoke-NativeQuiet {
+  param([Parameter(Mandatory)][scriptblock] $Command)
+  $prevEAP = $ErrorActionPreference
+  $ErrorActionPreference = 'SilentlyContinue'
+  try { & $Command 2>&1 | Out-Null } finally { $ErrorActionPreference = $prevEAP }
+}
+function Invoke-NativeVisible {
+  param([Parameter(Mandatory)][scriptblock] $Command)
+  $prevEAP = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { & $Command 2>&1 | ForEach-Object { Write-Host $_ } } finally { $ErrorActionPreference = $prevEAP }
+}
+
 $RepoUrl  = if ($env:CODEMEMORY_REPO_URL)  { $env:CODEMEMORY_REPO_URL }  else { 'https://github.com/fmflurry/code-memory' }
 $RawUrl   = if ($env:CODEMEMORY_RAW_URL)   { $env:CODEMEMORY_RAW_URL }   else { 'https://raw.githubusercontent.com/fmflurry/code-memory/main' }
 $HomeDir  = if ($env:CODEMEMORY_HOME)      { $env:CODEMEMORY_HOME }      else { Join-Path $HOME '.code-memory' }
@@ -190,7 +208,7 @@ if ($doDocker) {
   Step "Starting FalkorDB + Qdrant"
   if (Wait-ForCmd 'docker' 'Docker Desktop' 'https://www.docker.com/products/docker-desktop') {
     # ensure daemon up
-    & docker info 2>&1 | Out-Null
+    Invoke-NativeQuiet { docker info }
     if ($LASTEXITCODE -ne 0) {
       Warn "Docker CLI present but daemon not running. Start Docker Desktop."
       if (Test-Interactive) {
@@ -200,7 +218,7 @@ if ($doDocker) {
       }
     }
     if ($doDocker) {
-      & docker compose -f (Join-Path $HomeDir 'docker/docker-compose.yml') --project-directory $HomeDir up -d
+      Invoke-NativeVisible { docker compose -f (Join-Path $HomeDir 'docker/docker-compose.yml') --project-directory $HomeDir up -d }
       if ($LASTEXITCODE -ne 0) {
         Warn "docker compose up failed"
       } else {
