@@ -8,6 +8,25 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
+## [0.7.5] — 2026-06-21
+
+Release theme: **Windows ingest fix — pin tree-sitter-language-pack**.
+
+### Fixed
+
+**What:** pinned `tree-sitter-language-pack` to `==1.0.0` (was `>=0.7`).
+Version 1.9.1 (and other releases > 1.0.0) ship a broken Windows wheel:
+`get_language()` returns a `builtins.Language` that core `tree-sitter`
+rejects (`TypeError: __init__() argument 1 must be tree_sitter.Language,
+not builtins.Language`), surfacing during ingest as `'bytes' object is
+not an instance of 'str'`. This broke `code-memory` CLI ingest on Windows
+across all install environments (uv-tool, global Python, watch daemon).
+
+**Reason:** the loose `>=0.7` floor allowed the broken 1.9.1 wheel to
+resolve on fresh Windows installs; pinning to the known-good 1.0.0
+restores ingest. The pin lives in wheel metadata so every install path
+resolves to the working version.
+
 ## [0.7.0] — 2026-06-12
 
 Release theme: **Worktree resilience, atomic graph rebuilds, and fresh
