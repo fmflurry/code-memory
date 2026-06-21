@@ -10,6 +10,9 @@
 #   ./scripts/install.sh --with-claims   # also pull gemma2:9b for Graphiti-style
 #                                        # user-claim extraction (~5.4 GB)
 #   ./scripts/install.sh --with-dotnet   # install [dotnet] extra (dnfile, ~200 KB; .NET DLL metadata indexing)
+#   ./scripts/install.sh --with-hybrid   # install [hybrid] extra (FlagEmbedding; ~2 GB torch)
+#   ./scripts/install.sh --extras=dotnet,hybrid
+#                                        # install named extras (comma list)
 #   ./scripts/install.sh --extras=none   # bypass interactive prompt; install only [dev]
 #   ./scripts/install.sh --plugins=opencode,claudecode,cursor
 #                                        # install named harness plugins (non-interactive)
@@ -20,6 +23,10 @@
 #                                        # (./.opencode/, ./.claude/, ./.cursor/)
 #                                        # default scope is global (~/.config/opencode,
 #                                        # ~/.claude, ~/.cursor)
+#
+# Environment variables:
+#   CODEMEMORY_EXTRAS=dotnet,hybrid  # same as --extras=... (overrides interactive prompt)
+#   CODEMEMORY_EXTRAS=none           # skip extras entirely
 #
 set -euo pipefail
 
@@ -48,8 +55,11 @@ SKIP_OLLAMA=0
 SKIP_TESTS=0
 SKIP_MCP=0
 WITH_DOTNET=0
+WITH_HYBRID=0
 WITH_CLAIMS=0
-EXTRAS_ARG=""        # empty = interactive; "none" = skip extras prompt; other ignored
+# EXTRAS_ARG: CLI value of --extras=... (overrides CODEMEMORY_EXTRAS env and interactive).
+# Empty means "not set by CLI"; "none" means skip; comma list means install those extras.
+EXTRAS_ARG=""
 PLUGINS_ARG=""       # empty = interactive; explicit value bypasses prompt
 PLUGINS_SCOPE="global"  # global | project
 for arg in "$@"; do
@@ -58,13 +68,14 @@ for arg in "$@"; do
     --no-ollama) SKIP_OLLAMA=1 ;;
     --no-tests)  SKIP_TESTS=1 ;;
     --no-mcp)    SKIP_MCP=1 ;;
-    --with-dotnet) WITH_DOTNET=1 ;;
-    --with-claims) WITH_CLAIMS=1 ;;
+    --with-dotnet)  WITH_DOTNET=1 ;;
+    --with-hybrid)  WITH_HYBRID=1 ;;
+    --with-claims)  WITH_CLAIMS=1 ;;
     --extras=*)         EXTRAS_ARG="${arg#--extras=}" ;;
     --plugins=*)        PLUGINS_ARG="${arg#--plugins=}" ;;
     --plugins-scope=*)  PLUGINS_SCOPE="${arg#--plugins-scope=}" ;;
     -h|--help)
-      sed -n '1,22p' "$0"; exit 0 ;;
+      sed -n '1,29p' "$0"; exit 0 ;;
     *) die "unknown flag: $arg" ;;
   esac
 done
@@ -190,22 +201,95 @@ prompt_yes_no() {
   [ "$ans" = "y" ] || [ "$ans" = "yes" ]
 }
 
-if [ -z "$EXTRAS_ARG" ] && [ "$WITH_DOTNET" -eq 0 ]; then
-  # Only interactive if stdin/stdout are a TTY.
-  if [ -t 0 ] && [ -t 1 ]; then
-    step "Optional extras"
-    echo "  [dotnet]  .NET DLL metadata indexing (dnfile, ~200 KB)."
-    echo "            Skip if no .csproj / .NET source in repos you ingest."
-    echo
-    if prompt_yes_no "Install [dotnet] extra?" "n"; then WITH_DOTNET=1; fi
+# ---------- extras resolution (contract mirrors updater.py / install.ps1) ----------
+# Optional extras in pyproject.toml — keep in sync with EXTRAS registry in updater.py.
+#   dotnet: .NET assembly metadata indexing (dnfile, ~200 KB).
+#   hybrid: in-process BGE-M3 dense+sparse via FlagEmbedding (~2 GB torch).
+#
+# Priority: CLI flag (--extras= / --with-dotnet / --with-hybrid) >
+#           CODEMEMORY_EXTRAS env var > interactive prompt > skip.
+#
+# TTY_OK = true when we can safely prompt:
+#   - Both stdin+stdout are a real TTY, OR /dev/tty is readable as a fallback
+#     (handles curl|bash where fd 0 is the pipe but /dev/tty is the terminal).
+TTY_OK=0
+if [ -t 0 ] && [ -t 1 ]; then
+  TTY_OK=1
+elif [ -r /dev/tty ]; then
+  TTY_OK=1
+fi
+
+# Build the effective extras list.
+# We accumulate into INSTALL_DOTNET / INSTALL_HYBRID, then build the pip string.
+INSTALL_DOTNET=0
+INSTALL_HYBRID=0
+
+# Fold legacy --with-dotnet / --with-hybrid into the generic flag path.
+[ "$WITH_DOTNET" -eq 1 ] && EXTRAS_ARG="${EXTRAS_ARG:-dotnet}"
+[ "$WITH_HYBRID" -eq 1 ] && {
+  if [ -n "$EXTRAS_ARG" ] && [ "$EXTRAS_ARG" != "none" ]; then
+    EXTRAS_ARG="${EXTRAS_ARG},hybrid"
+  elif [ -z "$EXTRAS_ARG" ]; then
+    EXTRAS_ARG="hybrid"
   fi
+}
+
+# Determine effective source of extras selection.
+EFFECTIVE_EXTRAS=""
+if [ -n "$EXTRAS_ARG" ]; then
+  EFFECTIVE_EXTRAS="$EXTRAS_ARG"
+elif [ -n "${CODEMEMORY_EXTRAS:-}" ]; then
+  EFFECTIVE_EXTRAS="$CODEMEMORY_EXTRAS"
+fi
+
+if [ -n "$EFFECTIVE_EXTRAS" ]; then
+  # env/flag path — parse comma list.
+  if [ "$EFFECTIVE_EXTRAS" = "none" ]; then
+    : # install nothing extra
+  else
+    IFS=',' read -r -a _extras_parts <<< "$EFFECTIVE_EXTRAS"
+    for _ep in "${_extras_parts[@]}"; do
+      _ep="$(printf '%s' "$_ep" | tr -d '[:space:]')"
+      case "$_ep" in
+        dotnet)  INSTALL_DOTNET=1 ;;
+        hybrid)  INSTALL_HYBRID=1 ;;
+        "")      ;;
+        *)       warn "unknown extra '$_ep' (known: dotnet, hybrid) — skipped" ;;
+      esac
+    done
+  fi
+elif [ "$TTY_OK" -eq 1 ]; then
+  # Interactive path.
+  step "Optional extras"
+  # Keep descriptions in sync with updater.py EXTRAS registry.
+  echo "  [dotnet]  .NET assembly metadata indexing (dnfile, ~200 KB)."
+  echo "            Skip if no .csproj / .NET source in repos you ingest."
+  echo
+  echo "  [hybrid]  In-process BGE-M3 dense+sparse via FlagEmbedding."
+  echo "            Heavy — pulls torch (~2 GB). Skip unless you need hybrid reranking."
+  echo
+  if prompt_yes_no "Install [dotnet] extra?" "n"; then INSTALL_DOTNET=1; fi
+  if prompt_yes_no "Install [hybrid] extra?" "n"; then INSTALL_HYBRID=1; fi
+else
+  # Non-interactive, no env override — skip silently with a dim hint.
+  printf "${DIM}  hint: optional extras not installed. Re-run with --extras=dotnet,hybrid or set CODEMEMORY_EXTRAS=dotnet,hybrid.${RST}\n"
 fi
 
 EXTRAS="dev"
-[ "$WITH_DOTNET" -eq 1 ] && EXTRAS="${EXTRAS},dotnet"
+[ "$INSTALL_DOTNET" -eq 1 ] && EXTRAS="${EXTRAS},dotnet"
+[ "$INSTALL_HYBRID" -eq 1 ] && EXTRAS="${EXTRAS},hybrid"
 
 step "Installing code-memory (editable, extras: $EXTRAS)"
-pip install -e ".[${EXTRAS}]"
+# The base [dev] install is hard-fail; optional extras are non-fatal so a
+# missing build dependency (e.g. torch wheel not available) does not abort
+# the whole install under set -e.
+pip install -e ".[dev]"
+if [ "$INSTALL_DOTNET" -eq 1 ] || [ "$INSTALL_HYBRID" -eq 1 ]; then
+  _optional_extras="${EXTRAS#dev}"
+  _optional_extras="${_optional_extras#,}"
+  pip install -e ".[dev,${_optional_extras}]" \
+    || warn "optional extras install failed (dev install succeeded; re-run: pip install -e '.[${_optional_extras}]')"
+fi
 ok "code-memory installed"
 
 # ---------- 4. .env ----------

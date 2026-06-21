@@ -12,11 +12,14 @@ from rich import print as rprint
 
 from dataclasses import asdict as _asdict
 
+from ._console import _force_utf8_console
 from .config import CONFIG, detect_project_slug
 from .episodic import Episode
 from .graph import FalkorStore
 from .orchestrator import Pipeline, Retriever, list_projects, reset_all, reset_project
 from .orchestrator import git_delta as _git_delta
+
+_force_utf8_console()
 
 
 def _graph_for(project: str | None) -> FalkorStore:
@@ -1269,6 +1272,14 @@ def update(
         "--bleeding",
         help="Install CLI from git+main instead of PyPI.",
     ),
+    extras: str | None = typer.Option(
+        None,
+        "--extras",
+        help=(
+            "Comma list of optional extras to install (e.g. dotnet,hybrid), or 'none'."
+            " Overrides the interactive prompt and CODEMEMORY_EXTRAS env var."
+        ),
+    ),
 ) -> None:
     """Smart-update code-memory: refresh only components already installed locally.
 
@@ -1278,10 +1289,12 @@ def update(
     stay untouched — no prompts, no re-asking.
 
     Use ``--check`` for a dry-run, ``--full`` to behave like a fresh install.
+    Use ``--extras dotnet,hybrid`` to install optional Python extras, or
+    ``--extras none`` to suppress the interactive prompt.
     """
     from .updater import run_update
 
-    rc = run_update(check_only=check, full=full, bleeding=bleeding)
+    rc = run_update(check_only=check, full=full, bleeding=bleeding, extras_override=extras)
     raise typer.Exit(code=rc)
 
 

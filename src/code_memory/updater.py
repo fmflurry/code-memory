@@ -464,12 +464,21 @@ def upgrade_npm_pkg(pkg: str = "code-memory-opencode") -> tuple[bool, str]:
 # ---------- orchestrator ----------
 
 
-def run_update(*, check_only: bool, full: bool, bleeding: bool) -> int:
+def run_update(
+    *,
+    check_only: bool,
+    full: bool,
+    bleeding: bool,
+    extras_override: str | None = None,
+) -> int:
     """Top-level entry point used by the CLI.
 
     ``check_only`` prints the plan and exits 0/1 based on whether anything
     is behind. ``full`` re-runs the one-liner installer (curl … | bash).
     Default is the smart path: upgrade-in-place only what is already present.
+
+    ``extras_override`` is the value of the ``--extras`` CLI flag (highest
+    priority over the ``CODEMEMORY_EXTRAS`` env var).
     """
     plan = build_plan()
     _print_plan(plan)
@@ -511,6 +520,7 @@ def run_update(*, check_only: bool, full: bool, bleeding: bool) -> int:
         ok, detail = upgrade_docker_images()
         print(f"  Docker stack: {'ok' if ok else 'skip'} — {detail}")
 
+    rc |= offer_missing_extras(plan.install_method, extras_override=extras_override)
     return rc
 
 
@@ -523,6 +533,141 @@ def _print_plan(plan: UpdatePlan) -> None:
         suffix = f"  ({c.detail})" if c.detail else ""
         state = "" if c.present else "  [not installed — skip]"
         print(f"    {mark} {c.name}{suffix}{state}")
+
+
+def resolve_extras_selection(
+    *,
+    env_value: str | None,
+    is_tty: bool,
+    missing: list[str],
+) -> tuple[list[str], str]:
+    """Pure helper — no I/O — that decides which extras to install.
+
+    Returns ``(selected_names, mode)`` where ``mode`` is one of
+    ``"env"``, ``"interactive"``, or ``"skip"``.
+
+    Priority:
+    1. ``env_value`` not None → parse comma list; ``"none"`` or empty → nothing.
+    2. ``is_tty`` True → caller must run the interactive loop (mode=``"interactive"``).
+    3. Otherwise → skip (non-interactive, no env override).
+    """
+    if env_value is not None:
+        stripped = env_value.strip()
+        if stripped.lower() == "none" or stripped == "":
+            return [], "env"
+        names = [n.strip() for n in stripped.split(",") if n.strip()]
+        valid = [n for n in names if n in EXTRAS and n in missing]
+        return valid, "env"
+    if is_tty:
+        return [], "interactive"
+    return [], "skip"
+
+
+def _install_selected_extras(names: list[str], method: InstallMethod) -> int:
+    """Install a list of extras; returns OR of per-extra return codes.
+
+    A single failed extra does not abort the rest — each failure sets the
+    nonzero bit in ``rc`` but installation continues.
+    """
+    rc = 0
+    for name in names:
+        print()
+        print(f"Installing extra: {name}")
+        ok, detail = install_extra(name, method)
+        marker = "ok" if ok else "FAILED"
+        print(f"  {marker} — {detail}")
+        rc |= 0 if ok else 1
+    return rc
+
+
+def offer_missing_extras(
+    method: InstallMethod,
+    *,
+    extras_override: str | None = None,
+) -> int:
+    """Offer to install extras that are not yet present.
+
+    Called automatically at the end of the smart ``run_update`` path.
+    Never blocks ``--check`` / ``--full`` (those return before reaching here).
+
+    Priority: ``extras_override`` (CLI ``--extras`` flag) >
+    ``CODEMEMORY_EXTRAS`` env var > interactive prompt > skip silently.
+    """
+    missing = [n for n in EXTRAS if not _python_module_present(EXTRAS[n]["module"])]
+    if not missing:
+        return 0
+
+    if method in ("unknown",):
+        print(
+            f"\033[2m  hint: optional extras not yet installed: {', '.join(missing)}.\n"
+            "  Run `code-memory extras` or set CODEMEMORY_EXTRAS=dotnet,hybrid.\033[0m"
+        )
+        return 0
+
+    # For editable installs, we need a valid pyproject.toml to install extras.
+    if method == "editable":
+        repo_root = Path(__file__).resolve().parents[2]
+        if not (repo_root / "pyproject.toml").exists():
+            print(
+                f"\033[2m  hint: editable install without pyproject.toml at {repo_root};\n"
+                "  cannot install optional extras automatically.\033[0m"
+            )
+            return 0
+
+    # Determine TTY status safely.
+    try:
+        is_tty = sys.stdin.isatty()
+    except Exception:  # noqa: BLE001
+        is_tty = False
+
+    # CLI flag takes precedence over env var.
+    effective_env = extras_override if extras_override is not None else os.environ.get("CODEMEMORY_EXTRAS")
+
+    selected, mode = resolve_extras_selection(
+        env_value=effective_env,
+        is_tty=is_tty,
+        missing=missing,
+    )
+
+    if mode == "env":
+        if effective_env is not None:
+            # Warn about any names that were not in EXTRAS or already installed.
+            raw_names = [n.strip() for n in effective_env.split(",") if n.strip() and n.strip().lower() != "none"]
+            unknown = [n for n in raw_names if n not in EXTRAS]
+            already = [n for n in raw_names if n in EXTRAS and n not in missing]
+            for n in unknown:
+                print(f"\033[33m  [warn]\033[0m unknown extra '{n}' (known: {', '.join(EXTRAS)})")
+            for n in already:
+                print(f"  · {n} already installed — skipped")
+        if not selected:
+            return 0
+        return _install_selected_extras(selected, method)
+
+    if mode == "interactive":
+        todo: list[str] = []
+        print()
+        print("Optional extras available:")
+        for name in missing:
+            info = EXTRAS[name]
+            print(f"  · {name}  — not installed")
+            print(f"      {info['desc']}")
+            try:
+                answer = input(f"      Install `{name}`? [y/N] ").strip().lower()
+            except EOFError:
+                answer = ""
+            if answer in ("y", "yes"):
+                todo.append(name)
+        if not todo:
+            print("Nothing to install.")
+            return 0
+        return _install_selected_extras(todo, method)
+
+    # mode == "skip"
+    print(
+        f"\033[2m  hint: optional extras not yet installed: {', '.join(missing)}.\n"
+        "  Re-run with CODEMEMORY_EXTRAS=dotnet,hybrid or `code-memory extras`.\033[0m"
+    )
+    return 0
 
 
 def install_extra(name: str, method: InstallMethod) -> tuple[bool, str]:

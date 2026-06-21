@@ -1984,6 +1984,9 @@ async def _run() -> None:
 
 
 def main() -> None:
+    from ._console import _force_utf8_console
+
+    _force_utf8_console()
     logging.basicConfig(
         level=os.environ.get("CODE_MEMORY_LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",

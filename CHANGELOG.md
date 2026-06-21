@@ -8,9 +8,47 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
+## [0.7.6] — 2026-06-21
+
+Release theme: **Correct tree-sitter pin + Windows console & extras fixes**.
+
+### Fixed
+
+**tree-sitter-language-pack pinned to `==1.8.1`** (was `==1.0.0` in the broken 0.7.5).
+Version 1.0.0 has no bundled language grammars (it uses a download model), so
+`get_language('csharp')` raised `LanguageNotFoundError` and extraction produced
+zero symbols on every platform. Version 1.9.1 is also broken (raises `'bytes'
+object is not an instance of 'str'` even on macOS — a 1.9.x regression). 1.8.1
+is the last known-good release with bundled grammars; the original Windows
+failure was caused by the loose `>=0.7` floor letting fresh installs float to
+1.9.1.
+
+Reason: stop floating into broken 1.9.x and restore symbol extraction everywhere.
+
+**Windows console crash in `code-memory update`**: stdout/stderr are now forced
+to UTF-8 (`errors="replace"`) at the CLI and MCP entry points, so Unicode
+status glyphs (→, •, ✓) no longer raise `UnicodeEncodeError` on cp1252
+PowerShell consoles.
+
+Reason: the updater crashed before doing any work on non-UTF-8 Windows terminals.
+
+### Added
+
+**Optional-extras selection prompt** in `code-memory update` and the install
+one-liner (`install.sh` / `install.ps1`): users are now asked which optional
+extras to enable (`dotnet` for .NET assembly indexing, `hybrid` for in-process
+BGE-M3). TTY-gated with a `CODEMEMORY_EXTRAS` env override and an `--extras`
+flag; non-interactive runs install nothing new. Also fixes the bash installer
+gating the prompt on `[ -t 0 ]`, which was always false under `curl | bash` so
+the prompt never appeared.
+
+Reason: previously there was no way to opt into .NET indexing during update/install.
+
 ## [0.7.5] — 2026-06-21
 
 Release theme: **Windows ingest fix — pin tree-sitter-language-pack**.
+
+**⚠️ Superseded by 0.7.6 — this release pinned tree-sitter-language-pack==1.0.0 which broke extraction (no bundled grammars). Do not use.**
 
 ### Fixed
 

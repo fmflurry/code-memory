@@ -25,6 +25,15 @@
   metadata indexing (Assembly + Type graph nodes from .dll referenced
   via .csproj). Skip if no .NET source in repos you ingest.
 
+.PARAMETER WithHybrid
+  Install the [hybrid] extra (FlagEmbedding, ~2 GB torch). Enables in-process
+  BGE-M3 dense+sparse hybrid reranking. Heavy — skip unless you need it.
+
+.PARAMETER Extras
+  Comma list of optional extras to install (e.g. 'dotnet,hybrid'), or 'none'
+  to bypass the interactive prompt. Overrides -WithDotnet/-WithHybrid and the
+  CODEMEMORY_EXTRAS environment variable.
+
 .PARAMETER Plugins
   Comma-separated whitelist of harness plugins to install:
   'opencode', 'claudecode', 'cursor', 'all', or 'none'. Bypasses the
@@ -37,14 +46,22 @@
   ./.cursor.
 
 .PARAMETER ExtrasInteractive
-  Set to `$false` to skip the interactive extras prompt. The -WithDotnet
-  switch still applies.
+  Set to `$false` to skip the interactive extras prompt entirely. Overridden
+  by -Extras, -WithDotnet, -WithHybrid, and the CODEMEMORY_EXTRAS env var.
 
 .EXAMPLE
   ./scripts/install.ps1
   ./scripts/install.ps1 -NoOllama
   ./scripts/install.ps1 -WithDotnet -Plugins all
+  ./scripts/install.ps1 -WithHybrid
+  ./scripts/install.ps1 -Extras dotnet,hybrid
+  ./scripts/install.ps1 -Extras none
   ./scripts/install.ps1 -Plugins claudecode -PluginsScope project
+
+.NOTES
+  Environment variables:
+    CODEMEMORY_EXTRAS=dotnet,hybrid   same as -Extras (overrides interactive prompt)
+    CODEMEMORY_EXTRAS=none            skip extras entirely
 #>
 
 [CmdletBinding()]
@@ -54,6 +71,8 @@ param(
   [switch]$NoTests,
   [switch]$NoMcp,
   [switch]$WithDotnet,
+  [switch]$WithHybrid,
+  [string]$Extras = '',
   [string]$Plugins = '',
   [ValidateSet('global', 'project')]
   [string]$PluginsScope = 'global',
@@ -195,24 +214,89 @@ Ok "pip upgraded"
 
 # ---------- 3. package install ----------
 # Resolve optional extras up front so we do one pip resolve.
-if ($ExtrasInteractive -and -not $WithDotnet) {
-  $isTty = [Environment]::UserInteractive -and [Console]::IsInputRedirected -eq $false
-  if ($isTty) {
-    Step "Optional extras"
-    Write-Host "  [dotnet]  .NET DLL metadata indexing (dnfile, ~200 KB)."
-    Write-Host "            Skip if no .csproj / .NET source in repos you ingest."
-    Write-Host ""
-    if (Prompt-YesNo "Install [dotnet] extra?" $false) { $WithDotnet = $true }
+#
+# Optional extras — keep in sync with EXTRAS registry in updater.py.
+#   dotnet: .NET assembly metadata indexing (dnfile, ~200 KB).
+#   hybrid: in-process BGE-M3 dense+sparse via FlagEmbedding (~2 GB torch).
+#
+# Priority: -Extras / -WithDotnet / -WithHybrid (CLI) >
+#           CODEMEMORY_EXTRAS env var > interactive prompt > skip.
+#
+# $isTty: true when running interactively (not under irm|iex which redirects stdin).
+$isTty = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+
+$installDotnet = [bool]$WithDotnet
+$installHybrid = [bool]$WithHybrid
+
+# Fold legacy switches into -Extras when -Extras is not already set.
+if ([string]::IsNullOrWhiteSpace($Extras)) {
+  $legacyParts = @()
+  if ($WithDotnet) { $legacyParts += 'dotnet' }
+  if ($WithHybrid) { $legacyParts += 'hybrid' }
+  if ($legacyParts.Count -gt 0) { $Extras = $legacyParts -join ',' }
+}
+
+# Determine effective source.
+$effectiveExtras = $Extras
+if ([string]::IsNullOrWhiteSpace($effectiveExtras)) {
+  $envExtras = [System.Environment]::GetEnvironmentVariable('CODEMEMORY_EXTRAS')
+  if (-not [string]::IsNullOrWhiteSpace($envExtras)) {
+    $effectiveExtras = $envExtras.Trim()
   }
 }
 
-$extras = @('dev')
-if ($WithDotnet) { $extras += 'dotnet' }
-$extrasJoined = ($extras -join ',')
+if (-not [string]::IsNullOrWhiteSpace($effectiveExtras)) {
+  # Flag/env path — parse comma list.
+  if ($effectiveExtras -ieq 'none') {
+    $installDotnet = $false
+    $installHybrid = $false
+  } else {
+    foreach ($ep in $effectiveExtras.Split(',')) {
+      switch ($ep.Trim().ToLower()) {
+        'dotnet' { $installDotnet = $true }
+        'hybrid' { $installHybrid = $true }
+        ''       { }
+        default  { Warn "unknown extra '$($ep.Trim())' (known: dotnet, hybrid) — skipped" }
+      }
+    }
+  }
+} elseif ($ExtrasInteractive -and $isTty) {
+  # Interactive TTY path.
+  Step "Optional extras"
+  # Keep descriptions in sync with updater.py EXTRAS registry.
+  Write-Host "  [dotnet]  .NET assembly metadata indexing (dnfile, ~200 KB)."
+  Write-Host "            Skip if no .csproj / .NET source in repos you ingest."
+  Write-Host ""
+  Write-Host "  [hybrid]  In-process BGE-M3 dense+sparse via FlagEmbedding."
+  Write-Host "            Heavy — pulls torch (~2 GB). Skip unless you need hybrid reranking."
+  Write-Host ""
+  if (Prompt-YesNo "Install [dotnet] extra?" $false) { $installDotnet = $true }
+  if (Prompt-YesNo "Install [hybrid] extra?" $false) { $installHybrid = $true }
+} else {
+  # Non-interactive, no env override — dim hint only, no install.
+  Dim "hint: optional extras not installed. Re-run with -Extras dotnet,hybrid or set CODEMEMORY_EXTRAS=dotnet,hybrid."
+}
+
+$extrasBase = @('dev')
+if ($installDotnet) { $extrasBase += 'dotnet' }
+if ($installHybrid) { $extrasBase += 'hybrid' }
+$extrasJoined = ($extrasBase -join ',')
 
 Step "Installing code-memory (editable, extras: $extrasJoined)"
-& pip install -e ".[$extrasJoined]"
+# Base [dev] is hard-fail. Optional extras are non-fatal — a missing build
+# dependency (e.g. torch wheel unavailable) must not abort the whole install.
+& pip install -e ".[dev]"
 if ($LASTEXITCODE -ne 0) { Die "pip install failed" }
+if ($installDotnet -or $installHybrid) {
+  $optionalParts = @()
+  if ($installDotnet) { $optionalParts += 'dotnet' }
+  if ($installHybrid) { $optionalParts += 'hybrid' }
+  $optionalJoined = $optionalParts -join ','
+  & pip install -e ".[dev,$optionalJoined]"
+  if ($LASTEXITCODE -ne 0) {
+    Warn "optional extras install failed (dev install succeeded; re-run: pip install -e '.[$optionalJoined]')"
+  }
+}
 Ok "code-memory installed"
 
 # ---------- 4. .env ----------
