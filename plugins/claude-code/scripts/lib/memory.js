@@ -129,6 +129,7 @@ function spawnDetached(binary, args, opts = {}) {
       cwd,
       env: env || process.env,
       detached: true,
+      windowsHide: true,
       stdio: "ignore",
     });
     child.unref();

@@ -77,6 +77,7 @@ function pickPath(obj) {
     const worker = path.join(__dirname, "resolver-debounce.js");
     const child = spawn(process.execPath, [worker, cwd], {
       detached: true,
+      windowsHide: true,
       stdio: "ignore",
       env: process.env,
     });
