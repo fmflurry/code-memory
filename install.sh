@@ -7,14 +7,14 @@
 #
 # With flags (non-interactive mode):
 #   curl -fsSL .../install.sh | bash -s -- \
-#     --yes --no-docker --no-ollama --no-claude --no-opencode --no-mcp --no-claims
+#     --yes --no-docker --no-ollama --no-claude --no-opencode --no-mcp
 #
 # What it does (idempotent):
 #   1. installs `uv` if missing (provides `uvx` + `uv tool`)
 #   2. installs the `code-memory` CLI via `uv tool install --from git+<repo>`
 #   3. drops docker-compose.yml + .env into $HOME/.code-memory/
 #   4. waits for Docker, starts FalkorDB + Qdrant
-#   5. waits for Ollama, pulls bge-m3 (+ optional gemma2:9b for claims)
+#   5. waits for Ollama, pulls bge-m3 for embeddings
 #   6. (optional, default Y) registers Claude Code plugin + MCP
 #   7. (optional, default N) installs OpenCode plugin
 #
@@ -34,7 +34,6 @@ WANT_OLLAMA=""
 WANT_CLAUDE=""
 WANT_OPENCODE=""
 WANT_MCP=""
-WANT_CLAIMS=""    # pull gemma2:9b for claim extraction
 ASSUME_YES=0
 NON_INTERACTIVE=0
 
@@ -52,8 +51,6 @@ for arg in "$@"; do
     --no-opencode)     WANT_OPENCODE=0 ;;
     --mcp)             WANT_MCP=1 ;;
     --no-mcp)          WANT_MCP=0 ;;
-    --claims)          WANT_CLAIMS=1 ;;
-    --no-claims)       WANT_CLAIMS=0 ;;
     -h|--help)         sed -n '1,30p' "$0"; exit 0 ;;
     *) printf '[err] unknown flag: %s\n' "$arg" >&2; exit 2 ;;
   esac
@@ -196,17 +193,6 @@ if [ "$WANT_OLLAMA" -eq 1 ]; then
       ollama pull bge-m3 && ok "bge-m3 pulled"
     fi
 
-    # optional gemma2:9b for claim extraction
-    if [ -z "$WANT_CLAIMS" ]; then
-      if ask_yn "Also pull gemma2:9b for user-claim extraction (~5.4 GB)?" "N"; then WANT_CLAIMS=1; else WANT_CLAIMS=0; fi
-    fi
-    if [ "$WANT_CLAIMS" -eq 1 ]; then
-      if ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx 'gemma2:9b'; then
-        ok "gemma2:9b already present"
-      else
-        ollama pull gemma2:9b && ok "gemma2:9b pulled"
-      fi
-    fi
   else
     warn "ollama step skipped"
   fi

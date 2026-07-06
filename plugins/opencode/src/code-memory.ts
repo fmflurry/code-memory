@@ -362,15 +362,9 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
         verdict: "idle",
       });
 
-      // Fire-and-forget Graphiti-style claim extraction. Detached on
-      // purpose: gemma2:9b inference can take several seconds and we
-      // never want it to delay session.idle settling. The CLI no-ops
-      // cheaply when CLAIMS_EXTRACTION is not set, so this spawn is
-      // safe to issue on every idle event.
-      memory.extractClaimsDetached({
-        prompts: [session.firstUserMessage],
-        sessionId: sid,
-      });
+      // Claim extraction is NOT auto-fired here. Claims are authored
+      // explicitly by the agent via `codememory_assert_claim` when it
+      // judges a message claim-worthy.
     },
   };
 };

@@ -140,8 +140,8 @@ class ClaimRecord:
     session_id: str | None = None
     source_prompt_id: str | None = None
     # Canonical entity IDs from the Qdrant entity resolver. NULL when
-    # resolution was skipped (claims_enabled but resolver disabled, or
-    # legacy rows from before the resolver shipped).
+    # resolution was skipped (resolver disabled, or legacy rows from
+    # before the resolver shipped).
     entity_subject_id: str | None = None
     entity_object_id: str | None = None
     id: str = field(default_factory=lambda: str(uuid.uuid4()))

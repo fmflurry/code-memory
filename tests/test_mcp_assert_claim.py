@@ -7,7 +7,6 @@ the local LLM extractor. We exercise:
 * Type / range checks on ``polarity`` and ``confidence``.
 * A successful insert persists to the project-scoped claims.db with
   the expected fields and predicate canonicalization.
-* The handler bypasses the ``claims_enabled`` flag (no Ollama).
 * Single-valued predicates still trigger contradiction handling via
   ClaimsStore.upsert.
 * Project validation reuses the strict ``_require_project`` contract.
@@ -36,11 +35,9 @@ def _payload(content: list) -> dict:
 def isolated_config(monkeypatch, tmp_path: Path):
     """Point the server's CONFIG at a tmp data_dir so claims.db is isolated.
 
-    The dataclass is frozen so we use :func:`dataclasses.replace`. We
-    also force ``claims_enabled=False`` to prove the assert path
-    bypasses the flag.
+    The dataclass is frozen so we use :func:`dataclasses.replace`.
     """
-    isolated = replace(CONFIG, data_dir=tmp_path, claims_enabled=False)
+    isolated = replace(CONFIG, data_dir=tmp_path)
     monkeypatch.setattr(mcp_server, "CONFIG", isolated)
     monkeypatch.setenv("CODE_MEMORY_NO_GUARD", "1")
     return isolated
@@ -137,14 +134,6 @@ def test_successful_insert_persists_to_claims_db(isolated_config) -> None:
         store.close()
     assert len(rows) == 1
     assert rows[0].id == payload["claim_id"]
-
-
-def test_bypasses_claims_enabled_flag(isolated_config) -> None:
-    """``claims_enabled=False`` must NOT block direct assert_claim calls."""
-    assert isolated_config.claims_enabled is False
-    payload = _payload(mcp_server._assert_claim(_base_args()))
-    assert "claim_id" in payload
-    assert payload.get("status") != "disabled"
 
 
 def test_predicate_is_canonicalized_to_kebab(isolated_config) -> None:

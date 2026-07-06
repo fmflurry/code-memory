@@ -7,8 +7,6 @@
 #   ./scripts/install.sh --no-docker     # skip docker compose
 #   ./scripts/install.sh --no-ollama     # skip ollama pull
 #   ./scripts/install.sh --no-tests      # skip smoke tests
-#   ./scripts/install.sh --with-claims   # also pull gemma2:9b for Graphiti-style
-#                                        # user-claim extraction (~5.4 GB)
 #   ./scripts/install.sh --with-dotnet   # install [dotnet] extra (dnfile, ~200 KB; .NET DLL metadata indexing)
 #   ./scripts/install.sh --with-hybrid   # install [hybrid] extra (FlagEmbedding; ~2 GB torch)
 #   ./scripts/install.sh --extras=dotnet,hybrid
@@ -56,7 +54,6 @@ SKIP_TESTS=0
 SKIP_MCP=0
 WITH_DOTNET=0
 WITH_HYBRID=0
-WITH_CLAIMS=0
 # EXTRAS_ARG: CLI value of --extras=... (overrides CODEMEMORY_EXTRAS env and interactive).
 # Empty means "not set by CLI"; "none" means skip; comma list means install those extras.
 EXTRAS_ARG=""
@@ -70,7 +67,6 @@ for arg in "$@"; do
     --no-mcp)    SKIP_MCP=1 ;;
     --with-dotnet)  WITH_DOTNET=1 ;;
     --with-hybrid)  WITH_HYBRID=1 ;;
-    --with-claims)  WITH_CLAIMS=1 ;;
     --extras=*)         EXTRAS_ARG="${arg#--extras=}" ;;
     --plugins=*)        PLUGINS_ARG="${arg#--plugins=}" ;;
     --plugins-scope=*)  PLUGINS_SCOPE="${arg#--plugins-scope=}" ;;
@@ -368,42 +364,11 @@ if [ "$SKIP_OLLAMA" -eq 0 ]; then
       ok "bge-m3 pulled"
     fi
 
-    # Optional: claim-extraction model (Graphiti-style user-prompt facts).
-    # Off by default — runtime is gated on CLAIMS_EXTRACTION=true anyway,
-    # so pulling 5+ GB without consent would be rude.
-    if [ "$WITH_CLAIMS" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
-      if prompt_yes_no "Also pull gemma2:9b for user-claim extraction? (~5.4 GB)" "n"; then
-        WITH_CLAIMS=1
-      fi
-    fi
-    if [ "$WITH_CLAIMS" -eq 1 ]; then
-      if ollama list 2>/dev/null | awk '{print $1}' | grep -q '^gemma2:9b$'; then
-        ok "gemma2:9b already present"
-      else
-        ollama pull gemma2:9b \
-          && ok "gemma2:9b pulled" \
-          || warn "gemma2:9b pull failed (you can retry: ollama pull gemma2:9b)"
-      fi
-      # Flip claim extraction ON in project rc so users don't have to
-      # remember to export the env var after pulling a 5+ GB model.
-      # Project rc beats the global rc (~/.config/code-memory/config),
-      # which beats hard-coded defaults; real shell env always wins.
-      RC_FILE=".code-memoryrc"
-      if [ -f "$RC_FILE" ] && grep -qE '^[[:space:]]*CLAIMS_EXTRACTION=' "$RC_FILE"; then
-        # macOS sed needs a backup suffix; clean it up after.
-        sed -i.bak -E 's/^[[:space:]]*CLAIMS_EXTRACTION=.*/CLAIMS_EXTRACTION=true/' "$RC_FILE" \
-          && rm -f "$RC_FILE.bak"
-      else
-        printf '\n# Set by scripts/install.sh after gemma2:9b pull.\nCLAIMS_EXTRACTION=true\n' >> "$RC_FILE"
-      fi
-      ok "CLAIMS_EXTRACTION=true written to $RC_FILE"
-    fi
+
   else
     warn "Ollama daemon did not become reachable within 30s — skipping model pull."
     warn "  Start Ollama manually (open the app on macOS, or 'sudo systemctl start ollama' on Linux),"
-    warn "  then run: ollama pull bge-m3"
-    [ "$WITH_CLAIMS" -eq 1 ] && warn "  Also: ollama pull gemma2:9b   (for user-claim extraction)"
-  fi
+    warn "  then run: ollama pull bge-m3"  fi
 else
   warn "Ollama step skipped (remember to pull a model before ingesting)"
 fi
@@ -553,7 +518,4 @@ cat <<EOF
     global:  \${XDG_CONFIG_HOME:-~/.config}/code-memory/config
 
   Optional knobs (see .env.example):
-    CLAIMS_EXTRACTION=true     # Graphiti-style user-claim extraction
-                               #   (needs --with-claims or `ollama pull gemma2:9b`)
-    CLAIMS_LLM_MODEL=gemma2:9b # override the extraction model
 EOF

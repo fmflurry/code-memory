@@ -8,6 +8,46 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
+## [0.8.0] — 2026-07-07
+
+Release theme: **Gemma removed — claims are now agent-authored via `codememory_assert_claim` only**.
+
+### Removed
+
+**Gemma2:9b LLM dependency removed entirely.** The `ClaimExtractor` class, the
+`code-memory extract-claims` CLI command, and the `codememory_extract_claims` MCP
+tool are all gone. No local Ollama model is required for claim extraction
+anymore.
+
+**OpenCode plugin no longer auto-fires `extractClaimsDetached`** on session idle.
+The Claude Code plugin was already clean.
+
+**Installers no longer pull gemma2:9b.** `install.sh`, `scripts/install.sh`, and
+`.env.example` have been updated to reflect the agent-authored approach.
+
+### Changed
+
+**Claims are now agent-authored exclusively.** The `codememory_assert_claim` MCP
+tool is the sole claim creation path. Plugins detect durable user assertions via
+regex heuristic (claim-intent) and nudge the agent to call the tool — no LLM is
+in the loop at any point. This eliminates a ~5.4 GB model download and ~30s
+inference latency per session.
+
+**Config defaults updated.** `CLAIMS_EXTRACTION` flag still exists but gates only
+claim storage (it no longer controls LLM model invocation). `CLAIMS_LLM_MODEL`
+env var removed.
+
+**Update plan no longer checks for gemma2:9b** in `code-memory update` component
+listing. Only `bge-m3` is tracked as the Ollama model dependency.
+
+**Documentation updated.** README, install scripts, plugin SKILL.md, and
+`.env.example` all reflect the gemma-free, agent-authored claim workflow.
+
+Reason: gemma2:9b auto-extraction produced noisy/empty triples on most prompts
+and the agent-powered `codememory_assert_claim` path (regex claim-intent +
+agent-authored triples) provides higher-quality claims with zero model
+dependency.
+
 ## [0.7.6] — 2026-06-21
 
 Release theme: **Correct tree-sitter pin + Windows console & extras fixes**.

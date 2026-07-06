@@ -318,16 +318,7 @@ later `(project, uses, "FalkorDB")` supersedes an earlier
 ### `evidence_span`
 
 Pass the verbatim user quote that justifies the claim when
-practical. It's not enforced (unlike the LLM extractor) but it
-makes future audit trivial.
-
-### `codememory_extract_claims` — when to use it
-
-Reserved for **batch processing** of multiple historical prompts at
-once (e.g. seeding claims from a long imported conversation).
-Requires `CLAIMS_EXTRACTION=true` + gemma2:9b. **Prefer
-`codememory_assert_claim` for inline single-claim authoring** — it
-skips the LLM and gives you full control over the triple.
+practical. It's not enforced but it makes future audit trivial.
 
 ### `codememory_claims` — read user preferences
 

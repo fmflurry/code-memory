@@ -381,17 +381,8 @@ class Config:
     claims_db: Path = Path(_env("CLAIMS_DB", "./data/claims.db")).resolve()
     data_dir: Path = Path(_env("DATA_DIR", "./data")).resolve()
 
-    # Claim extraction (Graphiti-style user-prompt facts).
-    # Enabled by default. Set CLAIMS_EXTRACTION=false to disable.
-    claims_enabled: bool = _env("CLAIMS_EXTRACTION", "true").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    claims_llm_model: str = _env("CLAIMS_LLM_MODEL", "gemma2:9b")
-    claims_llm_timeout: float = float(_env("CLAIMS_LLM_TIMEOUT", "30"))
-    claims_min_confidence: float = float(_env("CLAIMS_MIN_CONFIDENCE", "0.6"))
+    # Claim extraction (removed). The LLM-based extraction path was removed
+    # in favor of agent-authored claims via ``codememory_assert_claim``.
     # Cosine similarity at or above which a freshly embedded
     # subject/object reuses an existing entity instead of creating a new
     # one. 0.85 is a conservative default — false-merges hurt more than

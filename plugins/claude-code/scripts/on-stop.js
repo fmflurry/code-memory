@@ -63,11 +63,8 @@ function gitDiff(cwd) {
     verdict: "idle",
   });
 
-  // Claim extraction is NOT auto-fired here. Indiscriminately running
-  // gemma2:9b on every first-user-message produced noisy / empty triples
-  // and gave the agent no chance to triage. Claims are now authored
-  // explicitly by the agent via `codememory_assert_claim` when it judges
-  // a message claim-worthy; `codememory_extract_claims` remains
-  // available for explicit batch invocation but is no longer auto-run.
+  // Claims are authored explicitly by the agent via
+  // `codememory_assert_claim` when it judges a message claim-worthy.
+  // The LLM extraction path was removed.
   done();
 })();

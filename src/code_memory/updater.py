@@ -8,7 +8,7 @@ Components inspected:
 
 * CLI install method (``uv tool`` / ``pipx`` / ``pip``) + version vs PyPI
 * Docker stack (FalkorDB + Qdrant)
-* Ollama models present locally (``bge-m3``, optionally ``gemma2:9b``)
+* Ollama models present locally (``bge-m3``)
 * Optional Python extras (``hybrid`` via ``FlagEmbedding``, ``dotnet`` via ``dnfile``)
 * Claude Code plugin + MCP server registration
 * OpenCode global npm package
@@ -321,7 +321,7 @@ def build_plan() -> UpdatePlan:
     ]
 
     models = _ollama_models()
-    for m in ("bge-m3", "gemma2:9b"):
+    for m in ("bge-m3",):
         plan.components.append(
             ComponentState(
                 name=f"Ollama: {m}",
