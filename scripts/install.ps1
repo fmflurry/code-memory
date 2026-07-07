@@ -123,6 +123,52 @@ function Prompt-YesNo($question, $defaultYes) {
   return ($ans.ToLower() -in @('y', 'yes'))
 }
 
+# ---------- docker resolution (Docker Desktop NOT required) ----------
+# Any working engine is accepted, probed in order: `docker` on PATH with a
+# live daemon (Docker Desktop, docker-ce, ...), then docker-ce inside the
+# default WSL2 distro via `wsl -e docker`. Sets $script:DockerKind to
+# native|wsl|daemon-down|none and returns the argv prefix array (or $null).
+# No provisioning here — the zero-clone installer (root install.ps1) has it.
+function Resolve-DockerCmd {
+  $env:WSL_UTF8 = '1'
+  if (Test-Cmd 'docker') {
+    Invoke-NativeQuiet { docker info }
+    if ($LASTEXITCODE -eq 0) { $script:DockerKind = 'native'; return ,@('docker') }
+  }
+  if (Test-Cmd 'wsl') {
+    Invoke-NativeQuiet { wsl -e docker info }
+    if ($LASTEXITCODE -eq 0) { $script:DockerKind = 'wsl'; return ,@('wsl','-e','docker') }
+  }
+  $script:DockerKind = if (Test-Cmd 'docker') { 'daemon-down' } else { 'none' }
+  return $null
+}
+
+# Run docker through the resolved prefix: Invoke-Docker compose ... up -d
+# Relative paths (docker/docker-compose.yml) work through WSL unchanged —
+# wsl.exe starts in the /mnt/... equivalent of the Windows cwd.
+function Invoke-Docker {
+  param([Parameter(ValueFromRemainingArguments)]$Rest)
+  $exe = $script:DockerCmd[0]
+  $pre = @($script:DockerCmd | Select-Object -Skip 1)
+  & $exe @pre @Rest
+}
+
+# Compose project label via plain-JSON `docker inspect` — not the Go template
+# form, whose inner quotes are an argument-reparsing hazard through wsl.exe.
+function Get-CmProjectLabel([string]$Name) {
+  $prevEAP = $ErrorActionPreference
+  $ErrorActionPreference = 'SilentlyContinue'
+  try {
+    $json = (Invoke-Docker inspect $Name 2>$null) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) { return $null }
+    return (ConvertFrom-Json $json)[0].Config.Labels.'com.docker.compose.project'
+  } catch {
+    return $null
+  } finally {
+    $ErrorActionPreference = $prevEAP
+  }
+}
+
 $projectRoot = (Resolve-Path "$PSScriptRoot/..").Path
 Set-Location $projectRoot
 
@@ -146,10 +192,16 @@ foreach ($candidate in @('python', 'python3', 'py')) {
 if (-not $pythonBin) { Die "Python 3.11+ not found. Install from https://www.python.org/." }
 
 if (-not $NoDocker) {
-  if (-not (Test-Cmd 'docker'))     { Die "Docker not found. Install Docker Desktop: https://www.docker.com/." }
-  Invoke-NativeQuiet { docker compose version }
+  $script:DockerCmd = Resolve-DockerCmd
+  if (-not $script:DockerCmd) {
+    if ($script:DockerKind -eq 'daemon-down') {
+      Die "Docker CLI found but no daemon reachable. Start it (Docker Desktop, or WSL2 docker-ce: wsl -e sudo systemctl start docker) and re-run."
+    }
+    Die "No working docker daemon found (tried 'docker' and 'wsl -e docker'). Any engine works — docker-ce in WSL2, Colima, Docker Desktop. Provision one via the one-liner installer (install.ps1) or README section 'Docker without Docker Desktop'."
+  }
+  Invoke-NativeQuiet { Invoke-Docker compose version }
   if ($LASTEXITCODE -ne 0)          { Die "Docker Compose v2 not available (need 'docker compose')." }
-  Ok "Docker present"
+  Ok "Docker present$(if ($script:DockerKind -eq 'wsl') { ' (via WSL2)' })"
 }
 
 if (-not $NoOllama) {
@@ -318,15 +370,15 @@ if (-not $NoDocker) {
   # data volumes, namespaced as <project>_falkor_data, stay attached); fall
   # back to a stable name for fresh installs. This keeps install and
   # `code-memory update` on one project without ever orphaning indexed data.
-  $CmProject = (& docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' cm-falkordb 2>$null)
-  if (-not $CmProject) { $CmProject = (& docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' cm-qdrant 2>$null) }
+  $CmProject = Get-CmProjectLabel 'cm-falkordb'
+  if (-not $CmProject) { $CmProject = Get-CmProjectLabel 'cm-qdrant' }
   if (-not $CmProject) { $CmProject = "code-memory" }
   $CmProject = "$CmProject".Trim()
-  & docker compose -p $CmProject -f docker/docker-compose.yml up -d --remove-orphans
+  Invoke-Docker compose -p $CmProject -f docker/docker-compose.yml up -d --remove-orphans
   if ($LASTEXITCODE -ne 0) {
     Warn "compose up hit a container-name conflict — removing stale cm-* containers and retrying (named volumes persist)"
-    Invoke-NativeQuiet { docker rm -f cm-falkordb cm-qdrant cm-tei }
-    & docker compose -p $CmProject -f docker/docker-compose.yml up -d --remove-orphans
+    Invoke-NativeQuiet { Invoke-Docker rm -f cm-falkordb cm-qdrant cm-tei }
+    Invoke-Docker compose -p $CmProject -f docker/docker-compose.yml up -d --remove-orphans
     if ($LASTEXITCODE -ne 0) { Die "docker compose up failed" }
   }
   Ok "Containers up (project: $CmProject)"
