@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import getpass
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -18,13 +19,30 @@ from .base import AutostartStatus, repo_label, watcher_command
 TASK_FOLDER = "CodeMemory\\Watch"
 
 
+def _windowless_watcher_command(repo: Path) -> list[str]:
+    """Watcher command that launches without a visible console window.
+
+    ``watcher_command`` resolves the ``code-memory`` console-subsystem shim.
+    When Task Scheduler fires it under an interactive logon token, Windows
+    allocates a console, so a cmd window flashes (and can linger on error) for
+    every watched repo at logon. Re-point the command at ``pythonw.exe`` — the
+    GUI-subsystem interpreter that runs with no console — invoking the same CLI
+    module. Falls back to the default console command when ``pythonw.exe`` is
+    not found next to the running interpreter (e.g. non-standard installs).
+    """
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    if pythonw.exists():
+        return [str(pythonw), "-m", "code_memory.cli", "watch", str(repo)]
+    return watcher_command(repo)
+
+
 class SchtasksAdapter:
     def _task_name(self, repo: Path) -> str:
         return f"{TASK_FOLDER}\\{repo_label(repo)}"
 
     def install(self, repo: Path) -> AutostartStatus:
         repo = Path(repo).resolve()
-        argv = watcher_command(repo)
+        argv = _windowless_watcher_command(repo)
         exe = argv[0]
         args = " ".join(_quote_win(a) for a in argv[1:])
         user = getpass.getuser()
