@@ -109,6 +109,8 @@ from the `main` URL above before running it.
 
 The installer fetches the CLI, drops `docker-compose.yml` into `~/.code-memory/`, starts **FalkorDB** + **Qdrant**, pulls **`bge-m3`**, and wires the **Claude Code** + **OpenCode** plugins. Idempotent — safe to re-run.
 
+**Docker Desktop is not required.** Any working engine is used as-is; when none is found the installer offers to provision one — **docker-ce inside WSL2** on Windows, **Colima** on macOS — with confirmation at each step. See [Docker without Docker Desktop](#docker-without-docker-desktop).
+
 ### ✅ Verify
 
 ```bash
@@ -127,7 +129,7 @@ code-memory ingest .
 |                              |                                                                       |
 | ---------------------------- | --------------------------------------------------------------------- |
 | **Python 3.11+**             | Orchestrator + CLI runtime                                            |
-| **Docker + Compose v2**      | FalkorDB (`:6379`) + Qdrant (`:6333`)                                 |
+| **Any Docker engine + Compose v2** | FalkorDB (`:6379`) + Qdrant (`:6333`) — docker-ce in WSL2 (Windows), Colima (macOS), docker-ce (Linux), or Docker Desktop. See [Docker without Docker Desktop](#docker-without-docker-desktop) |
 | **Ollama**                   | Long-running embedding daemon (keeps `bge-m3` warm)                   |
 | **Disk ~3 GB · RAM 8 GB+**   | 16 GB+ recommended for large repos                                    |
 | **OS**                       | macOS / Linux / Windows (WSL2 **or** native PowerShell)               |
@@ -153,6 +155,8 @@ curl -fsSL https://raw.githubusercontent.com/fmflurry/code-memory/main/install.s
 | `--no-claude`   | Skip Claude Code marketplace + plugin                   |
 | `--no-opencode` | Skip OpenCode plugin                                    |
 | `--no-mcp`      | Skip Claude Code MCP server registration                |
+| `--colima`      | macOS: install Colima + docker CLI if no engine found (non-interactive friendly) |
+| `--docker-ce`   | Linux: install docker-ce via get.docker.com if no engine found |
 
 **Windows** — `iex` doesn't accept args, so download then run:
 
@@ -233,7 +237,7 @@ Edit `~/.code-memory/.env` (or `%USERPROFILE%\.code-memory\.env`) to point at re
 FALKOR_HOST=falkor.internal
 FALKOR_PORT=6379
 QDRANT_URL=https://qdrant.internal:6333
-OLLAMA_HOST=http://ollama.internal:11434
+OLLAMA_URL=http://ollama.internal:11434
 ```
 
 Re-run the one-liner with `--no-docker --no-ollama` (or `-NoDocker -NoOllama` on Windows).
@@ -268,6 +272,52 @@ cd code-memory
 
 ---
 
+## Docker without Docker Desktop
+
+code-memory needs a docker engine only to run two containers (FalkorDB + Qdrant). **Any engine works** — if Docker Desktop is already on the machine it keeps working unchanged — but you don't need its license: the recommended free setups are **docker-ce inside WSL2** on Windows and **Colima** on macOS. Everything below is what the one-liner installers automate for you (with confirmation at each step).
+
+Detection order everywhere (installers and `code-memory update`): a working `docker` on PATH first, then — Windows only — `wsl -e docker`. Pin a specific distro with `CODEMEMORY_WSL_DISTRO=<name>`.
+
+### 🪟 Windows — docker-ce in WSL2
+
+The one-liner installer (`install.ps1`) offers to provision this automatically when no engine is found. Manual recap:
+
+```powershell
+wsl --install          # elevated terminal; reboot; create your Linux user
+# inside the distro (or via wsl -u root):
+wsl -u root sh -c "printf '[boot]\nsystemd=true\n' >> /etc/wsl.conf"   # if systemd is off
+wsl --shutdown         # WARNING: terminates ALL running WSL sessions
+wsl -u root sh -c "curl -fsSL https://get.docker.com | sh"
+wsl -u root sh -c "usermod -aG docker $(wsl -e whoami); systemctl enable --now docker"
+```
+
+- **How commands are routed:** code-memory calls `docker` on the Windows PATH when it answers, otherwise `wsl -e docker`. No TCP exposure of the daemon, no extra config.
+- **Ports:** containers published inside WSL2 reach Windows at `127.0.0.1:6333/6379` through WSL's localhost forwarding. If they don't, check `%USERPROFILE%\.wslconfig` — `localhostForwarding` must not be `false`; with `networkingMode=mirrored` make sure the firewall allows those ports.
+- **Autostart:** after a Windows reboot nothing boots WSL until the first `wsl` call. The installer offers a logon task (`schtasks … /TN code-memory-wsl-docker /TR "wsl.exe -e true"`) that boots the distro at logon; systemd starts dockerd and `restart: unless-stopped` brings the `cm-*` containers back. Remove it with `schtasks /Delete /TN code-memory-wsl-docker /F`.
+- Prefer `127.0.0.1` over `localhost` in `.env` — Windows may resolve `localhost` to IPv6 `::1` while the ports are IPv4-only.
+
+### 🍎 macOS — Colima
+
+```bash
+brew install colima docker docker-compose
+mkdir -p ~/.docker/cli-plugins
+ln -sfn "$(brew --prefix)/opt/docker-compose/bin/docker-compose" ~/.docker/cli-plugins/docker-compose
+colima start                     # big repos: colima start --memory 8
+brew services start colima       # optional: auto-start at login
+```
+
+The symlink exposes brew's compose v2 as the `docker compose` subcommand (code-memory always calls that form). Docker Desktop, if present and running, is used as-is instead.
+
+### 🐧 Linux — docker-ce
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"   # re-login (or `newgrp docker`) afterwards
+sudo systemctl enable --now docker
+```
+
+---
+
 ## Updating
 
 After the initial install, never run the one-liner again — use the built-in updater:
@@ -286,7 +336,7 @@ code-memory update --bleeding # install CLI from git+main instead of PyPI
 | Component                   | Detection                                              | Refresh action                                    |
 | --------------------------- | ------------------------------------------------------ | ------------------------------------------------- |
 | **CLI**                     | `sys.prefix` (uv tool / pipx / pip / editable)         | upgrade via the same channel                      |
-| **FalkorDB + Qdrant**       | `~/.code-memory/docker/docker-compose.yml` or running  | `docker compose pull && up -d`                    |
+| **FalkorDB + Qdrant**       | `~/.code-memory/docker/docker-compose.yml` or running  | `docker compose pull && up -d` (native docker or `wsl -e docker`) |
 | **Ollama models**           | present in `ollama list` (`bge-m3`, `gemma2:9b`, …)    | `ollama pull <model>` (only for already-pulled)   |
 | **Claude Code plugin**      | `claude plugin list \| grep code-memory`                | `claude plugin install … --force`                 |
 | **OpenCode plugin**         | `npm ls -g code-memory-opencode`                       | `npm i -g code-memory-opencode`                   |
@@ -792,7 +842,9 @@ code-memory ingest /path/to/repo --full
 The Compose file ships a CPU TEI image by default so you can smoke-test
 the wiring on a laptop. To enable CUDA on a Linux + NVIDIA host,
 uncomment the `deploy.resources.reservations.devices` block in
-`docker/docker-compose.yml`.
+`docker/docker-compose.yml`. Note: GPU passthrough is not available under
+Colima on macOS; TEI-CUDA needs Linux, or WSL2 with the NVIDIA container
+toolkit installed inside the distro.
 
 Expected impact on a ~17k-file C# monorepo (~134k chunks):
 
@@ -1031,6 +1083,8 @@ sqlite3 ./data/<slug>/claims.db \
 What the one-liner actually puts on your machine. Full install commands are in the [Installation](#installation) section at the top.
 
 ### Runtime services (Docker)
+
+Run on any engine — docker-ce in WSL2, Colima, docker-ce, or Docker Desktop ([details](#docker-without-docker-desktop)):
 
 | Service       | Image                         | Purpose                                                    |
 | ------------- | ----------------------------- | ---------------------------------------------------------- |

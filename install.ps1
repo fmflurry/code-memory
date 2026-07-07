@@ -4,10 +4,12 @@
 
 .DESCRIPTION
   No `git clone` required. Installs the `code-memory` CLI via `uv`, drops
-  infra files into $HOME\.code-memory\, waits for Docker + Ollama,
-  pulls the bge-m3 embedding model (and optionally gemma2:9b for claim
-  extraction), and wires up the Claude Code plugin + MCP server.
-  Optionally installs the OpenCode plugin from npm.
+  infra files into $HOME\.code-memory\, starts FalkorDB + Qdrant on any
+  working docker engine — native (Docker Desktop, ...) or docker-ce inside
+  WSL2 via `wsl -e docker`, offering to provision the latter when nothing
+  is found (Docker Desktop NOT required) — pulls the bge-m3 embedding model
+  (and optionally gemma2:9b for claim extraction), and wires up the Claude
+  Code plugin + MCP server. Optionally installs the OpenCode plugin from npm.
 
   Interactive by default. Pass -Yes to accept defaults; pass any -No*
   switch to skip a step; pass -NonInteractive to refuse all prompts.
@@ -145,6 +147,129 @@ function Wait-ForCmd([string]$Cmd, [string]$Label, [string]$Url) {
   return $true
 }
 
+# ---------- docker resolution (Docker Desktop NOT required) ----------
+# Any working engine is accepted, probed in order:
+#   1. `docker` on PATH with a live daemon (Docker Desktop, docker-ce, ...)
+#   2. docker-ce inside the default WSL2 distro, reached via `wsl -e docker`
+# Sets $script:DockerKind to native|wsl|daemon-down|none and returns the argv
+# prefix array (or $null). WSL_UTF8=1 keeps wsl.exe diagnostics decodable
+# (they are UTF-16LE by default).
+function Resolve-DockerCmd {
+  $env:WSL_UTF8 = '1'
+  if (Test-Cmd 'docker') {
+    Invoke-NativeQuiet { docker info }
+    if ($LASTEXITCODE -eq 0) { $script:DockerKind = 'native'; return ,@('docker') }
+  }
+  if (Test-Cmd 'wsl') {
+    Invoke-NativeQuiet { wsl -e docker info }
+    if ($LASTEXITCODE -eq 0) { $script:DockerKind = 'wsl'; return ,@('wsl','-e','docker') }
+  }
+  $script:DockerKind = if (Test-Cmd 'docker') { 'daemon-down' } else { 'none' }
+  return $null
+}
+
+# Translate a Windows path for the resolved docker; identity when native.
+# Relative paths resolve against the shared cwd (WSL mirrors it under /mnt),
+# so only absolute paths need wslpath.
+function ConvertTo-DockerPath([string]$WinPath) {
+  if ($script:DockerKind -ne 'wsl') { return $WinPath }
+  if (-not [System.IO.Path]::IsPathRooted($WinPath)) { return ($WinPath -replace '\\','/') }
+  $p = (& wsl -e wslpath -a "$WinPath" 2>$null)
+  if ($LASTEXITCODE -eq 0 -and $p) { return "$p".Trim() }
+  return '/mnt/' + $WinPath.Substring(0,1).ToLower() + ($WinPath.Substring(2) -replace '\\','/')
+}
+
+# Run docker through the resolved prefix: Invoke-Docker compose ... up -d
+function Invoke-Docker {
+  param([Parameter(ValueFromRemainingArguments)]$Rest)
+  $exe = $script:DockerCmd[0]
+  $pre = @($script:DockerCmd | Select-Object -Skip 1)
+  & $exe @pre @Rest
+}
+
+# Provision docker-ce inside the default WSL2 distro — the Desktop-free path.
+# Every mutating step asks first. Returns $true once `wsl -e docker info` works.
+function Install-DockerInWsl {
+  if (-not (Test-Interactive)) {
+    Warn "non-interactive: skipping docker-ce provisioning. Manual steps:"
+    Dim  "  wsl --install                 (elevated terminal, reboot, create your Linux user)"
+    Dim  "  wsl -u root sh -c 'curl -fsSL https://get.docker.com | sh'"
+    Dim  "  wsl -u root sh -c 'usermod -aG docker <you>; systemctl enable --now docker'"
+    return $false
+  }
+
+  # 1. A WSL distro must exist and boot.
+  Invoke-NativeQuiet { wsl -e true }
+  while ($LASTEXITCODE -ne 0) {
+    Warn "WSL is not ready (not installed, or no distro yet)."
+    Dim  "In an ELEVATED terminal run:  wsl --install"
+    Dim  "Reboot, let the distro create your Linux user, then come back here."
+    Write-Host "? Press Enter to re-check (or 'skip'): " -ForegroundColor Yellow -NoNewline
+    $ans = Read-Host
+    if ($ans -eq 'skip') { return $false }
+    Invoke-NativeQuiet { wsl -e true }
+  }
+
+  # 2. docker-ce needs WSL2 (real kernel), not WSL1.
+  $kernel = ((& wsl -e uname -r 2>$null) -join '').Trim()
+  if ($kernel -notmatch 'microsoft-standard|WSL2') {
+    Warn "Default distro looks like WSL1 (kernel: $kernel); docker-ce needs WSL2."
+    Dim  "Convert it:  wsl --set-version <distro> 2   then re-run this installer."
+    return $false
+  }
+
+  # 3. systemd so dockerd starts with the distro.
+  Invoke-NativeQuiet { wsl -e test -d /run/systemd/system }
+  if ($LASTEXITCODE -ne 0) {
+    Warn "systemd is not enabled in the distro (needed so dockerd starts automatically)."
+    if (-not (Ask-YesNo "Enable systemd in /etc/wsl.conf? This runs 'wsl --shutdown', terminating ALL running WSL sessions" "Y")) { return $false }
+    & wsl -u root sh -c "grep -qs '^systemd=true' /etc/wsl.conf || printf '[boot]\nsystemd=true\n' >> /etc/wsl.conf"
+    & wsl --shutdown
+    Invoke-NativeQuiet { wsl -e test -d /run/systemd/system }
+    if ($LASTEXITCODE -ne 0) { Warn "systemd still not active after restart — aborting provisioning"; return $false }
+    Ok "systemd enabled"
+  }
+
+  # 4. docker-ce via the official convenience script.
+  Invoke-NativeQuiet { wsl -e docker --version }
+  if ($LASTEXITCODE -ne 0) {
+    if (-not (Ask-YesNo "Install docker-ce inside the distro via get.docker.com?" "Y")) { return $false }
+    Invoke-NativeVisible { wsl -u root sh -c "curl -fsSL https://get.docker.com | sh" }
+    if ($LASTEXITCODE -ne 0) {
+      Warn "docker-ce install failed."
+      Dim  "Corporate proxy? Set HTTP_PROXY/HTTPS_PROXY inside the distro and re-run."
+      return $false
+    }
+  } else {
+    Ok "docker CLI already present in the distro"
+  }
+
+  # 5. Non-root access + start on boot. Terminate so group membership applies.
+  $wu = ((& wsl -e whoami) -join '').Trim()
+  Invoke-NativeVisible { wsl -u root sh -c "usermod -aG docker $wu; systemctl enable --now docker" }
+  $distro = ((& wsl -l -q) | Where-Object { $_ -and "$_".Trim() } | Select-Object -First 1)
+  if ($distro) { Invoke-NativeQuiet { wsl --terminate "$distro".Trim() } }
+
+  # 6. Verify end-to-end.
+  Invoke-NativeQuiet { wsl -e docker info }
+  if ($LASTEXITCODE -ne 0) { Warn "docker daemon still not reachable via 'wsl -e docker'"; return $false }
+  Ok "docker-ce running inside WSL2"
+
+  # 7. After a Windows reboot nothing boots WSL until the first `wsl` call;
+  # a logon task fixes that, and restart:unless-stopped brings the
+  # containers back once dockerd is up.
+  if (Ask-YesNo "Create a logon task so WSL (and dockerd) auto-starts after a Windows reboot?" "Y") {
+    & schtasks /Create /F /SC ONLOGON /TN "code-memory-wsl-docker" /TR "wsl.exe -e true" | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+      Ok "scheduled task 'code-memory-wsl-docker' created"
+      Dim "remove later with:  schtasks /Delete /TN code-memory-wsl-docker /F"
+    } else {
+      Warn "could not create the scheduled task"
+    }
+  }
+  return $true
+}
+
 # ---------- 1. uv ----------
 Step "Ensuring uv is installed"
 if (Test-Cmd 'uv') {
@@ -206,26 +331,58 @@ if ($doDocker -and -not $Yes -and (Test-Interactive)) {
 }
 if ($doDocker) {
   Step "Starting FalkorDB + Qdrant"
-  if (Wait-ForCmd 'docker' 'Docker Desktop' 'https://www.docker.com/products/docker-desktop') {
-    # ensure daemon up
-    Invoke-NativeQuiet { docker info }
-    if ($LASTEXITCODE -ne 0) {
-      Warn "Docker CLI present but daemon not running. Start Docker Desktop."
-      if (Test-Interactive) {
-        Write-Host "? Press Enter once the daemon is up (or 'skip'): " -ForegroundColor Yellow -NoNewline
-        $ans = Read-Host
-        if ($ans -eq 'skip') { $doDocker = $false }
-      }
+  $script:DockerCmd = Resolve-DockerCmd
+
+  if (-not $script:DockerCmd -and $script:DockerKind -eq 'daemon-down') {
+    Warn "Docker CLI found but no daemon reachable."
+    Dim  "Start it: Docker Desktop if that's what you use, or (WSL2 docker-ce)  wsl -e sudo systemctl start docker"
+    if (Test-Interactive) {
+      Write-Host "? Press Enter once the daemon is up (or 'skip'): " -ForegroundColor Yellow -NoNewline
+      $ans = Read-Host
+      if ($ans -ne 'skip') { $script:DockerCmd = Resolve-DockerCmd }
     }
-    if ($doDocker) {
-      Invoke-NativeVisible { docker compose -f (Join-Path $HomeDir 'docker/docker-compose.yml') --project-directory $HomeDir up -d }
-      if ($LASTEXITCODE -ne 0) {
-        Warn "docker compose up failed"
-      } else {
-        Ok "containers up"
-        Dim "FalkorDB browser: http://localhost:3000"
-        Dim "Qdrant dashboard: http://localhost:6333/dashboard"
+  }
+
+  if (-not $script:DockerCmd -and $script:DockerKind -eq 'none') {
+    Warn "No docker found (native or WSL). Docker Desktop is NOT required."
+    if (Ask-YesNo "Provision docker-ce inside your WSL2 distro now? (recommended)" "Y") {
+      if (Install-DockerInWsl) { $script:DockerCmd = Resolve-DockerCmd }
+    }
+    if (-not $script:DockerCmd) {
+      Dim "Options:"
+      Dim "  a) WSL2 + docker-ce:  wsl --install  (elevated, reboot)  then re-run this installer"
+      Dim "  b) any other docker engine (Docker Desktop, Rancher Desktop, ...), then re-run"
+    }
+  }
+
+  if ($script:DockerCmd) {
+    $composeArg = ConvertTo-DockerPath (Join-Path $HomeDir 'docker/docker-compose.yml')
+    $projArg    = ConvertTo-DockerPath $HomeDir
+    Invoke-NativeVisible { Invoke-Docker compose -f $composeArg --project-directory $projArg -p code-memory up -d }
+    if ($LASTEXITCODE -ne 0) {
+      Warn "docker compose up failed"
+    } else {
+      Ok "containers up$(if ($script:DockerKind -eq 'wsl') { ' (via WSL2)' })"
+      if ($script:DockerKind -eq 'wsl') {
+        # Ports published inside WSL2 must reach Windows through localhost
+        # forwarding — verify end-to-end instead of assuming.
+        $reachable = $false
+        foreach ($i in 1..5) {
+          try {
+            Invoke-WebRequest -Uri 'http://127.0.0.1:6333/readyz' -TimeoutSec 5 -UseBasicParsing | Out-Null
+            $reachable = $true; break
+          } catch { Start-Sleep -Seconds 2 }
+        }
+        if ($reachable) {
+          Ok "Qdrant reachable from Windows at 127.0.0.1:6333"
+        } else {
+          Warn "Containers are up in WSL but 127.0.0.1:6333 is not reachable from Windows."
+          Dim  "Check %USERPROFILE%\.wslconfig: localhostForwarding must not be false;"
+          Dim  "with networkingMode=mirrored, make sure the host firewall allows the ports."
+        }
       }
+      Dim "FalkorDB browser: http://localhost:3000"
+      Dim "Qdrant dashboard: http://localhost:6333/dashboard"
     }
   } else {
     Warn "docker step skipped"

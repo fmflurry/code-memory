@@ -103,7 +103,12 @@ done
 [ -n "$PYTHON_BIN" ] || die "Python 3.11+ not found. Install from https://www.python.org/."
 
 if [ "$SKIP_DOCKER" -eq 0 ]; then
-  have docker || die "Docker not found. Install Docker Desktop: https://www.docker.com/"
+  # Any engine works — Docker Desktop is NOT required: docker-ce (Linux:
+  # get.docker.com), Colima (macOS: brew install colima docker docker-compose),
+  # or Docker Desktop. The zero-clone installer (install.sh at the repo root)
+  # can provision Colima/docker-ce; see README § Docker without Docker Desktop.
+  have docker || die "Docker not found. Any engine works: docker-ce (Linux), Colima (macOS), or Docker Desktop. See README § Docker without Docker Desktop."
+  docker info >/dev/null 2>&1 || die "Docker CLI present but daemon not reachable — colima start (macOS) / sudo systemctl start docker (Linux) / start Docker Desktop."
   docker compose version >/dev/null 2>&1 || die "Docker Compose v2 not found (need 'docker compose')."
   ok "Docker $(docker --version | awk '{print $3}' | tr -d ,)"
 fi

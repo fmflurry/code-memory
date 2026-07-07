@@ -8,12 +8,15 @@
 # With flags (non-interactive mode):
 #   curl -fsSL .../install.sh | bash -s -- \
 #     --yes --no-docker --no-ollama --no-claude --no-opencode --no-mcp --no-claims
+#   Force Desktop-free provisioning when no docker is found:
+#     --colima (macOS)  |  --docker-ce (Linux)
 #
 # What it does (idempotent):
 #   1. installs `uv` if missing (provides `uvx` + `uv tool`)
 #   2. installs the `code-memory` CLI via `uv tool install --from git+<repo>`
 #   3. drops docker-compose.yml + .env into $HOME/.code-memory/
-#   4. waits for Docker, starts FalkorDB + Qdrant
+#   4. starts FalkorDB + Qdrant on any working docker engine — Docker Desktop
+#      is NOT required; offers Colima (macOS) / docker-ce (Linux) when none found
 #   5. waits for Ollama, pulls bge-m3 (+ optional gemma2:9b for claims)
 #   6. (optional, default Y) registers Claude Code plugin + MCP
 #   7. (optional, default N) installs OpenCode plugin
@@ -35,6 +38,7 @@ WANT_CLAUDE=""
 WANT_OPENCODE=""
 WANT_MCP=""
 WANT_CLAIMS=""    # pull gemma2:9b for claim extraction
+FORCE_PROVISION=""  # colima | dockerce — install a Desktop-free engine if none found
 ASSUME_YES=0
 NON_INTERACTIVE=0
 
@@ -44,6 +48,8 @@ for arg in "$@"; do
     --non-interactive) NON_INTERACTIVE=1 ;;
     --docker)          WANT_DOCKER=1 ;;
     --no-docker)       WANT_DOCKER=0 ;;
+    --colima)          FORCE_PROVISION="colima"; WANT_DOCKER=1 ;;
+    --docker-ce)       FORCE_PROVISION="dockerce"; WANT_DOCKER=1 ;;
     --ollama)          WANT_OLLAMA=1 ;;
     --no-ollama)       WANT_OLLAMA=0 ;;
     --claude)          WANT_CLAUDE=1 ;;
@@ -112,6 +118,55 @@ pause_until_present() {
   return 0
 }
 
+# ---------- docker helpers (Docker Desktop NOT required) ----------
+# Any working engine is accepted: docker-ce, Colima, Docker Desktop, ...
+# DOCKER may become "sudo docker" right after a Linux docker-ce install,
+# where the docker group membership only applies after re-login.
+DOCKER="docker"
+docker_ok() { have docker && $DOCKER info >/dev/null 2>&1; }
+
+# macOS: Colima — free, lightweight daemon in a Lima VM, standard docker CLI.
+provision_colima() {
+  if ! have brew; then
+    warn "Homebrew is required to install Colima: https://brew.sh"
+    return 1
+  fi
+  step "Installing Colima + Docker CLI via Homebrew (no Docker Desktop needed)"
+  brew install colima docker docker-compose || return 1
+  # Expose brew's compose v2 binary as the `docker compose` CLI plugin —
+  # the brew-documented way; code-memory always calls the plugin form.
+  mkdir -p "$HOME/.docker/cli-plugins"
+  ln -sfn "$(brew --prefix)/opt/docker-compose/bin/docker-compose" "$HOME/.docker/cli-plugins/docker-compose"
+  colima start || return 1
+  dim "big repos: give the VM more RAM later with — colima stop && colima start --memory 8"
+  if ask_yn "Auto-start Colima at login (brew services)?" "Y"; then
+    brew services start colima || warn "brew services start colima failed"
+  fi
+  docker_ok
+}
+
+# Linux: docker-ce via the official convenience script.
+provision_dockerce() {
+  have curl || { warn "curl is required to fetch get.docker.com"; return 1; }
+  step "Installing docker-ce (get.docker.com, needs sudo)"
+  if ! curl -fsSL https://get.docker.com | sudo sh; then
+    warn "docker-ce install failed."
+    dim  "Corporate proxy? Set HTTP_PROXY/HTTPS_PROXY and re-run."
+    return 1
+  fi
+  sudo usermod -aG docker "$USER" || true
+  sudo systemctl enable --now docker || true
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+  if sudo docker info >/dev/null 2>&1; then
+    DOCKER="sudo docker"
+    warn "docker group membership applies after re-login (or: newgrp docker) — using 'sudo docker' for this run"
+    return 0
+  fi
+  return 1
+}
+
 # ---------- 1. uv ----------
 step "Ensuring uv is installed"
 if have uv; then
@@ -151,23 +206,67 @@ if [ -z "$WANT_DOCKER" ]; then
 fi
 if [ "$WANT_DOCKER" -eq 1 ]; then
   step "Starting FalkorDB + Qdrant"
-  if pause_until_present docker "Docker" "https://www.docker.com/products/docker-desktop"; then
-    # ensure daemon up
-    if ! docker info >/dev/null 2>&1; then
-      warn "Docker CLI present but daemon not running. Start Docker Desktop."
-      if interactive; then
-        printf '%s?%s Press Enter once the daemon is up (or %sskip%s): ' "$YEL" "$RST" "$DIM" "$RST"
-        local_ans=""
-        IFS= read -r local_ans <"$TTY_IN" || local_ans=""
-        [ "$local_ans" = "skip" ] && WANT_DOCKER=0
-      fi
+  OS="$(uname -s)"
+
+  # Forced Desktop-free provisioning (--colima / --docker-ce), works
+  # non-interactively for CI-style installs.
+  if ! docker_ok && [ "$FORCE_PROVISION" = "colima" ];   then provision_colima   || true; fi
+  if ! docker_ok && [ "$FORCE_PROVISION" = "dockerce" ]; then provision_dockerce || true; fi
+
+  # CLI present but daemon unreachable — help start whichever engine this is.
+  if ! docker_ok && have docker; then
+    case "$OS" in
+      Darwin)
+        if have colima; then
+          if ask_yn "Docker daemon not running. Start it via 'colima start'?" "Y"; then colima start || true; fi
+        elif [ -d /Applications/Docker.app ]; then
+          warn "Docker CLI present but daemon not running. Start Docker Desktop."
+        else
+          warn "Docker CLI present but no daemon."
+          if ask_yn "Install + start Colima to provide one? (no Docker Desktop needed)" "Y"; then provision_colima || true; fi
+        fi
+        ;;
+      *)
+        warn "Docker CLI present but daemon not running."
+        dim  "Try: sudo systemctl start docker"
+        ;;
+    esac
+    if ! docker_ok && interactive; then
+      printf '%s?%s Press Enter once the daemon is up (or %sskip%s): ' "$YEL" "$RST" "$DIM" "$RST"
+      _ans=""
+      IFS= read -r _ans <"$TTY_IN" || _ans=""
+      [ "$_ans" = "skip" ] && WANT_DOCKER=0
     fi
-    if [ "$WANT_DOCKER" -eq 1 ]; then
-      docker compose -f "$HOME_DIR/docker/docker-compose.yml" --project-directory "$HOME_DIR" up -d
-      ok "containers up"
-      dim "FalkorDB browser: http://localhost:3000"
-      dim "Qdrant dashboard: http://localhost:6333/dashboard"
+  fi
+
+  # No docker at all — offer the Desktop-free engine for this OS.
+  if [ "$WANT_DOCKER" -eq 1 ] && ! have docker; then
+    case "$OS" in
+      Darwin)
+        if ask_yn "No docker found. Install Colima + Docker CLI via Homebrew? (no Docker Desktop needed)" "Y"; then
+          provision_colima || true
+        fi
+        ;;
+      *)
+        if ask_yn "No docker found. Install docker-ce via get.docker.com (needs sudo)?" "Y"; then
+          provision_dockerce || true
+        fi
+        ;;
+    esac
+    if ! have docker; then
+      pause_until_present docker "A docker engine (Colima on macOS, docker-ce on Linux, or Docker Desktop)" \
+        "$REPO_URL#docker-without-docker-desktop" || WANT_DOCKER=0
     fi
+  fi
+
+  if [ "$WANT_DOCKER" -eq 1 ] && docker_ok; then
+    $DOCKER compose -f "$HOME_DIR/docker/docker-compose.yml" --project-directory "$HOME_DIR" -p code-memory up -d
+    ok "containers up"
+    dim "FalkorDB browser: http://localhost:3000"
+    dim "Qdrant dashboard: http://localhost:6333/dashboard"
+  elif [ "$WANT_DOCKER" -eq 1 ]; then
+    warn "no working docker daemon — docker step skipped"
+    dim  "see README § Docker without Docker Desktop"
   else
     warn "docker step skipped"
   fi

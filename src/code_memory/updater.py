@@ -23,6 +23,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import posixpath
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,7 @@ from typing import Literal
 import httpx
 
 from . import __version__ as _LOCAL_VERSION
+from ._docker import docker_argv, docker_path_exists, resolve_docker, to_docker_path
 
 PYPI_PACKAGE = "flurryx-code-memory"
 LEGACY_PACKAGE = "code-memory"  # historical dist name still in older uv-tool venvs
@@ -190,35 +192,50 @@ def _docker_compose_present() -> bool:
 
 
 def _docker_running(service: str) -> bool:
-    if not _have("docker"):
+    argv = docker_argv()
+    if argv is None:
         return False
-    p = _run(["docker", "ps", "--format", "{{.Names}}"])
+    p = _run([*argv, "ps", "--format", "{{.Names}}"])
     if p.returncode != 0:
         return False
     return any(service in name for name in p.stdout.splitlines())
 
 
-def _running_compose_file() -> Path | None:
+def _inspect_labels(name: str) -> dict[str, str]:
+    """Labels of a container via plain-JSON ``docker inspect``.
+
+    Deliberately not ``inspect -f '{{ index ... }}'``: the Go template needs
+    inner double quotes, and wsl.exe re-parses argument strings — plain JSON
+    output removes that whole class of quoting bug for the WSL fallback.
+    """
+    argv = docker_argv()
+    if argv is None:
+        return {}
+    p = _run([*argv, "inspect", name])
+    if p.returncode != 0:
+        return {}
+    try:
+        return json.loads(p.stdout)[0].get("Config", {}).get("Labels") or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _running_compose_file() -> str | None:
     """Probe live containers for the compose file that owns them.
 
     Handles dev installs whose compose file lives in the repo, not under
     ``~/.code-memory/docker/``. Returns the first compose path found
     among ``cm-falkordb`` / ``cm-qdrant`` containers, or None.
+
+    The returned string is the raw label value — a path on the *daemon's*
+    side of the filesystem boundary (e.g. ``/mnt/c/...`` when compose last
+    ran through WSL). Pass it back to docker verbatim; never resolve it
+    with ``Path`` on the Windows side.
     """
-    if not _have("docker"):
-        return None
     for name in ("cm-falkordb", "cm-qdrant"):
-        p = _run([
-            "docker",
-            "inspect",
-            "-f",
-            "{{ index .Config.Labels \"com.docker.compose.project.config_files\" }}",
-            name,
-        ])
-        if p.returncode == 0:
-            path = p.stdout.strip()
-            if path and Path(path).exists():
-                return Path(path)
+        path = _inspect_labels(name).get("com.docker.compose.project.config_files", "").strip()
+        if path and docker_path_exists(path):
+            return path
     return None
 
 
@@ -230,20 +247,10 @@ def _owning_compose_project() -> str | None:
     guessing a name from a directory basename (which is what caused the
     "container name already in use" conflict).
     """
-    if not _have("docker"):
-        return None
     for name in ("cm-falkordb", "cm-qdrant"):
-        p = _run([
-            "docker",
-            "inspect",
-            "-f",
-            "{{ index .Config.Labels \"com.docker.compose.project\" }}",
-            name,
-        ])
-        if p.returncode == 0:
-            proj = p.stdout.strip()
-            if proj:
-                return proj
+        proj = _inspect_labels(name).get("com.docker.compose.project", "").strip()
+        if proj:
+            return proj
     return None
 
 
@@ -255,9 +262,10 @@ def _remove_conflicting_containers() -> None:
     container squatted the name). Named volumes (falkor_data, qdrant_data,
     tei_data) survive ``rm``, so indexed data is preserved.
     """
-    if not _have("docker"):
+    argv = docker_argv()
+    if argv is None:
         return
-    _run(["docker", "rm", "-f", *COMPOSE_CONTAINERS])
+    _run([*argv, "rm", "-f", *COMPOSE_CONTAINERS])
 
 
 def _claude_plugin_present() -> bool:
@@ -299,6 +307,7 @@ def build_plan() -> UpdatePlan:
     falkor_running = _docker_running("falkor")
     qdrant_running = _docker_running("qdrant")
     compose_here = _docker_compose_present()
+    via_wsl = " (via WSL)" if resolve_docker().kind == "wsl" else ""
 
     plan.components = [
         ComponentState(
@@ -311,12 +320,12 @@ def build_plan() -> UpdatePlan:
         ComponentState(
             name="Docker: FalkorDB",
             present=compose_here or falkor_running,
-            detail="running" if falkor_running else ("compose present" if compose_here else "stopped"),
+            detail=f"running{via_wsl}" if falkor_running else ("compose present" if compose_here else "stopped"),
         ),
         ComponentState(
             name="Docker: Qdrant",
             present=compose_here or qdrant_running,
-            detail="running" if qdrant_running else ("compose present" if compose_here else "stopped"),
+            detail=f"running{via_wsl}" if qdrant_running else ("compose present" if compose_here else "stopped"),
         ),
     ]
 
@@ -392,15 +401,24 @@ def upgrade_cli(method: InstallMethod, *, bleeding: bool = False) -> tuple[bool,
 
 
 def upgrade_docker_images() -> tuple[bool, str]:
-    if not _have("docker"):
-        return False, "docker not on PATH"
-    compose = CODEMEMORY_HOME / "docker" / "docker-compose.yml"
-    if not compose.exists():
+    argv = docker_argv()
+    if argv is None:
+        return False, resolve_docker().detail
+    local = CODEMEMORY_HOME / "docker" / "docker-compose.yml"
+    if local.exists():
+        # Our path, our side of the boundary: translate for the daemon.
+        compose = to_docker_path(local)
+        project_dir = to_docker_path(local.parent)
+    else:
         live = _running_compose_file()
         if live is None:
             return False, "no compose file at ~/.code-memory/ and no running cm-* containers"
+        # Label path is already daemon-side — verbatim, dirname on its rules.
         compose = live
-    project_dir = compose.parent
+        if resolve_docker().kind == "wsl":
+            project_dir = posixpath.dirname(compose)
+        else:
+            project_dir = str(Path(compose).parent)
 
     # Pin the project name so naming never depends on the directory basename.
     # Prefer the project the running containers already belong to — that is the
@@ -409,9 +427,9 @@ def upgrade_docker_images() -> tuple[bool, str]:
     project = _owning_compose_project() or COMPOSE_PROJECT
 
     base = [
-        "docker", "compose",
-        "-f", str(compose),
-        "--project-directory", str(project_dir),
+        *argv, "compose",
+        "-f", compose,
+        "--project-directory", project_dir,
         "-p", project,
     ]
 
