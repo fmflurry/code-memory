@@ -104,8 +104,18 @@ def _run(cmd: list[str], *, check: bool = False, capture: bool = True) -> subpro
     if os.name == "nt" and resolved.lower().endswith((".cmd", ".bat")):
         comspec = os.environ.get("COMSPEC", "cmd.exe")
         args = [comspec, "/c", *args]
+    # Decode child output as UTF-8, never the Windows ANSI code page: claude
+    # prints ❯, docker/wsl emit UTF-8 — cp1252 raises in the reader thread and
+    # leaves stdout=None. WSL_UTF8 keeps wsl.exe's own diagnostics decodable
+    # (UTF-16LE otherwise); harmless for every other child.
     return subprocess.run(
-        args, check=check, capture_output=capture, text=True, env={**os.environ}
+        args,
+        check=check,
+        capture_output=capture,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "WSL_UTF8": "1"},
     )
 
 
