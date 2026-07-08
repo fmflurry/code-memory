@@ -293,7 +293,7 @@ wsl -u root sh -c "usermod -aG docker $(wsl -e whoami); systemctl enable --now d
 
 - **How commands are routed:** code-memory calls `docker` on the Windows PATH when it answers, otherwise `wsl -e docker`. No TCP exposure of the daemon, no extra config.
 - **Ports:** containers published inside WSL2 reach Windows at `127.0.0.1:6333/6379` through WSL's localhost forwarding. If they don't, check `%USERPROFILE%\.wslconfig` — `localhostForwarding` must not be `false`; with `networkingMode=mirrored` make sure the firewall allows those ports.
-- **Autostart:** after a Windows reboot nothing boots WSL until the first `wsl` call. The installer offers a logon task (`schtasks … /TN code-memory-wsl-docker /TR "wsl.exe -e true"`) that boots the distro at logon; systemd starts dockerd and `restart: unless-stopped` brings the `cm-*` containers back. Remove it with `schtasks /Delete /TN code-memory-wsl-docker /F`.
+- **Keepalive (important):** WSL2 shuts the VM down about a minute after the last session detaches — even with systemd services running — which stops dockerd and the containers. The installer offers a logon task (`/TN code-memory-wsl-docker`) that holds a hidden persistent session (`wsl.exe -e sleep infinity`), keeping the VM — and dockerd — alive; `restart: unless-stopped` brings the `cm-*` containers back whenever dockerd (re)starts. Remove it with `schtasks /Delete /TN code-memory-wsl-docker /F`. Without it, any `wsl` command revives everything in a few seconds, but the MCP server/hooks would see connection-refused in between.
 - Prefer `127.0.0.1` over `localhost` in `.env` — Windows may resolve `localhost` to IPv6 `::1` while the ports are IPv4-only.
 
 ### 🍎 macOS — Colima

@@ -255,14 +255,18 @@ function Install-DockerInWsl {
   if ($LASTEXITCODE -ne 0) { Warn "docker daemon still not reachable via 'wsl -e docker'"; return $false }
   Ok "docker-ce running inside WSL2"
 
-  # 7. After a Windows reboot nothing boots WSL until the first `wsl` call;
-  # a logon task fixes that, and restart:unless-stopped brings the
-  # containers back once dockerd is up.
-  if (Ask-YesNo "Create a logon task so WSL (and dockerd) auto-starts after a Windows reboot?" "Y") {
-    & schtasks /Create /F /SC ONLOGON /TN "code-memory-wsl-docker" /TR "wsl.exe -e true" | Out-Null
+  # 7. WSL2 shuts the VM down ~1 min after the last session detaches — even
+  # with systemd services running — taking dockerd and the containers with
+  # it. A logon task holding a persistent session (`sleep infinity`, hidden
+  # via powershell) keeps the VM alive; restart:unless-stopped brings the
+  # containers back whenever dockerd (re)starts.
+  if (Ask-YesNo "Create a logon task that keeps WSL (and dockerd) running in the background?" "Y") {
+    & schtasks /Create /F /SC ONLOGON /TN "code-memory-wsl-docker" /TR "powershell.exe -NoProfile -WindowStyle Hidden -Command `"wsl.exe -e sleep infinity`"" | Out-Null
     if ($LASTEXITCODE -eq 0) {
       Ok "scheduled task 'code-memory-wsl-docker' created"
       Dim "remove later with:  schtasks /Delete /TN code-memory-wsl-docker /F"
+      # Cover the current session too — the task only fires at next logon.
+      Start-Process -FilePath 'wsl.exe' -ArgumentList '-e','sleep','infinity' -WindowStyle Hidden
     } else {
       Warn "could not create the scheduled task"
     }
