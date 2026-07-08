@@ -231,3 +231,68 @@ def test_inspect_labels_bad_json_is_empty(monkeypatch: pytest.MonkeyPatch) -> No
     _wire(monkeypatch, resolution=NATIVE_RES, run=run)
 
     assert updater._inspect_labels("cm-falkordb") == {}
+
+
+# ---------------------------------------------------------------------------
+# Legacy .env localhost migration
+# ---------------------------------------------------------------------------
+
+LEGACY_ENV = (
+    "OLLAMA_URL=http://localhost:11434\n"
+    "EMBED_MODEL=bge-m3\n"
+    "QDRANT_URL=http://localhost:6333\n"
+    "# a comment about FALKOR_HOST=localhost that must survive\n"
+    "FALKOR_HOST=localhost\n"
+    "FALKOR_PORT=6379\n"
+)
+
+
+def test_migrate_env_rewrites_legacy_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(updater, "_is_windows", lambda: True)
+    env = tmp_path / ".env"
+    env.write_text(LEGACY_ENV, encoding="utf-8")
+
+    changed, detail = updater.migrate_env_localhost(env)
+
+    assert changed, detail
+    text = env.read_text(encoding="utf-8")
+    assert "OLLAMA_URL=http://127.0.0.1:11434" in text
+    assert "QDRANT_URL=http://127.0.0.1:6333" in text
+    assert "FALKOR_HOST=127.0.0.1" in text
+    assert "# a comment about FALKOR_HOST=localhost that must survive" in text
+    assert "FALKOR_PORT=6379" in text
+    assert (tmp_path / ".env.bak").read_text(encoding="utf-8") == LEGACY_ENV
+
+
+def test_migrate_env_leaves_custom_values_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(updater, "_is_windows", lambda: True)
+    env = tmp_path / ".env"
+    custom = "QDRANT_URL=https://qdrant.internal:6333\nFALKOR_HOST=falkor.internal\n"
+    env.write_text(custom, encoding="utf-8")
+
+    changed, _ = updater.migrate_env_localhost(env)
+
+    assert changed is False
+    assert env.read_text(encoding="utf-8") == custom
+    assert not (tmp_path / ".env.bak").exists()
+
+
+def test_migrate_env_noop_on_unix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(updater, "_is_windows", lambda: False)
+    env = tmp_path / ".env"
+    env.write_text(LEGACY_ENV, encoding="utf-8")
+
+    changed, detail = updater.migrate_env_localhost(env)
+
+    assert changed is False
+    assert "not Windows" in detail
+    assert env.read_text(encoding="utf-8") == LEGACY_ENV
+
+
+def test_migrate_env_missing_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(updater, "_is_windows", lambda: True)
+
+    changed, detail = updater.migrate_env_localhost(tmp_path / ".env")
+
+    assert changed is False
+    assert "no .env" in detail

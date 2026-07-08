@@ -316,6 +316,24 @@ sudo usermod -aG docker "$USER"   # re-login (or `newgrp docker`) afterwards
 sudo systemctl enable --now docker
 ```
 
+### 🔀 Switching engines (existing installs)
+
+Moving an existing install off Docker Desktop (e.g. to docker-ce in WSL2):
+
+1. Stop Docker Desktop, make the new engine reachable, then run `code-memory update` (or re-run the installer) — commands are re-routed automatically.
+2. On Windows, `update` also rewrites legacy `localhost` defaults in `~/.code-memory/.env` to `127.0.0.1` (previous file kept as `.env.bak`). Old installs shipped `localhost`, which resolves to IPv6 `::1` and can't reach the IPv4-only WSL-forwarded ports.
+3. **The code index does not follow** — it lives in docker volumes owned by the old engine. The simplest path is re-ingesting (`code-memory ingest <repo>`); the index is fully rebuilt from your sources, and the episodes/claims SQLite files live on the local disk, unaffected. To carry the Qdrant/FalkorDB volumes over instead, export them with the **old** engine running, then import with the **new** one (the backup dir must be visible to both engines):
+
+   ```bash
+   for v in qdrant_data falkor_data; do
+     docker run --rm -v code-memory_$v:/from -v "$HOME/cm-backup:/backup" alpine tar czf /backup/$v.tgz -C /from .
+   done
+   # switch engines, `docker compose up -d` once so the volumes exist, then:
+   for v in qdrant_data falkor_data; do
+     docker run --rm -v code-memory_$v:/to -v "$HOME/cm-backup:/backup" alpine tar xzf /backup/$v.tgz -C /to
+   done
+   ```
+
 ---
 
 ## Updating

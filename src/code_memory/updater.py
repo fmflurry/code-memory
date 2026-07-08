@@ -34,7 +34,7 @@ from typing import Literal
 import httpx
 
 from . import __version__ as _LOCAL_VERSION
-from ._docker import docker_argv, docker_path_exists, resolve_docker, to_docker_path
+from ._docker import _is_windows, docker_argv, docker_path_exists, resolve_docker, to_docker_path
 
 PYPI_PACKAGE = "flurryx-code-memory"
 LEGACY_PACKAGE = "code-memory"  # historical dist name still in older uv-tool venvs
@@ -459,6 +459,52 @@ def upgrade_docker_images() -> tuple[bool, str]:
     return up_retry.returncode == 0, f"compose recreated after conflict (project={project}, {compose})"
 
 
+# Legacy .env.example defaults that hang on Windows: `localhost` resolves to
+# ::1 first while the containers publish IPv4-only ports — including through
+# WSL2's localhost forwarding. Only these exact lines are rewritten; anything
+# hand-edited (remote hosts, custom ports) is left alone.
+_ENV_LOCALHOST_FIXES = {
+    "OLLAMA_URL=http://localhost:11434": "OLLAMA_URL=http://127.0.0.1:11434",
+    "QDRANT_URL=http://localhost:6333": "QDRANT_URL=http://127.0.0.1:6333",
+    "FALKOR_HOST=localhost": "FALKOR_HOST=127.0.0.1",
+}
+
+
+def migrate_env_localhost(env_path: Path | None = None) -> tuple[bool, str]:
+    """Rewrite legacy ``localhost`` defaults in ``~/.code-memory/.env``.
+
+    Windows-only migration (the IPv6 hang is a Windows resolver behavior;
+    unix installs are left untouched). The pre-rewrite file is kept as
+    ``.env.bak``. Returns ``(changed, detail)``.
+    """
+    if not _is_windows():
+        return False, "not Windows — .env left alone"
+    path = env_path if env_path is not None else CODEMEMORY_HOME / ".env"
+    if not path.exists():
+        return False, "no .env to migrate"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return False, f".env unreadable: {exc}"
+
+    changed = False
+    out: list[str] = []
+    for line in text.splitlines():
+        fixed = _ENV_LOCALHOST_FIXES.get(line.strip())
+        if fixed is not None:
+            out.append(fixed)
+            changed = True
+        else:
+            out.append(line)
+    if not changed:
+        return False, "no legacy localhost defaults"
+
+    path.with_name(".env.bak").write_text(text, encoding="utf-8")
+    trailer = "\n" if text.endswith("\n") else ""
+    path.write_text("\n".join(out) + trailer, encoding="utf-8")
+    return True, "rewrote localhost -> 127.0.0.1 (backup: .env.bak)"
+
+
 def upgrade_ollama_model(model: str) -> tuple[bool, str]:
     if not _have("ollama"):
         return False, "ollama not on PATH"
@@ -520,6 +566,10 @@ def run_update(
         return _run_full_installer()
 
     rc = 0
+    changed, detail = migrate_env_localhost()
+    if changed:
+        print(f"  Config: {detail}")
+
     if behind_cli:
         ok, detail = upgrade_cli(plan.install_method, bleeding=bleeding)
         print(f"  CLI upgrade: {'ok' if ok else 'FAILED'} — {detail}")
