@@ -14,6 +14,7 @@ from rich import print as rprint
 from dataclasses import asdict as _asdict
 
 from ._console import _force_utf8_console
+from ._proc import install_windows_no_window_default
 from .config import CONFIG, detect_project_slug, watchd_state_path
 from .episodic import Episode
 from .graph import FalkorStore
@@ -21,6 +22,9 @@ from .orchestrator import Pipeline, Retriever, list_projects, reset_all, reset_p
 from .orchestrator import git_delta as _git_delta
 
 _force_utf8_console()
+# Suppress console-window flashes from git / self-invocations spawned by
+# console-less CLI processes (notably the pythonw watcher). No-op off Windows.
+install_windows_no_window_default()
 
 
 def _graph_for(project: str | None) -> FalkorStore:

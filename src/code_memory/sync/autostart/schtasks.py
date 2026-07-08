@@ -10,6 +10,7 @@ from __future__ import annotations
 import getpass
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -18,6 +19,28 @@ from .base import AutostartStatus, LegacyUnit, repo_label, watcher_command
 
 TASK_FOLDER = "CodeMemory\\Watch"
 DAEMON_TASK_NAME = "CodeMemory\\Watchd"
+
+
+def _windowless_watcher_command(repo: Path | None = None) -> list[str]:
+    """Watcher command that launches without a visible console window.
+
+    ``watcher_command`` resolves the ``code-memory`` console-subsystem shim.
+    When Task Scheduler fires it under an interactive logon token, Windows
+    allocates a console, so a cmd window flashes (and can linger on error) for
+    every watched repo at logon. Re-point the command at ``pythonw.exe`` — the
+    GUI-subsystem interpreter that runs with no console — invoking the same CLI
+    module. Falls back to the default console command when ``pythonw.exe`` is
+    not found next to the running interpreter (e.g. non-standard installs).
+
+    ``repo`` is the legacy per-repo watch target; when omitted, this builds
+    the single fixed daemon's ``watchd`` command instead.
+    """
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    if pythonw.exists():
+        if repo is not None:
+            return [str(pythonw), "-m", "code_memory.cli", "watch", str(repo)]
+        return [str(pythonw), "-m", "code_memory.cli", "watchd"]
+    return watcher_command(repo)
 
 
 class SchtasksAdapter:
@@ -29,7 +52,7 @@ class SchtasksAdapter:
 
     def install(self, repo: Path) -> AutostartStatus:
         repo = Path(repo).resolve()
-        argv = watcher_command(repo)
+        argv = _windowless_watcher_command(repo)
         exe = argv[0]
         args = " ".join(_quote_win(a) for a in argv[1:])
         user = getpass.getuser()
@@ -371,7 +394,7 @@ def _daemon_task_xml() -> str:
     element — the daemon is driven by the on-disk watch registry, not a
     single repo root.
     """
-    argv = watcher_command()
+    argv = _windowless_watcher_command()
     exe = argv[0]
     args = " ".join(_quote_win(a) for a in argv[1:])
     user = getpass.getuser()

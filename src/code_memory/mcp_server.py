@@ -50,9 +50,18 @@ from .graph import FalkorStore
 from .orchestrator import Pipeline, Retriever
 from .orchestrator.pipeline import IngestMode
 
+from ._proc import install_windows_no_window_default
+
 log = logging.getLogger("codememory.mcp")
 
 SERVER_NAME = "code-memory"
+
+# Suppress console-window flashes from git / schtasks / self-invocations
+# spawned by this server. The MCP server is launched hidden (no console) by the
+# coding agent, so any console-subsystem child would otherwise pop a fresh cmd
+# window. Must run before the first subprocess call below (the startup slug
+# probe on the next lines shells out to git). No-op off Windows.
+install_windows_no_window_default()
 
 
 def _resolved_default_slug() -> str:

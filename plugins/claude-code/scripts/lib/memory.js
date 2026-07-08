@@ -118,17 +118,66 @@ function _ingestLockLive(resolvedRoot, slug) {
 }
 
 /**
+ * Resolve a windowless Python launcher on Windows.
+ *
+ * The `code-memory` command is a uv/pip **console-subsystem** shim (a uv
+ * *trampoline* under uv installs). When spawned detached, the trampoline
+ * re-launches `python.exe` — also console-subsystem — which allocates a
+ * console window. Node's `windowsHide` only applies to the trampoline it
+ * spawns, not to the interpreter the trampoline re-launches, so a cmd window
+ * still flashes for every detached hook call.
+ *
+ * `pythonw.exe` is the GUI-subsystem interpreter: the OS never allocates a
+ * console for it, regardless of `detached`/`windowsHide`. Under Node's
+ * `stdio: "ignore"` it still receives valid NUL std handles, so `--json`
+ * commands keep working (their output is discarded anyway). Returns the
+ * pythonw path or null (→ fall back to the console shim).
+ *
+ * Resolution order: `CODE_MEMORY_PYTHONW` env override, then the uv tool
+ * venv (`%APPDATA%/uv/tools/<*code-memory*>/Scripts/pythonw.exe`).
+ */
+function _windowlessPythonw() {
+  if (process.platform !== "win32") return null;
+  const override = process.env.CODE_MEMORY_PYTHONW;
+  try {
+    if (override && fs.existsSync(override)) return override;
+  } catch {
+    /* ignore */
+  }
+  const appdata = process.env.APPDATA;
+  if (!appdata) return null;
+  try {
+    const toolsDir = nodePath.join(appdata, "uv", "tools");
+    for (const name of fs.readdirSync(toolsDir)) {
+      if (!/code[-_]memory/i.test(name)) continue;
+      const pyw = nodePath.join(toolsDir, name, "Scripts", "pythonw.exe");
+      if (fs.existsSync(pyw)) return pyw;
+    }
+  } catch {
+    /* ignore — fall back to console shim */
+  }
+  return null;
+}
+
+/**
  * Spawn detached fire-and-forget. Parent exits immediately.
  * stdout/stderr ignored. Used when the hook must not block.
+ *
+ * On Windows, routes through pythonw.exe (see _windowlessPythonw) so no
+ * console window is created; falls back to the `binary` shim elsewhere.
  */
 function spawnDetached(binary, args, opts = {}) {
   const { spawn } = require("node:child_process");
   const { cwd, env } = opts;
+  const pythonw = _windowlessPythonw();
+  const cmd = pythonw || binary;
+  const argv = pythonw ? ["-m", "code_memory.cli", ...args] : args;
   try {
-    const child = spawn(binary, args, {
+    const child = spawn(cmd, argv, {
       cwd,
       env: env || process.env,
       detached: true,
+      windowsHide: true,
       stdio: "ignore",
     });
     child.unref();
@@ -237,4 +286,4 @@ async function createMemoryClient(opts = {}) {
   };
 }
 
-module.exports = { createMemoryClient };
+module.exports = { createMemoryClient, _windowlessPythonw };
