@@ -30,6 +30,7 @@ from ..config import CONFIG, detect_project_slug
 from ..orchestrator import git_delta
 from ..orchestrator.ingest_state import IngestStateStore
 from ..orchestrator.pipeline import IngestStats, Pipeline
+from . import single_flight
 from .snapshot import (
     Snapshot,
     apply_snapshot,
@@ -95,85 +96,106 @@ def sync_repo(
 
     if not git_delta.is_git_repo(root_path):
         # Not a git repo: best we can do is a full ingest
-        pipe = Pipeline(project=slug)
-        stats = pipe.ingest_repo(root_path, mode="full")
+        with Pipeline(project=slug) as pipe:
+            stats = pipe.ingest_repo(root_path, mode="full")
+            return SyncResult(
+                action="full_ingest",
+                head_sha=None,
+                files_changed=stats.files,
+                notes=["not a git repository; performed full ingest"],
+            )
+
+    # Serialize concurrent sync_repo calls for the same (root, project):
+    # overlapping daemon-triggered syncs must never run the ingest body
+    # concurrently against the same sqlite/graph state. A second caller
+    # that finds the slot held returns immediately without touching
+    # Pipeline/IngestStateStore.
+    if not single_flight.try_acquire(root_path, slug):
+        log.info(
+            "sync skipped (already running) trigger=%s project=%s root=%s",
+            trigger, slug, root_path,
+        )
         return SyncResult(
-            action="full_ingest",
+            action="noop",
             head_sha=None,
-            files_changed=stats.files,
-            notes=["not a git repository; performed full ingest"],
+            notes=["sync already running for this project; skipped"],
         )
 
-    head = git_delta.head_sha(root_path)
-    branch = git_delta.current_branch(root_path)
-    store = SnapshotStore(root_path)
-    if fetch:
-        store.fetch()
+    try:
+        head = git_delta.head_sha(root_path)
+        branch = git_delta.current_branch(root_path)
+        store = SnapshotStore(root_path)
+        if fetch:
+            store.fetch()
 
-    cfg = CONFIG.for_project(slug)
-    state_store = IngestStateStore(cfg.episodic_db)
-    prior = state_store.get(root_path)
-    dirty = git_delta.dirty_files(root_path)
-    dirty_deleted = git_delta.dirty_deleted_files(root_path)
+        cfg = CONFIG.for_project(slug)
+        with IngestStateStore(cfg.episodic_db) as state_store:
+            prior = state_store.get(root_path)
+        dirty = git_delta.dirty_files(root_path)
+        dirty_deleted = git_delta.dirty_deleted_files(root_path)
 
-    # ---- Case 1: HEAD matches local state ---------------------------------
-    if prior is not None and prior.last_sha == head:
-        if not dirty and not dirty_deleted:
-            log.info("sync noop (head=%s, clean)", head[:12])
-            return SyncResult(action="noop", head_sha=head)
-        # dirty files: incremental only
-        return _run_dirty_only(root_path, slug, head, dirty, dirty_deleted)
+        # ---- Case 1: HEAD matches local state ------------------------------
+        if prior is not None and prior.last_sha == head:
+            if not dirty and not dirty_deleted:
+                log.info("sync noop (head=%s, clean)", head[:12])
+                return SyncResult(action="noop", head_sha=head)
+            # dirty files: incremental only
+            return _run_dirty_only(root_path, slug, head, dirty, dirty_deleted)
 
-    # ---- Case 2: no local state -------------------------------------------
-    if prior is None:
+        # ---- Case 2: no local state -----------------------------------------
+        if prior is None:
+            if store.has(head):
+                return _pull_and_apply(
+                    root_path, slug, head, branch, store, publish=False
+                )
+            ancestor = _find_ancestor_snapshot(root_path, store, head)
+            if ancestor:
+                return _pull_and_apply_then_incremental(
+                    root_path, slug, head, branch, store, ancestor, dirty
+                )
+            # No snapshot, no state — full ingest
+            return _run_full_ingest(
+                root_path,
+                slug,
+                head,
+                branch,
+                store,
+                publish=publish and branch == canonical_branch,
+            )
+
+        # ---- Case 3: HEAD moved, local state stale --------------------------
         if store.has(head):
             return _pull_and_apply(
                 root_path, slug, head, branch, store, publish=False
             )
-        ancestor = _find_ancestor_snapshot(root_path, store, head)
-        if ancestor:
-            return _pull_and_apply_then_incremental(
-                root_path, slug, head, branch, store, ancestor, dirty
+
+        if not git_delta.is_reachable(root_path, prior.last_sha):
+            # base rewritten — fall back to ancestor snapshot or full
+            ancestor = _find_ancestor_snapshot(root_path, store, head)
+            if ancestor:
+                return _pull_and_apply_then_incremental(
+                    root_path, slug, head, branch, store, ancestor, dirty
+                )
+            return _run_full_ingest(
+                root_path,
+                slug,
+                head,
+                branch,
+                store,
+                publish=publish and branch == canonical_branch,
             )
-        # No snapshot, no state — full ingest
-        return _run_full_ingest(
+
+        return _run_incremental(
             root_path,
             slug,
             head,
             branch,
-            store,
+            base=prior.last_sha,
+            store=store,
             publish=publish and branch == canonical_branch,
         )
-
-    # ---- Case 3: HEAD moved, local state stale ----------------------------
-    if store.has(head):
-        return _pull_and_apply(root_path, slug, head, branch, store, publish=False)
-
-    if not git_delta.is_reachable(root_path, prior.last_sha):
-        # base rewritten — fall back to ancestor snapshot or full
-        ancestor = _find_ancestor_snapshot(root_path, store, head)
-        if ancestor:
-            return _pull_and_apply_then_incremental(
-                root_path, slug, head, branch, store, ancestor, dirty
-            )
-        return _run_full_ingest(
-            root_path,
-            slug,
-            head,
-            branch,
-            store,
-            publish=publish and branch == canonical_branch,
-        )
-
-    return _run_incremental(
-        root_path,
-        slug,
-        head,
-        branch,
-        base=prior.last_sha,
-        store=store,
-        publish=publish and branch == canonical_branch,
-    )
+    finally:
+        single_flight.release(root_path, slug)
 
 
 # ---------------------------------------------------------------------------
@@ -188,27 +210,27 @@ def _run_dirty_only(
     dirty: Iterable[Path],
     dirty_deleted: Iterable[Path] = (),
 ) -> SyncResult:
-    pipe = Pipeline(project=slug)
-    changed = 0
-    for path in dirty:
-        if not path.is_file():
-            continue
-        ex = pipe.reingest_file(path)
-        if ex is not None:
-            changed += 1
-    # Tear down vanished files even when HEAD hasn't moved. Without this
-    # leg a plain ``rm tracked.ts`` (or ``git rm``) leaves the file's
-    # graph node + vectors orphaned until the deletion is committed and
-    # a later sync runs through the diff path.
-    deleted = pipe.delete_paths(list(dirty_deleted), head_sha=head)
-    return SyncResult(
-        action="dirty_only",
-        head_sha=head,
-        base_sha=head,
-        files_changed=changed,
-        files_deleted=deleted,
-        notes=["worktree dirty; re-indexed locally without changing state"],
-    )
+    with Pipeline(project=slug) as pipe:
+        changed = 0
+        for path in dirty:
+            if not path.is_file():
+                continue
+            ex = pipe.reingest_file(path)
+            if ex is not None:
+                changed += 1
+        # Tear down vanished files even when HEAD hasn't moved. Without this
+        # leg a plain ``rm tracked.ts`` (or ``git rm``) leaves the file's
+        # graph node + vectors orphaned until the deletion is committed and
+        # a later sync runs through the diff path.
+        deleted = pipe.delete_paths(list(dirty_deleted), head_sha=head)
+        return SyncResult(
+            action="dirty_only",
+            head_sha=head,
+            base_sha=head,
+            files_changed=changed,
+            files_deleted=deleted,
+            notes=["worktree dirty; re-indexed locally without changing state"],
+        )
 
 
 def _run_incremental(
@@ -221,18 +243,18 @@ def _run_incremental(
     store: SnapshotStore,
     publish: bool,
 ) -> SyncResult:
-    pipe = Pipeline(project=slug)
-    stats = pipe.ingest_repo(root, mode="incremental", since=base)
-    result = SyncResult(
-        action="incremental",
-        head_sha=head,
-        base_sha=base,
-        files_changed=stats.files,
-        files_deleted=stats.deleted,
-    )
-    if publish:
-        _publish(store, slug, head, branch, result)
-    return result
+    with Pipeline(project=slug) as pipe:
+        stats = pipe.ingest_repo(root, mode="incremental", since=base)
+        result = SyncResult(
+            action="incremental",
+            head_sha=head,
+            base_sha=base,
+            files_changed=stats.files,
+            files_deleted=stats.deleted,
+        )
+        if publish:
+            _publish(store, slug, head, branch, result)
+        return result
 
 
 def _run_full_ingest(
@@ -244,16 +266,16 @@ def _run_full_ingest(
     *,
     publish: bool,
 ) -> SyncResult:
-    pipe = Pipeline(project=slug)
-    stats: IngestStats = pipe.ingest_repo(root, mode="full")
-    result = SyncResult(
-        action="full_ingest",
-        head_sha=head,
-        files_changed=stats.files,
-    )
-    if publish:
-        _publish(store, slug, head, branch, result)
-    return result
+    with Pipeline(project=slug) as pipe:
+        stats: IngestStats = pipe.ingest_repo(root, mode="full")
+        result = SyncResult(
+            action="full_ingest",
+            head_sha=head,
+            files_changed=stats.files,
+        )
+        if publish:
+            _publish(store, slug, head, branch, result)
+        return result
 
 
 def _pull_and_apply(
@@ -270,8 +292,8 @@ def _pull_and_apply(
     apply_snapshot(snap)
     # Mirror the snapshot's state into the local ingest_state so a
     # subsequent incremental can diff from it.
-    pipe = Pipeline(project=slug)
-    pipe.state.set(root, sha=head, branch=branch)
+    with Pipeline(project=slug) as pipe:
+        pipe.state.set(root, sha=head, branch=branch)
     return SyncResult(
         action="pull_snapshot",
         head_sha=head,
@@ -292,9 +314,9 @@ def _pull_and_apply_then_incremental(
     snap_bytes = store.read(ancestor)
     snap = _load_and_verify(snap_bytes, slug)
     apply_snapshot(snap)
-    pipe = Pipeline(project=slug)
-    pipe.state.set(root, sha=ancestor, branch=branch)
-    stats = pipe.ingest_repo(root, mode="incremental", since=ancestor)
+    with Pipeline(project=slug) as pipe:
+        pipe.state.set(root, sha=ancestor, branch=branch)
+        stats = pipe.ingest_repo(root, mode="incremental", since=ancestor)
     return SyncResult(
         action="pull_then_incremental",
         head_sha=head,

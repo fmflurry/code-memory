@@ -318,3 +318,375 @@ def run_foreground(repo: Path, *, project: str | None = None) -> None:
         pass
     finally:
         w.stop()
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: single-process, many-roots watcher daemon.
+#
+# ``Watcher``/``run_foreground`` above remain the single-repo entry point
+# (still used directly by ``code-memory watch``). Everything below adds a
+# second, independent entry point: one process, one ``watchdog`` Observer,
+# many watched roots — driven by the on-disk watch registry so a single
+# long-running daemon replaces one-launchd-unit-per-repo.
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402
+import os  # noqa: E402
+import signal  # noqa: E402
+from collections.abc import Iterable  # noqa: E402
+from functools import lru_cache  # noqa: E402
+from typing import Any  # noqa: E402
+
+from ..config import watch_registry_path, watchd_state_path  # noqa: E402
+from . import registry  # noqa: E402
+from .safety import (  # noqa: E402
+    UnsafeWatchRootError,
+    assert_safe_watch_root,
+    is_non_persistent_watch_dir,
+)
+
+try:
+    from watchdog.events import FileSystemEventHandler
+except ImportError:  # pragma: no cover - watchdog optional at runtime
+
+    class FileSystemEventHandler:  # type: ignore[no-redef]
+        """Fallback stub used only when ``watchdog`` isn't installed."""
+
+
+def _is_ref_event_for_root(path: Path, repo: Path) -> bool:
+    """Free-function twin of ``Watcher._is_ref_event`` for a given *repo* root.
+
+    Duplicated rather than shared so the single-repo ``Watcher`` stays
+    untouched; both implementations must agree on what counts as a git-ref
+    change worth an immediate re-sync (``.git/HEAD`` or ``.git/refs/heads/*``).
+    """
+    try:
+        rel = path.resolve().relative_to(repo)
+    except (OSError, ValueError):
+        return False
+    parts = rel.parts
+    if not parts or parts[0] != ".git":
+        return False
+    if parts == (".git", "HEAD"):
+        return True
+    if len(parts) >= 4 and parts[1:3] == ("refs", "heads"):
+        return True
+    return False
+
+
+@lru_cache(maxsize=256)
+def _cached_default_exclude(resolved: Path) -> ExcludeFn:
+    """Memoized :func:`_default_exclude` per resolved root.
+
+    ``_default_exclude`` builds a tuple of ~25 resolved exclusion Paths on
+    every call. Repeated add/remove churn against the *same* root (registry
+    reconcile loops, add/remove-cycle tests) would otherwise mint a fresh
+    tuple every cycle that only gets freed once every handler referencing
+    it is dropped — bounded here to at most 256 distinct roots.
+    """
+    return _default_exclude(resolved)
+
+
+class _RootHandler(FileSystemEventHandler):  # type: ignore[misc]
+    """Per-root watchdog event handler feeding a per-root ``Debouncer``."""
+
+    def __init__(self, root: Path, exclude: ExcludeFn, debouncer: Debouncer) -> None:
+        self.root = root
+        self.exclude = exclude
+        self.debouncer = debouncer
+
+    def on_any_event(self, event: Any) -> None:  # noqa: ANN401 - lib type
+        if event.is_directory:
+            return
+        path = Path(getattr(event, "dest_path", None) or event.src_path)
+        self._handle_path(path)
+
+    def _handle_path(self, path: Path) -> None:
+        if _is_ref_event_for_root(path, self.root):
+            self.debouncer.bump()
+            return
+        if self.exclude(path):
+            return
+        self.debouncer.bump()
+
+
+class _RegistryHandler(FileSystemEventHandler):  # type: ignore[misc]
+    """Watches the registry file's parent dir, filtered to its own filename."""
+
+    def __init__(self, filename: str, debouncer: Debouncer) -> None:
+        self.filename = filename
+        self.debouncer = debouncer
+
+    def on_any_event(self, event: Any) -> None:  # noqa: ANN401 - lib type
+        if event.is_directory:
+            return
+        path = Path(getattr(event, "dest_path", None) or event.src_path)
+        if path.name == self.filename:
+            self.debouncer.bump()
+
+
+class MultiRootWatcher:
+    """One ``watchdog`` Observer fanning out to many independently-debounced
+    watched roots, reconciled against the on-disk watch registry."""
+
+    def __init__(
+        self,
+        *,
+        observer: Any = None,
+        debounce: float = DEFAULT_DEBOUNCE,
+    ) -> None:
+        if observer is not None:
+            self.observer = observer
+        else:
+            from watchdog.observers import Observer
+
+            self.observer = Observer()
+        self.debounce = debounce
+        self._lock = threading.Lock()
+        self._watches: dict[Path, Any] = {}
+        self._debouncers: dict[Path, Debouncer] = {}
+        self._handlers: dict[Path, _RootHandler] = {}
+        self._slugs: dict[Path, str] = {}
+        self._registry_debouncer: Debouncer | None = None
+        self._registry_watch: Any = None
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def start(self) -> None:
+        self.observer.start()
+
+    def stop(self) -> None:
+        with self._lock:
+            debouncers = list(self._debouncers.values())
+            registry_debouncer = self._registry_debouncer
+        for debouncer in debouncers:
+            debouncer.cancel()
+        if registry_debouncer is not None:
+            registry_debouncer.cancel()
+        self.observer.stop()
+        self.observer.join(timeout=5)
+
+    # ------------------------------------------------------------------
+    # Per-root watch management
+    # ------------------------------------------------------------------
+
+    def add_root(self, root: Path | str, slug: str) -> None:
+        """Idempotent: re-adding an already-watched root is a no-op."""
+        resolved = Path(root).resolve()
+        with self._lock:
+            if resolved in self._watches:
+                return
+            exclude = _cached_default_exclude(resolved)
+            debouncer = Debouncer(self.debounce, lambda: self._trigger_sync(resolved, slug))
+            handler = _RootHandler(resolved, exclude, debouncer)
+            watch = self.observer.schedule(handler, str(resolved), recursive=True)
+            self._watches[resolved] = watch
+            self._debouncers[resolved] = debouncer
+            self._handlers[resolved] = handler
+            self._slugs[resolved] = slug
+
+    def remove_root(self, root: Path | str) -> None:
+        """No-op when *root* isn't currently watched."""
+        resolved = Path(root).resolve()
+        with self._lock:
+            if resolved not in self._watches:
+                return
+            debouncer = self._debouncers[resolved]
+            watch = self._watches[resolved]
+            debouncer.cancel()
+            self.observer.unschedule(watch)
+            del self._watches[resolved]
+            del self._debouncers[resolved]
+            del self._handlers[resolved]
+            del self._slugs[resolved]
+
+    def watched_roots(self) -> list[Path]:
+        """Thread-safe snapshot of currently-watched roots.
+
+        Returns a plain ``list`` copy — never a live view — so callers
+        (e.g. ``_safe_reconcile``'s state-file snapshot) never race a
+        concurrent ``add_root``/``remove_root`` mutating ``_watches``.
+        """
+        with self._lock:
+            return list(self._watches.keys())
+
+    def reconcile(self, desired: dict[Path, str]) -> None:
+        """Delta-only sync against *desired* (root -> slug).
+
+        Roots that fail :func:`assert_safe_watch_root` or for which
+        :func:`is_non_persistent_watch_dir` is true are skipped entirely.
+        Unchanged (same-path, same-slug) roots are never touched — no
+        cancel/re-schedule churn. A root whose path is unchanged but whose
+        desired slug differs from the currently-bound slug is rebound
+        (removed then re-added) so its handler/debouncer closure captures
+        the new slug instead of silently keeping the stale one.
+        """
+        filtered: dict[Path, str] = {}
+        for root, slug in desired.items():
+            try:
+                resolved = assert_safe_watch_root(root)
+            except UnsafeWatchRootError:
+                log.warning("reconcile: skipping unsafe watch root %s", root)
+                continue
+            if is_non_persistent_watch_dir(resolved):
+                continue
+            filtered[resolved] = slug
+
+        with self._lock:
+            current_slugs = dict(self._slugs)
+
+        current_keys = set(current_slugs.keys())
+        desired_keys = set(filtered.keys())
+        to_remove = current_keys - desired_keys
+        to_add = desired_keys - current_keys
+        to_rebind = {
+            root
+            for root in current_keys & desired_keys
+            if current_slugs[root] != filtered[root]
+        }
+
+        for stale_root in to_remove:
+            self.remove_root(stale_root)
+        for changed_root in to_rebind:
+            self.remove_root(changed_root)
+            self.add_root(changed_root, filtered[changed_root])
+        for new_root in to_add:
+            self.add_root(new_root, filtered[new_root])
+
+    # ------------------------------------------------------------------
+    # Registry self-watch
+    # ------------------------------------------------------------------
+
+    def watch_registry(
+        self,
+        registry_path: Path,
+        *,
+        debounce: float,
+        on_change: Callable[[], None],
+    ) -> None:
+        """Self-watch the registry file's parent dir (non-recursive).
+
+        Re-entrant: cancels the previous registry debouncer and unschedules
+        the previous registry watch (if any) before installing the new
+        pair, so repeated calls (e.g. daemon restart-in-place, tests) never
+        leak the prior debouncer/watch.
+        """
+        registry_path = Path(registry_path).resolve()
+        parent = registry_path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+
+        with self._lock:
+            old_debouncer = self._registry_debouncer
+            old_watch = self._registry_watch
+
+        if old_debouncer is not None:
+            old_debouncer.cancel()
+        if old_watch is not None:
+            self.observer.unschedule(old_watch)
+
+        debouncer = Debouncer(debounce, on_change)
+        handler = _RegistryHandler(registry_path.name, debouncer)
+        watch = self.observer.schedule(handler, str(parent), recursive=False)
+        with self._lock:
+            self._registry_debouncer = debouncer
+            self._registry_watch = watch
+
+    # ------------------------------------------------------------------
+    # Sync
+    # ------------------------------------------------------------------
+
+    def _trigger_sync(self, root: Path, slug: str) -> None:
+        log.debug("multiroot watcher firing sync for %s", root)
+        try:
+            sync_repo(root, project=slug, trigger="watchd")
+        except Exception:  # noqa: BLE001
+            log.exception("multiroot watcher sync failed for %s", root)
+
+
+def write_daemon_state(watched_roots: Iterable[Path | str]) -> None:
+    """Persist ``{pid, watched_roots, ts}`` to :func:`watchd_state_path`.
+
+    Written atomically (temp file + ``os.replace``) so a concurrent reader
+    never observes a half-written state file.
+    """
+    state_path = watchd_state_path()
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "pid": os.getpid(),
+        "watched_roots": sorted(str(Path(r).resolve()) for r in watched_roots),
+        "ts": time.time(),
+    }
+    tmp_path = state_path.with_name(f".{state_path.name}.tmp")
+    try:
+        tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp_path, state_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+
+
+def _safe_reconcile(
+    watcher: MultiRootWatcher,
+    on_reconcile: Callable[[MultiRootWatcher], None] | None = None,
+) -> None:
+    """Guarded shared reconcile entrypoint for the SIGHUP and registry-watch
+    triggers.
+
+    A reconcile failure (bad registry data, a watcher-internal exception,
+    a state-write failure) must never propagate and kill the daemon — both
+    call sites route through this single guarded helper instead of each
+    growing their own try/except.
+    """
+    try:
+        desired = {Path(root): entry.slug for root, entry in registry.load().items()}
+        watcher.reconcile(desired)
+        write_daemon_state(watcher.watched_roots())
+        if on_reconcile is not None:
+            on_reconcile(watcher)
+    except Exception:  # noqa: BLE001
+        log.exception("reconcile failed")
+
+
+def run_daemon(
+    *,
+    observer: Any = None,
+    stop_event: threading.Event | None = None,
+    reconcile_debounce: float = 1.5,
+    poll_interval: float = 0.5,
+    on_reconcile: Callable[[MultiRootWatcher], None] | None = None,
+) -> None:
+    """Blocking single-process daemon watching every registry-listed root.
+
+    Does an initial ``reconcile(registry.load())``, self-watches the
+    registry file so newly-registered/removed roots are picked up without
+    a restart, and writes daemon state after every reconcile. Returns once
+    *stop_event* is set.
+    """
+    stop_event = stop_event if stop_event is not None else threading.Event()
+    watcher = MultiRootWatcher(observer=observer)
+    watcher.start()
+
+    try:
+        _safe_reconcile(watcher, on_reconcile)
+
+        watcher.watch_registry(
+            watch_registry_path(),
+            debounce=reconcile_debounce,
+            on_change=lambda: _safe_reconcile(watcher, on_reconcile),
+        )
+
+        try:
+            signal.signal(signal.SIGHUP, lambda *_args: _safe_reconcile(watcher, on_reconcile))
+        except (ValueError, AttributeError):
+            # ValueError: not running in the main thread of the main
+            # interpreter (e.g. under test, or embedded). AttributeError:
+            # platform has no SIGHUP (Windows). Both are fine to ignore —
+            # the registry self-watch already covers the same trigger.
+            pass
+
+        while not stop_event.wait(poll_interval):
+            pass
+    finally:
+        watcher.stop()

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
@@ -131,6 +132,10 @@ class CachedEmbedder:
 
 
 _SINGLETON: Embedder | None = None
+# Guards the check-build-assign below so N threads racing to cold-start
+# the embedder singleton (daemon startup, concurrent first requests)
+# build exactly one backend instead of N models loaded into the process.
+_SINGLETON_LOCK = threading.Lock()
 
 
 def _resolve_backend() -> str:
@@ -180,18 +185,19 @@ def get_embedder() -> Embedder:
     bypass the inner model entirely on re-ingest.
     """
     global _SINGLETON
-    if _SINGLETON is None:
-        backend = _resolve_backend()
-        inner, model_id = _build_inner_embedder(backend)
-        if not _cache_enabled():
-            log.info("embed: cache disabled via %s", ENV_DISABLE_CACHE)
-            _SINGLETON = inner
-        else:
-            cache_path = _cache_db_path()
-            log.info("embed: cache at %s (model=%s)", cache_path, model_id)
-            cache = EmbedCache(cache_path)
-            _SINGLETON = CachedEmbedder(inner=inner, cache=cache, model_id=model_id)
-    return _SINGLETON
+    with _SINGLETON_LOCK:
+        if _SINGLETON is None:
+            backend = _resolve_backend()
+            inner, model_id = _build_inner_embedder(backend)
+            if not _cache_enabled():
+                log.info("embed: cache disabled via %s", ENV_DISABLE_CACHE)
+                _SINGLETON = inner
+            else:
+                cache_path = _cache_db_path()
+                log.info("embed: cache at %s (model=%s)", cache_path, model_id)
+                cache = EmbedCache(cache_path)
+                _SINGLETON = CachedEmbedder(inner=inner, cache=cache, model_id=model_id)
+        return _SINGLETON
 
 
 def _cache_db_path() -> Path:

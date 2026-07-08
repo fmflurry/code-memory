@@ -115,3 +115,9 @@ class IngestStateStore:
 
     def close(self) -> None:
         self.conn.close()
+
+    def __enter__(self) -> "IngestStateStore":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()

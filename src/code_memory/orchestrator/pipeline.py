@@ -338,6 +338,35 @@ class Pipeline:
         # never emptied before the rebuild commits.  Reset to ``self.graph``
         # after ``promote_shadow`` succeeds.
         self._active_graph: FalkorStore = self.graph
+        self._closed = False
+
+    def __enter__(self) -> "Pipeline":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Idempotent teardown of the sqlite stores this Pipeline owns.
+
+        ``self.vector`` / ``self.graph`` are process-wide singletons
+        (see ``get_qdrant_client`` / ``get_falkor_db``) and must stay
+        open for other ``Pipeline`` instances in the same process —
+        only the per-instance sqlite stores (episodic + ingest state)
+        are closed here. A daemon wrapping each sync in
+        ``with Pipeline(...) as p:`` never leaks a sqlite handle, even
+        when a single ingest raises.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        for store in (getattr(self, "episodic", None), getattr(self, "state", None)):
+            close = getattr(store, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001 — best-effort teardown
+                    pass
 
     def ingest_repo(
         self,
@@ -595,33 +624,39 @@ class Pipeline:
             while len(in_flight) >= UPSERT_QUEUE_MAX:
                 _await_one()
 
-        for ex in extractor.walk(root):
-            stats.files += 1
-            stats.symbols += len(ex.symbols)
-            stats.imports += len(ex.imports)
-            stats.calls += len(ex.calls)
-            stats.references += len(ex.references)
-            stats.chunks += len(ex.symbols) or 1
-            sanity.record(ex)
-            if not dry_run:
-                # Graph upserts are cheap (UNWIND-batched per call) and
-                # need to stay per-file so the temporal stamping order
-                # matches the walk. Vector work defers to the buffer.
-                self._upsert_graph(ex, head_sha=head_sha, head_ord=head_ord)
-                if not getattr(self, "skip_vectors", False):
-                    for c in _chunks_for(ex):
-                        pending_chunks.append((ex, c))
-                    if len(pending_chunks) >= EMBED_BATCH:
-                        _flush_pending()
-            hb.tick(stats)
-        if not getattr(self, "skip_vectors", False):
-            _flush_pending()
-            # Drain the pool so the resolver + .NET-project pass sees a
-            # quiescent Qdrant. Drop the pool here, not in __exit__,
-            # because the .NET-project pass runs in this method.
-            while in_flight:
-                _await_one()
-        upsert_executor.shutdown(wait=True)
+        try:
+            for ex in extractor.walk(root):
+                stats.files += 1
+                stats.symbols += len(ex.symbols)
+                stats.imports += len(ex.imports)
+                stats.calls += len(ex.calls)
+                stats.references += len(ex.references)
+                stats.chunks += len(ex.symbols) or 1
+                sanity.record(ex)
+                if not dry_run:
+                    # Graph upserts are cheap (UNWIND-batched per call) and
+                    # need to stay per-file so the temporal stamping order
+                    # matches the walk. Vector work defers to the buffer.
+                    self._upsert_graph(ex, head_sha=head_sha, head_ord=head_ord)
+                    if not getattr(self, "skip_vectors", False):
+                        for c in _chunks_for(ex):
+                            pending_chunks.append((ex, c))
+                        if len(pending_chunks) >= EMBED_BATCH:
+                            _flush_pending()
+                hb.tick(stats)
+            if not getattr(self, "skip_vectors", False):
+                _flush_pending()
+                # Drain the pool so the resolver + .NET-project pass sees a
+                # quiescent Qdrant. Drop the pool here, not in __exit__,
+                # because the .NET-project pass runs in this method.
+                while in_flight:
+                    _await_one()
+        finally:
+            # A mid-walk exception (extractor crash, embed HTTP failure,
+            # etc.) must still shut down the upsert pool — leaving it
+            # running leaks worker threads on every failed full ingest in
+            # a long-lived daemon that retries repeatedly.
+            upsert_executor.shutdown(wait=True)
         hb.done(stats)
         _attach_sanity(stats, sanity)
         self._ingest_dotnet_projects(

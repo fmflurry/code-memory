@@ -8,12 +8,13 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
     from . import Adapter
 
 from ...config import detect_project_slug
+from .. import registry
 
 log = logging.getLogger("codememory.autostart")
 
@@ -25,6 +26,17 @@ class AutostartStatus:
     label: str
     unit_path: str | None = None
     note: str | None = None
+
+
+class LegacyUnit(TypedDict):
+    """One legacy per-repo autostart unit found on disk during migration.
+
+    See ``Adapter.list_legacy_units`` / ``code-memory autostart migrate``.
+    """
+
+    label: str
+    unit_path: str
+    workdir: str | None
 
 
 def get_adapter() -> Adapter:
@@ -86,43 +98,65 @@ def ensure_autostart(repo: Path, *, project: str | None = None) -> AutostartStat
             note=str(e),
         )
 
-    status = adapter.status(repo)
+    slug = project or repo_label(repo)
+    registry.add(repo, slug)
+
+    status = adapter.status_daemon()
     if status.installed and status.running:
         return status
     if not status.installed:
-        status = adapter.install(repo)
+        status = adapter.install_daemon()
     if status.installed and not status.running:
-        status = adapter.start(repo)
+        status = adapter.start_daemon()
     return status
 
 
 def prune_stale_autostart() -> list[str]:
-    """Remove autostart units whose target dir is gone or ephemeral.
+    """Remove autostart units whose target dir is gone or ephemeral, and
+    prune the on-disk watch registry to match.
 
     Best-effort and idempotent. Only adapters that implement ``prune_stale``
-    do anything; returns the list of removed unit labels.
+    do anything for the legacy per-repo unit sweep; returns the list of
+    removed unit labels. ``registry.prune()`` runs unconditionally
+    (best-effort, errors logged and swallowed).
     """
+    removed: list[str] = []
     try:
         adapter = get_adapter()
     except RuntimeError:
-        return []
-    prune = getattr(adapter, "prune_stale", None)
-    if prune is None:
-        return []
+        adapter = None
+    if adapter is not None:
+        prune = getattr(adapter, "prune_stale", None)
+        if prune is not None:
+            try:
+                removed = list(prune())
+            except Exception:  # noqa: BLE001
+                log.exception("autostart prune failed")
+
     try:
-        return list(prune())
+        registry.prune()
     except Exception:  # noqa: BLE001
-        log.exception("autostart prune failed")
-        return []
+        log.exception("watch registry prune failed")
+
+    return removed
 
 
-def watcher_command(repo: Path) -> list[str]:
+def watcher_command(repo: Path | None = None) -> list[str]:
     """Resolve the command line that launches the watcher.
 
     Prefer the installed ``code-memory`` script; fall back to ``python -m``
     invocation when the script isn't on PATH (development checkouts).
+
+    With no ``repo`` this returns the single-daemon invocation (``watchd``,
+    driven by the on-disk watch registry). With a ``repo`` it returns the
+    legacy per-repo invocation (``watch <repo>``), kept for backward
+    compatibility with existing per-repo call sites.
     """
     exe = shutil.which("code-memory")
+    if repo is None:
+        if exe:
+            return [exe, "watchd"]
+        return [sys.executable, "-m", "code_memory.cli", "watchd"]
     if exe:
         return [exe, "watch", str(repo)]
     return [sys.executable, "-m", "code_memory.cli", "watch", str(repo)]

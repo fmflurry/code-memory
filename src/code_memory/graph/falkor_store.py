@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from collections import defaultdict
 from collections.abc import Iterable
@@ -12,6 +13,29 @@ from ..config import CONFIG
 
 NodeLabel = str  # File | Symbol | Module
 EdgeType = str  # IMPORTS | CALLS | DEFINES | EXPORTS
+
+# Process-singleton FalkorDB registry, keyed by (host, port). A
+# long-lived daemon constructs a fresh FalkorStore() per Pipeline() —
+# without this cache that meant a fresh network connection per
+# instance, never released. Distinct endpoints still get distinct
+# connections.
+_DB_LOCK = threading.Lock()
+_DBS: dict[tuple[str, int], FalkorDB] = {}
+
+
+def get_falkor_db(host: str, port: int) -> FalkorDB:
+    """Process-singleton ``FalkorDB`` connection, keyed by ``(host, port)``.
+
+    Multiple ``FalkorStore()`` instances pointed at the same endpoint
+    share one underlying connection instead of each opening their own.
+    """
+    key = (host, port)
+    with _DB_LOCK:
+        db = _DBS.get(key)
+        if db is None:
+            db = FalkorDB(host=host, port=port)
+            _DBS[key] = db
+        return db
 
 
 @dataclass
@@ -38,10 +62,11 @@ class FalkorStore:
         port: int | None = None,
         graph_name: str | None = None,
     ) -> None:
-        self.db = FalkorDB(
-            host=host or CONFIG.falkor_host,
-            port=port or CONFIG.falkor_port,
+        self.db = get_falkor_db(
+            host or CONFIG.falkor_host,
+            port or CONFIG.falkor_port,
         )
+        self._closed = False
         self.graph_name: str = graph_name or CONFIG.falkor_graph
         self.graph = self.db.select_graph(self.graph_name)
         # Two server-side tunables that bite on large graphs (e.g.
@@ -809,3 +834,20 @@ class FalkorStore:
             {"file": f, "start": start, "end": end, "kind": kind}
             for f, start, end, kind in rows
         ]
+
+    def close(self) -> None:
+        """Best-effort, idempotent teardown.
+
+        ``self.db`` is a process-wide singleton (see ``get_falkor_db``),
+        so closing its connection here only matters when a caller
+        explicitly wants to release it (tests, short-lived CLI
+        invocations). Swallows any error — a shared connection with no
+        ``close()``, or one that raises, must never break teardown.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.db.connection.close()
+        except Exception:  # noqa: BLE001 — best-effort teardown
+            pass

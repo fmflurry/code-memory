@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -14,6 +15,27 @@ from ..embed import HybridVec
 # rebuild is required to change them.
 DENSE = "dense"
 SPARSE = "sparse"
+
+# Process-singleton QdrantClient registry, keyed by url. A long-lived
+# daemon (watcher, MCP server) constructs a fresh QdrantStore() per
+# ``Pipeline()`` — without this cache that meant a fresh network
+# connection per instance, never released.
+_CLIENT_LOCK = threading.Lock()
+_CLIENTS: dict[str, QdrantClient] = {}
+
+
+def get_qdrant_client(url: str) -> QdrantClient:
+    """Process-singleton ``QdrantClient``, keyed by ``url``.
+
+    Multiple ``QdrantStore()`` instances pointed at the same url share
+    one underlying client instead of each opening their own.
+    """
+    with _CLIENT_LOCK:
+        client = _CLIENTS.get(url)
+        if client is None:
+            client = QdrantClient(url=url)
+            _CLIENTS[url] = client
+        return client
 
 
 @dataclass
@@ -47,7 +69,8 @@ class QdrantStore:
         from ..config import resolve_embed_dim
 
         self.url = url or CONFIG.qdrant_url
-        self.client = QdrantClient(url=self.url)
+        self.client = get_qdrant_client(self.url)
+        self._closed = False
         # ``CONFIG.embed_dim`` is 0 by default (sentinel for "auto").
         # Resolve via the known-model table so ``EMBED_MODEL``
         # automatically picks the right dim without the operator setting
@@ -292,6 +315,24 @@ class QdrantStore:
             return 0
         res = self.client.count(collection_name=collection, exact=False)
         return int(res.count)
+
+    def close(self) -> None:
+        """Best-effort, idempotent teardown.
+
+        ``self.client`` is a process-wide singleton (see
+        ``get_qdrant_client``), so closing it here only matters when a
+        caller explicitly wants to release the connection (tests,
+        short-lived CLI invocations). Swallows any error — a shared
+        client with no ``close()``, or one that raises, must never
+        break teardown.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.client.close()
+        except Exception:  # noqa: BLE001 — best-effort teardown
+            pass
 
 
 def _to_filter(filt: dict[str, Any]) -> qm.Filter:

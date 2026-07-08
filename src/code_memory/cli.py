@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,7 @@ from rich import print as rprint
 from dataclasses import asdict as _asdict
 
 from ._console import _force_utf8_console
-from .config import CONFIG, detect_project_slug
+from .config import CONFIG, detect_project_slug, watchd_state_path
 from .episodic import Episode
 from .graph import FalkorStore
 from .orchestrator import Pipeline, Retriever, list_projects, reset_all, reset_project
@@ -778,6 +779,12 @@ app.add_typer(snapshot_app, name="snapshot")
 app.add_typer(hooks_app, name="hooks")
 app.add_typer(autostart_app, name="autostart")
 
+# `autostart migrate` verify-poll knobs. Module-level so tests can shrink
+# them (avoid burning real wall-clock time waiting out the default
+# timeout when pinning the verify-fail rollback path).
+MIGRATE_VERIFY_TIMEOUT_S: float = 2.0
+MIGRATE_VERIFY_INTERVAL_S: float = 0.1
+
 
 @app.command()
 def sync(
@@ -839,6 +846,42 @@ def watch(
         raise typer.Exit(code=2) from e
 
     run_foreground(safe_root, project=project)
+
+
+@app.command()
+def watchd(
+    status: bool = typer.Option(
+        False, "--status", help="Show the daemon's status instead of starting it."
+    ),
+    as_json: bool = JsonOpt,
+) -> None:
+    """Run the multi-root watch daemon in the foreground until interrupted."""
+    if status:
+        state_path = watchd_state_path()
+        if not state_path.exists():
+            payload: dict[str, Any] = {"running": False}
+            if as_json:
+                _emit(payload, as_json=True)
+            else:
+                typer.echo("watchd: not running (no state file found)")
+            return
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        if as_json:
+            _emit(payload, as_json=True)
+        else:
+            typer.echo(f"pid: {payload.get('pid')}")
+            roots = sorted(payload.get("watched_roots", []))
+            typer.echo(f"watched roots ({len(roots)}):")
+            for root in roots:
+                typer.echo(f"  {root}")
+            typer.echo(f"ts: {payload.get('ts')}")
+        return
+    from .sync.watcher import run_daemon
+
+    try:
+        run_daemon()
+    except KeyboardInterrupt:
+        pass
 
 
 @app.command()
@@ -1116,6 +1159,136 @@ def autostart_status(
             "label": st.label,
             "unit_path": st.unit_path,
             "note": st.note,
+        },
+        as_json=as_json,
+    )
+
+
+def _migrate_state_covers(state_path: Path, seeded_roots: set[str]) -> bool:
+    """Return True when the watchd state file at *state_path* reports a
+    live daemon whose ``watched_roots`` is a superset of *seeded_roots*.
+
+    Never raises: a missing/corrupt state file, a dead pid, or a
+    malformed payload all resolve to "not covered" rather than an
+    exception, since this is a poll-until-timeout predicate.
+    """
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    pid = payload.get("pid")
+    if not isinstance(pid, int):
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    watched_roots = payload.get("watched_roots")
+    if not isinstance(watched_roots, list):
+        return False
+    return seeded_roots <= set(watched_roots)
+
+
+def _migrate_wait_for_coverage(seeded_roots: list[str]) -> bool:
+    """Poll ``watchd_state_path()`` until the running daemon covers every
+    seeded root, or until ``MIGRATE_VERIFY_TIMEOUT_S`` elapses.
+
+    Reads ``watchd_state_path()`` fresh on every iteration (never
+    caches it) so the read is observable, in order, relative to other
+    daemon-control calls made by the caller.
+    """
+    needed = set(seeded_roots)
+    deadline = time.monotonic() + MIGRATE_VERIFY_TIMEOUT_S
+    while True:
+        if _migrate_state_covers(watchd_state_path(), needed):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(MIGRATE_VERIFY_INTERVAL_S)
+
+
+@autostart_app.command("migrate")
+def autostart_migrate(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print the migration plan without installing the daemon or removing legacy units.",
+    ),
+    as_json: bool = JsonOpt,
+) -> None:
+    """Consolidate legacy per-repo autostart units into the single watchd daemon.
+
+    Strict, safety-ordered migration: seed the watch registry from every
+    legacy unit, install + start the single fixed daemon, VERIFY it
+    actually covers every seeded root, and only once verified tear down
+    the legacy units. If verification fails, the legacy units are left
+    in place so no root is ever left unwatched mid-migration.
+    """
+    from .sync import registry
+    from .sync.autostart.base import get_adapter
+
+    adapter = get_adapter()
+    legacy_units = adapter.list_legacy_units()
+    raw_roots = list(registry.seed_from_units()) + [
+        workdir for u in legacy_units if (workdir := u.get("workdir"))
+    ]
+    seeded_roots = sorted({str(Path(r).resolve()) for r in raw_roots})
+
+    if dry_run:
+        would_remove = [unit["label"] for unit in legacy_units]
+        if as_json:
+            _emit(
+                {
+                    "dry_run": True,
+                    "seeded_roots": seeded_roots,
+                    "would_remove": would_remove,
+                },
+                as_json=True,
+            )
+        else:
+            # Deliberately not routed through ``_emit``'s rich pretty-print:
+            # rich wraps/folds long string values (real repo paths routinely
+            # exceed the default 80-col non-tty width), which would print a
+            # root or unit label split across two lines.
+            typer.echo(f"would seed {len(seeded_roots)} root(s) into the registry:")
+            for root in seeded_roots:
+                typer.echo(f"  {root}")
+            typer.echo(f"would remove {len(legacy_units)} legacy unit(s):")
+            for unit in legacy_units:
+                typer.echo(f"  {unit['label']}  ({unit['unit_path']})")
+        return
+
+    if not legacy_units:
+        status = adapter.status_daemon()
+        if status.running:
+            _emit({"seeded": len(seeded_roots), "verified": True, "removed": 0}, as_json=as_json)
+            return
+
+    adapter.install_daemon()
+    adapter.start_daemon()
+
+    if not seeded_roots and legacy_units:
+        covered = False
+    else:
+        covered = _migrate_wait_for_coverage(seeded_roots)
+    if not covered:
+        typer.echo("migration incomplete, legacy units retained", err=True)
+        _emit(
+            {"seeded": len(seeded_roots), "verified": False, "removed": 0},
+            as_json=as_json,
+        )
+        raise typer.Exit(code=1)
+
+    for unit in legacy_units:
+        adapter.remove_legacy_unit(unit["unit_path"])
+
+    _emit(
+        {
+            "seeded": len(seeded_roots),
+            "verified": True,
+            "removed": len(legacy_units),
         },
         as_json=as_json,
     )

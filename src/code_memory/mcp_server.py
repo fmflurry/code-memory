@@ -26,6 +26,8 @@ Transport: stdio. Register via `code-memory-mcp` script entrypoint.
 from __future__ import annotations
 
 import atexit
+import contextlib
+import io
 import json
 import logging
 import os
@@ -42,7 +44,7 @@ from mcp.types import TextContent, Tool
 
 from dataclasses import asdict
 
-from .config import CONFIG, detect_project_slug
+from .config import CONFIG, detect_project_slug, watchd_state_path
 from .episodic import Episode
 from .graph import FalkorStore
 from .orchestrator import Pipeline, Retriever
@@ -1640,6 +1642,51 @@ def build_server() -> Server:
     return server
 
 
+def _attempt_autostart_migrate() -> None:
+    """Best-effort opportunistic call into the Phase-4 verified-teardown
+    migration entrypoint (``code_memory.cli.autostart_migrate``).
+
+    That entrypoint seeds the watch registry, installs+starts the single
+    ``watchd`` daemon, VERIFIES coverage, and only then removes legacy
+    per-repo units -- this helper does not reimplement any of that; it
+    only invokes it and swallows failures so a broken migration never
+    blocks MCP server boot.
+
+    stdio safety: the MCP server speaks JSON-RPC over stdio.
+    ``autostart_migrate`` writes JSON to STDOUT via ``_emit`` when
+    ``as_json=True``, which would corrupt the protocol stream if allowed
+    through. Redirect stdout to a throwaway buffer for the duration of
+    the call (stderr logging is unaffected).
+    """
+    try:
+        from .cli import autostart_migrate
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            autostart_migrate(dry_run=False, as_json=True)
+    except Exception:  # noqa: BLE001 — includes typer.Exit; never propagate.
+        log.exception("mcp bootstrap: autostart migrate attempt failed")
+
+
+def _daemon_covers_repo(repo: Path) -> bool:
+    """Fail-safe check: does the single ``watchd`` daemon's last-reported
+    state claim coverage of *repo*?
+
+    Any failure (missing/corrupt state file, malformed payload) is
+    treated as "not covered" so the in-process watcher fallback stays
+    active rather than silently leaving the repo uncovered.
+    """
+    try:
+        payload = json.loads(watchd_state_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    watched_roots = payload.get("watched_roots")
+    if not isinstance(watched_roots, list):
+        return False
+    return str(Path(repo).resolve()) in watched_roots
+
+
 def _bootstrap_repo() -> Path | None:
     """Locate the active repo and ensure autostart + in-process watcher.
 
@@ -1698,6 +1745,11 @@ def _bootstrap_repo() -> Path | None:
         except Exception:  # noqa: BLE001
             log.exception("mcp bootstrap: autostart registration failed")
 
+        # 1b. opportunistic migrate to the single-daemon (watchd) model.
+        # Separate exception boundary: a failure here must never skip the
+        # registry registration above, and vice versa.
+        _attempt_autostart_migrate()
+
     # 2. one-shot sync to catch up to HEAD
     if not os.environ.get("CODE_MEMORY_NO_BOOT_SYNC"):
         try:
@@ -1712,15 +1764,23 @@ def _bootstrap_repo() -> Path | None:
         except Exception:  # noqa: BLE001
             log.exception("mcp bootstrap: initial sync failed")
 
-    # 3. in-process watcher as belt-and-suspenders (won't double-start
-    #    because OS autostart runs in its own process)
-    if not os.environ.get("CODE_MEMORY_NO_INPROC_WATCHER"):
+    # 3. in-process watcher fallback -- skipped when the single-daemon
+    #    (watchd) autostart model already covers this repo, to avoid
+    #    double-watching / racing debounced syncs.
+    if os.environ.get("CODE_MEMORY_NO_INPROC_WATCHER"):
+        log.info("mcp bootstrap: in-process watcher disabled via env override")
+    elif _daemon_covers_repo(repo):
+        log.info(
+            "mcp bootstrap: daemon confirmed running; skipping in-process "
+            "watcher fallback"
+        )
+    else:
         try:
             from .sync.watcher import Watcher
 
             w = Watcher(repo)
             w.start()
-            log.info("mcp bootstrap: in-process watcher started")
+            log.info("mcp bootstrap: in-process watcher started (fallback)")
             _BOOTSTRAP_REFS["watcher"] = w
         except Exception:  # noqa: BLE001
             log.exception("mcp bootstrap: in-process watcher failed to start")

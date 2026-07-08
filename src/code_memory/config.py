@@ -20,6 +20,25 @@ _GLOBAL_RC = (
 )
 
 
+def watch_registry_path() -> Path:
+    """Path to the consolidated watch registry (JSON, keyed by resolved root).
+
+    Evaluated at *call* time (unlike ``_GLOBAL_RC``) so tests — and
+    operators — can override ``XDG_CONFIG_HOME`` per invocation rather
+    than being pinned to whatever was in the environment at import time.
+    """
+    return (
+        Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+        / "code-memory"
+        / "watch-registry.json"
+    )
+
+
+def watchd_state_path() -> Path:
+    """Path to the watch daemon's state file, sibling of the registry."""
+    return watch_registry_path().with_name("watchd-state.json")
+
+
 def _parse_rc(path: Path) -> dict[str, str]:
     try:
         text = path.read_text(encoding="utf-8")

@@ -8,6 +8,68 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
+## [0.9.0] — 2026-07-08
+
+Release theme: **Watcher consolidation + daemon resource-leak fixes — single OS autostart, multi-root registry**.
+
+### Added
+
+**`code-memory watchd` — single long-lived multi-root watch daemon.** Replaces the
+per-repo OS autostart units (one launchd job per repo on macOS, one systemd unit
+per repo on Linux, etc.) with a single always-on daemon that watches all registered
+repos in one process. `watchd --status` reports the daemon's PID and all watched roots.
+
+**Watch registry at `~/.config/code-memory/watch-registry.json`.** Maps project path
+to slug for the daemon to discover and watch all registered repos. Registry supports
+atomic writes and advisory file locking; the daemon live-reconciles as repos are
+added/removed via `ensure_autostart`, so no manual daemon restart is needed.
+
+**`code-memory autostart migrate` command.** Consolidates legacy per-repo autostart
+units (launchd jobs, systemd units, schtasks entries) into the single `watchd` daemon.
+The migration seeds the watch registry from existing roots, verifies the daemon covers
+all registered projects, and only then removes the old per-repo units — guarantees
+no repo is left unwatched. Supports `--dry-run` to preview changes.
+
+Reason: reduce macOS login-item clutter from N watcher jobs to one, prevent systemd
+unit explosion on Linux servers, and guarantee zero memory/FD growth in the always-on
+daemon by centralizing resource lifecycle.
+
+### Changed
+
+**Autostart now installs ONE fixed unit instead of N (one per repo).** On macOS,
+the legacy login item per repo (`com.codememory.watch.<slug>`) collapses to one
+fixed entry (`com.codememory.watchd`); on Linux, one systemd user unit
+(`codememory-watchd.service`) replaces `codememory-watch-<slug>.service` instances;
+on Windows, one schtasks entry (`CodeMemory\Watchd`) replaces per-project entries.
+`ensure_autostart` now registers repos into the watch registry and ensures the single
+daemon is running; a legacy per-repo-unit sweep is retained for one to two releases
+to clean up old entries.
+
+**MCP server boot now registers the active repo with the daemon and starts an
+in-process fallback watcher only when the daemon does not already cover that repo.**
+Prevents double-syncing (daemon + in-process watcher both queuing the same ingest)
+and reduces startup noise in logs.
+
+Reason: simplify the autostart surface (one fixed entry per machine instead of
+scaling with repo count) and prevent index double-writes.
+
+### Fixed
+
+**Eliminated per-sync resource leaks in the long-lived daemon.** The daemon now
+holds Qdrant and FalkorDB clients as process-singletons instead of creating fresh
+connections per sync; `Pipeline` is a context manager and its sqlite connections
+(episodic metadata + ingest state) are opened and closed per `sync_repo` call,
+fixing both a connection leak and a silent cross-thread `sqlite3.ProgrammingError`
+that would fail every ingest after the first in daemon mode; the full-ingest thread
+pool is always shut down via try/finally (previously leaked threads on exception);
+embedder initialization is now lock-guarded against a cold-start race; and
+same-project syncs are serialized via single-flight to prevent concurrent ingests
+of the same repo.
+
+Reason: the daemon runs 24/7 — any leak (open file descriptor, unclosed connection,
+spawned thread) accumulates until the machine runs out of resources. This fix is
+critical for production use.
+
 ## [0.8.0] — 2026-07-07
 
 Release theme: **Gemma removed — claims are now agent-authored via `codememory_assert_claim` only**.

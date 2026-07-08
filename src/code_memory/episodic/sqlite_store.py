@@ -244,6 +244,12 @@ class EpisodicStore:
     def close(self) -> None:
         self.conn.close()
 
+    def __enter__(self) -> "EpisodicStore":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
+
 
 def _row_to_episode(row: tuple[Any, ...]) -> Episode:
     return Episode(
