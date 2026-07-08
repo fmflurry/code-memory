@@ -115,10 +115,10 @@ The installer fetches the CLI, drops `docker-compose.yml` into `~/.code-memory/`
 
 ```bash
 code-memory --version
-code-memory health
+code-memory update --check
 ```
 
-`health` should print 🟢 for FalkorDB, Qdrant, and Ollama. Then point it at a repo:
+`update --check` should list `Docker: FalkorDB (running)` and `Docker: Qdrant (running)` — `(running (via WSL))` on Windows without Docker Desktop — plus your Ollama models. Then point it at a repo:
 
 ```bash
 code-memory ingest .
