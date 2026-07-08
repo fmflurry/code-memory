@@ -257,19 +257,24 @@ function Install-DockerInWsl {
 
   # 7. WSL2 shuts the VM down ~1 min after the last session detaches — even
   # with systemd services running — taking dockerd and the containers with
-  # it. A logon task holding a persistent session (`sleep infinity`, hidden
-  # via powershell) keeps the VM alive; restart:unless-stopped brings the
-  # containers back whenever dockerd (re)starts.
-  if (Ask-YesNo "Create a logon task that keeps WSL (and dockerd) running in the background?" "Y") {
-    & schtasks /Create /F /SC ONLOGON /TN "code-memory-wsl-docker" /TR "powershell.exe -NoProfile -WindowStyle Hidden -Command `"wsl.exe -e sleep infinity`"" | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-      Ok "scheduled task 'code-memory-wsl-docker' created"
-      Dim "remove later with:  schtasks /Delete /TN code-memory-wsl-docker /F"
-      # Cover the current session too — the task only fires at next logon.
-      Start-Process -FilePath 'wsl.exe' -ArgumentList '-e','sleep','infinity' -WindowStyle Hidden
-    } else {
-      Warn "could not create the scheduled task"
-    }
+  # it. A hidden persistent session (`sleep infinity`) keeps the VM alive;
+  # restart:unless-stopped brings the containers back whenever dockerd
+  # (re)starts. Launched from the user's Startup folder via wscript
+  # (window style 0 = fully hidden) — unlike `schtasks /SC ONLOGON`, this
+  # needs no elevation.
+  if (Ask-YesNo "Auto-start a hidden WSL keepalive at logon so dockerd stays up?" "Y") {
+    $startupDir = [Environment]::GetFolderPath('Startup')
+    $vbs = Join-Path $startupDir 'code-memory-wsl-docker.vbs'
+    @(
+      "' code-memory: keep the WSL VM (and dockerd) alive in the background."
+      "' WSL2 shuts the VM down ~1 min after the last session detaches, taking"
+      "' the FalkorDB/Qdrant containers with it. Remove this file to disable."
+      'CreateObject("Wscript.Shell").Run "wsl.exe -e sleep infinity", 0, False'
+    ) | Set-Content -Path $vbs -Encoding ASCII
+    Ok "keepalive installed: $vbs"
+    Dim "remove later by deleting that file"
+    # Cover the current session too — the Startup entry only fires at next logon.
+    Start-Process -FilePath 'wsl.exe' -ArgumentList '-e','sleep','infinity' -WindowStyle Hidden
   }
   return $true
 }
