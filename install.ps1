@@ -187,6 +187,35 @@ function Invoke-Docker {
   & $exe @pre @Rest
 }
 
+# Keep the WSL VM (and dockerd) alive. WSL2 shuts the VM down ~1 min after
+# the last session detaches — even with systemd services running — taking
+# dockerd and the cm-* containers with it; the runtime then sees
+# connection-refused. A Startup-folder wscript entry (no elevation needed —
+# `schtasks /SC ONLOGON` requires admin; window style 0 = fully hidden)
+# holds a persistent `wsl -e sleep infinity` session, and
+# restart:unless-stopped brings the containers back whenever dockerd
+# (re)starts. Idempotent: skips silently when already installed.
+function Install-WslKeepalive {
+  if ($script:KeepaliveOffered) { return }
+  $script:KeepaliveOffered = $true
+  $vbs = Join-Path ([Environment]::GetFolderPath('Startup')) 'code-memory-wsl-docker.vbs'
+  if (Test-Path $vbs) { Ok "WSL keepalive already installed"; return }
+  if (-not (Ask-YesNo "Auto-start a hidden WSL keepalive at logon so dockerd stays up?" "Y")) {
+    Warn "without it, WSL idle-shutdown stops dockerd (and the containers) between sessions"
+    return
+  }
+  @(
+    "' code-memory: keep the WSL VM (and dockerd) alive in the background."
+    "' WSL2 shuts the VM down ~1 min after the last session detaches, taking"
+    "' the FalkorDB/Qdrant containers with it. Remove this file to disable."
+    'CreateObject("Wscript.Shell").Run "wsl.exe -e sleep infinity", 0, False'
+  ) | Set-Content -Path $vbs -Encoding ASCII
+  Ok "keepalive installed: $vbs"
+  Dim "remove later by deleting that file"
+  # Cover the current session too — the Startup entry only fires at next logon.
+  Start-Process -FilePath 'wsl.exe' -ArgumentList '-e','sleep','infinity' -WindowStyle Hidden
+}
+
 # Provision docker-ce inside the default WSL2 distro — the Desktop-free path.
 # Every mutating step asks first. Returns $true once `wsl -e docker info` works.
 function Install-DockerInWsl {
@@ -255,27 +284,8 @@ function Install-DockerInWsl {
   if ($LASTEXITCODE -ne 0) { Warn "docker daemon still not reachable via 'wsl -e docker'"; return $false }
   Ok "docker-ce running inside WSL2"
 
-  # 7. WSL2 shuts the VM down ~1 min after the last session detaches — even
-  # with systemd services running — taking dockerd and the containers with
-  # it. A hidden persistent session (`sleep infinity`) keeps the VM alive;
-  # restart:unless-stopped brings the containers back whenever dockerd
-  # (re)starts. Launched from the user's Startup folder via wscript
-  # (window style 0 = fully hidden) — unlike `schtasks /SC ONLOGON`, this
-  # needs no elevation.
-  if (Ask-YesNo "Auto-start a hidden WSL keepalive at logon so dockerd stays up?" "Y") {
-    $startupDir = [Environment]::GetFolderPath('Startup')
-    $vbs = Join-Path $startupDir 'code-memory-wsl-docker.vbs'
-    @(
-      "' code-memory: keep the WSL VM (and dockerd) alive in the background."
-      "' WSL2 shuts the VM down ~1 min after the last session detaches, taking"
-      "' the FalkorDB/Qdrant containers with it. Remove this file to disable."
-      'CreateObject("Wscript.Shell").Run "wsl.exe -e sleep infinity", 0, False'
-    ) | Set-Content -Path $vbs -Encoding ASCII
-    Ok "keepalive installed: $vbs"
-    Dim "remove later by deleting that file"
-    # Cover the current session too — the Startup entry only fires at next logon.
-    Start-Process -FilePath 'wsl.exe' -ArgumentList '-e','sleep','infinity' -WindowStyle Hidden
-  }
+  # 7. Keep the VM (and the freshly enabled dockerd) alive across sessions.
+  Install-WslKeepalive
   return $true
 }
 
@@ -393,6 +403,9 @@ if ($doDocker) {
       Dim "FalkorDB browser: http://localhost:3000"
       Dim "Qdrant dashboard: http://localhost:6333/dashboard"
     }
+    # Docker reached through WSL — with or without provisioning — needs the
+    # keepalive, or idle-shutdown takes the containers down between sessions.
+    if ($script:DockerKind -eq 'wsl') { Install-WslKeepalive }
   } else {
     Warn "docker step skipped"
   }

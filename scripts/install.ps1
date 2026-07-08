@@ -202,6 +202,16 @@ if (-not $NoDocker) {
   Invoke-NativeQuiet { Invoke-Docker compose version }
   if ($LASTEXITCODE -ne 0)          { Die "Docker Compose v2 not available (need 'docker compose')." }
   Ok "Docker present$(if ($script:DockerKind -eq 'wsl') { ' (via WSL2)' })"
+  if ($script:DockerKind -eq 'wsl') {
+    # WSL2 idle-shutdown stops dockerd (and the containers) ~1 min after the
+    # last session detaches. The one-liner installer sets up a hidden
+    # Startup-folder keepalive; just warn here if it's missing.
+    $vbs = Join-Path ([Environment]::GetFolderPath('Startup')) 'code-memory-wsl-docker.vbs'
+    if (-not (Test-Path $vbs)) {
+      Warn "no WSL keepalive found — dockerd will stop when WSL idles between sessions."
+      Dim  "Install it via the one-liner installer (install.ps1), or see README section 'Docker without Docker Desktop'."
+    }
+  }
 }
 
 if (-not $NoOllama) {
