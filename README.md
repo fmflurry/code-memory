@@ -315,6 +315,37 @@ Use `code-memory update --check` from CI or a cron to nudge devs when a release 
 
 ---
 
+## Releasing
+
+Releases are tag-driven: pushing an annotated `vX.Y.Z` tag on `main` triggers
+[`.github/workflows/publish.yml`](.github/workflows/publish.yml), which builds
+the `flurryx-code-memory` sdist/wheel and publishes them to PyPI.
+
+1. Bump the version in `pyproject.toml` (`[project].version`) and anywhere
+   else it's duplicated in `src/` (e.g. a `__version__` constant, if present).
+2. Commit the bump:
+   ```bash
+   git commit -am "chore(release): vX.Y.Z"
+   ```
+3. Tag and push:
+   ```bash
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git push --tags
+   ```
+4. The `publish` workflow builds the package, verifies the tag matches
+   `pyproject.toml`'s version (mismatches abort the release before anything
+   is uploaded), and publishes to PyPI automatically — no manual `twine
+   upload` needed.
+
+**One-time setup:** PyPI Trusted Publishing must be configured on the
+[`flurryx-code-memory` PyPI project](https://pypi.org/project/flurryx-code-memory/)
+before the first automated release: *Publishing → Add a new publisher*, with
+publisher `GitHub`, repo `fmflurry/code-memory`, workflow `publish.yml`, and
+environment `pypi`. This lets the `publish` job authenticate via OIDC with no
+API token stored in the repo.
+
+---
+
 ## What is this?
 
 `code-memory` gives a coding agent (Claude Code, OpenCode, Cursor, your own harness) a memory it can actually use:
