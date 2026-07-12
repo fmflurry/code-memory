@@ -81,6 +81,20 @@ def test_cli_ingest_refuses_home(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "error" in result.output.lower() or "refusing" in result.output.lower() or result.exit_code == 2
 
 
+def test_cli_ingest_refuses_filesystem_root() -> None:
+    """``code-memory ingest /`` must be refused with exit code 2.
+
+    This is the exact scenario that caused CPU runaway (the OpenCode plugin
+    resolved cwd to '/' and then called ``code-memory ingest /``). The CLI
+    must reject it before spawning any pipeline workers.
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["ingest", "/"])
+    assert result.exit_code == 2, (
+        f"Expected exit 2 (unsafe root), got {result.exit_code}.\n{result.output}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # CLI ingest — single-flight lock prevents concurrent runs
 # ---------------------------------------------------------------------------

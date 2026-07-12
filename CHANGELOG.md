@@ -70,6 +70,18 @@ Reason: the daemon runs 24/7 — any leak (open file descriptor, unclosed connec
 spawned thread) accumulates until the machine runs out of resources. This fix is
 critical for production use.
 
+## [opencode-plugin 0.3.1] — 2026-07-13
+
+### Fixed
+
+**`isSafeProjectRoot` guard in OpenCode plugin**: the plugin now validates the
+project root before spawning `code-memory autostart` or triggering an ingest,
+preventing a CPU/process storm when an unsafe or non-project root (e.g. `/`,
+`~`, or a non-repo directory) was passed.
+
+Reason: without the guard, every tool call in an unsafe root caused a new
+`code-memory` child process to be spawned without bound, exhausting CPU.
+
 ## [0.8.0] — 2026-07-07
 
 Release theme: **Gemma removed — claims are now agent-authored via `codememory_assert_claim` only**.
@@ -111,22 +123,6 @@ agent-authored triples) provides higher-quality claims with zero model
 dependency.
 
 ## [0.7.6] — 2026-06-21
-
-Release theme: **Correct tree-sitter pin + Windows console & extras fixes**.
-
-### Fixed
-
-**tree-sitter-language-pack pinned to `==1.8.1`** (was `==1.0.0` in the broken 0.7.5).
-Version 1.0.0 has no bundled language grammars (it uses a download model), so
-`get_language('csharp')` raised `LanguageNotFoundError` and extraction produced
-zero symbols on every platform. Version 1.9.1 is also broken (raises `'bytes'
-object is not an instance of 'str'` even on macOS — a 1.9.x regression). 1.8.1
-is the last known-good release with bundled grammars; the original Windows
-failure was caused by the loose `>=0.7` floor letting fresh installs float to
-1.9.1.
-
-Reason: stop floating into broken 1.9.x and restore symbol extraction everywhere.
-
 **Windows console crash in `code-memory update`**: stdout/stderr are now forced
 to UTF-8 (`errors="replace"`) at the CLI and MCP entry points, so Unicode
 status glyphs (→, •, ✓) no longer raise `UnicodeEncodeError` on cp1252
