@@ -14,8 +14,10 @@
  */
 
 import { execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
+import { existsSync } from "node:fs";
+import * as nodeOs from "node:os";
 import * as nodePath from "node:path";
+import { promisify } from "node:util";
 
 import type { Plugin } from "@opencode-ai/plugin";
 
@@ -48,6 +50,55 @@ const MEMORY_TOOL_PREFIXES: readonly string[] = [
   "mcp__code-memory__",
 ];
 const SERVICE = "code-memory";
+
+/**
+ * Returns true when `root` is safe to ingest / autostart-register.
+ * Mirrors the Python `assert_safe_ingest_root` logic in sync/safety.py.
+ *
+ * A root is UNSAFE when it is:
+ *   - empty / undefined
+ *   - the filesystem root (`/` on POSIX, `C:\` etc. on Windows)
+ *   - the user's $HOME directory itself
+ *   - not inside a VCS repository (no `.git` in cwd or any ancestor)
+ *
+ * We perform the fast structural checks here (no subprocess). The VCS
+ * check is a best-effort synchronous walk up the directory tree; if it
+ * cannot determine VCS membership it conservatively returns `false`.
+ */
+function isSafeProjectRoot(root: string): boolean {
+  if (!root || root.trim().length === 0) return false;
+
+  const resolved = nodePath.resolve(root);
+
+  // Filesystem root: resolve() of "/" → "/" on POSIX; drive roots on Windows.
+  const parsed = nodePath.parse(resolved);
+  if (parsed.root === resolved + nodePath.sep || parsed.root === resolved) {
+    return false;
+  }
+
+  // Home directory.
+  try {
+    const home = nodeOs.homedir();
+    if (home && nodePath.resolve(home) === resolved) return false;
+  } catch {
+    // homedir() failed — defensive skip, don't block
+  }
+
+  // VCS check: walk up from `resolved` looking for a `.git` entry.
+  // Stops at the filesystem root to avoid an infinite loop.
+  let dir = resolved;
+  for (;;) {
+    // Synchronous existsSync is intentional: this guard is called at
+    // session-bootstrap time and must return a synchronous boolean.
+    if (existsSync(nodePath.join(dir, ".git"))) return true;
+    const parent = nodePath.dirname(dir);
+    if (parent === dir) {
+      // Reached filesystem root without finding .git.
+      return false;
+    }
+    dir = parent;
+  }
+}
 
 const GATE_NUDGE = [
   "## code-memory gate",
@@ -234,10 +285,19 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
       // (when no agent is running) still trigger reingest automatically.
       if (memory.available && sid && !sessionsBootstrapped.has(sid)) {
         sessionsBootstrapped.add(sid);
-        memory.autostartInstallDetached();
-        void memory.ingest().catch(() => {
-          // ingest() logs internally; never block session start on failure.
-        });
+        if (!isSafeProjectRoot(cwd)) {
+          log(
+            "warn",
+            `code-memory: skipping bootstrap for unsafe project root "${cwd}" — ` +
+              "must be a git repository that is not HOME or filesystem root. " +
+              "Open OpenCode from inside a specific project directory.",
+          );
+        } else {
+          memory.autostartInstallDetached();
+          void memory.ingest().catch(() => {
+            // ingest() logs internally; never block session start on failure.
+          });
+        }
       }
     },
 
@@ -321,6 +381,7 @@ const CodeMemoryPlugin: Plugin = async ({ client, directory, worktree }) => {
 
       if (!memory.available) return;
       if (!WRITE_TOOLS.has(tool)) return;
+      if (!isSafeProjectRoot(cwd)) return;
 
       const path = pickToolPath(output.args) ?? pickToolPath(output.metadata);
       if (!path) return;
