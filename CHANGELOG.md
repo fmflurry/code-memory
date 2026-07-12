@@ -70,7 +70,7 @@ Reason: the daemon runs 24/7 — any leak (open file descriptor, unclosed connec
 spawned thread) accumulates until the machine runs out of resources. This fix is
 critical for production use.
 
-## [opencode-plugin 0.3.1] — 2026-07-13
+## [opencode-plugin 0.9.0] — 2026-07-13
 
 ### Fixed
 

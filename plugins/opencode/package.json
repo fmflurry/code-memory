@@ -1,6 +1,6 @@
 {
   "name": "code-memory-opencode",
-  "version": "0.3.1",
+  "version": "0.9.0",
   "description": "OpenCode plugin: auto-retrieve and auto-learn against a local code-memory backend.",
   "type": "module",
   "main": "src/code-memory.ts",
