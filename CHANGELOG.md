@@ -8,6 +8,20 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
+## [opencode-plugin 0.3.1] — 2026-07-13
+
+### Fixed
+
+**`isSafeProjectRoot` guard in OpenCode plugin**: the plugin now validates the
+project root before spawning `code-memory autostart` or triggering an ingest,
+preventing a CPU/process storm when an unsafe or non-project root (e.g. `/`,
+`~`, or a non-repo directory) was passed.
+
+Reason: without the guard, every tool call in an unsafe root caused a new
+`code-memory` child process to be spawned without bound, exhausting CPU.
+
+---
+
 ## [0.7.6] — 2026-06-21
 
 Release theme: **Correct tree-sitter pin + Windows console & extras fixes**.
