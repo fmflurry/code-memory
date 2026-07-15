@@ -25,6 +25,7 @@ dependencies = [
 dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
+  "pytest-timeout>=2.3",
   "ruff>=0.6",
   "mypy>=1.11",
 ]
@@ -56,6 +57,12 @@ target-version = "py311"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+# Per-test ceiling: a hung external dependency (docker endpoint, WSL relay,
+# embedding daemon) must fail one test within 2 minutes, never wedge the
+# whole suite for hours. `thread` rather than the default signal method —
+# signals don't interrupt blocked syscalls on Windows.
+timeout = 120
+timeout_method = "thread"
 
 [[tool.mypy.overrides]]
 module = [
