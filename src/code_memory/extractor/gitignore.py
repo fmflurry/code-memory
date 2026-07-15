@@ -41,8 +41,9 @@ def _compile(pattern: str) -> re.Pattern[str]:
         else:
             # fnmatch.translate adds anchors we don't want — strip them
             tr = fnmatch.translate(seg)
-            # python's translate yields "(?s:...)\\Z"; extract inner
-            m = re.match(r"\(\?s:(.*)\)\\Z", tr)
+            # python's translate yields "(?s:...)\\Z" ("\\z" since 3.13);
+            # extract inner
+            m = re.match(r"\(\?s:(.*)\)\\[Zz]", tr)
             inner = m.group(1) if m else tr
             out.append(inner)
         if i != len(parts) - 1:
