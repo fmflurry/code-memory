@@ -1323,6 +1323,14 @@ def update(
             " Overrides the interactive prompt and CODEMEMORY_EXTRAS env var."
         ),
     ),
+    migrate_volumes: bool = typer.Option(
+        False,
+        "--migrate-volumes",
+        help=(
+            "Windows: re-offer copying FalkorDB/Qdrant volumes from the Docker"
+            " Desktop engine to the WSL one, even if already answered."
+        ),
+    ),
 ) -> None:
     """Smart-update code-memory: refresh only components already installed locally.
 
@@ -1337,7 +1345,13 @@ def update(
     """
     from .updater import run_update
 
-    rc = run_update(check_only=check, full=full, bleeding=bleeding, extras_override=extras)
+    rc = run_update(
+        check_only=check,
+        full=full,
+        bleeding=bleeding,
+        extras_override=extras,
+        migrate_volumes=migrate_volumes,
+    )
     raise typer.Exit(code=rc)
 
 
