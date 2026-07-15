@@ -70,9 +70,18 @@ class OllamaEmbedder:
             return []
 
         def _call():
+            # keep_alive per request: on a long CPU-bound ingest the
+            # server-side default (5 m, sliding only when a request
+            # *completes*) can expire while a large batch is queued —
+            # Ollama then unloads the runner under the pending requests,
+            # which are never answered (the connection just sits open).
             res = self._client.post(
                 f"{self.url}/api/embed",
-                json={"model": self.model, "input": list(texts)},
+                json={
+                    "model": self.model,
+                    "input": list(texts),
+                    "keep_alive": "30m",
+                },
             )
             res.raise_for_status()
             data = res.json()
