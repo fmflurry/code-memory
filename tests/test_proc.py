@@ -33,9 +33,16 @@ def _reset_proc_state():
     Runs around every test in this module so an installed wrapper from one
     test can never leak into the next (or into other test files run in the
     same process).
+
+    It also forces the *uninstalled* state before each test: other test
+    modules import ``cli``/``mcp_server``, whose module-level
+    ``install_windows_no_window_default()`` may already have run in this
+    process (on a real Windows host), leaving ``_INSTALLED=True`` behind.
     """
     orig_popen_init = subprocess.Popen.__init__
     orig_installed = proc_mod._INSTALLED
+    subprocess.Popen.__init__ = _REAL_POPEN_INIT
+    proc_mod._INSTALLED = False
     yield
     subprocess.Popen.__init__ = orig_popen_init
     proc_mod._INSTALLED = orig_installed

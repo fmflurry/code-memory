@@ -82,6 +82,7 @@ from __future__ import annotations
 import json
 import platform
 import plistlib
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -90,6 +91,22 @@ import pytest
 
 from code_memory import config
 from code_memory.sync import registry
+
+
+def _symlinks_supported() -> bool:
+    # Windows: needs SeCreateSymbolicLinkPrivilege (Developer Mode or admin).
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            (Path(td) / "probe-link").symlink_to(Path(td))
+        except OSError:
+            return False
+    return True
+
+
+requires_symlinks = pytest.mark.skipif(
+    not _symlinks_supported(),
+    reason="symlink creation needs privilege on Windows (Developer Mode or admin)",
+)
 
 
 def _isolate_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -227,6 +244,7 @@ def test_add_creates_file_and_entry(
     assert entries[key].added_ts > 0
 
 
+@requires_symlinks
 def test_add_resolves_symlinked_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
