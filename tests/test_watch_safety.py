@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,22 @@ from code_memory.sync.safety import (
     UnsafeWatchRootError,
     assert_safe_watch_root,
     is_ephemeral_watch_dir,
+)
+
+
+def _symlinks_supported() -> bool:
+    # Windows: needs SeCreateSymbolicLinkPrivilege (Developer Mode or admin).
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            (Path(td) / "probe-link").symlink_to(Path(td))
+        except OSError:
+            return False
+    return True
+
+
+requires_symlinks = pytest.mark.skipif(
+    not _symlinks_supported(),
+    reason="symlink creation needs privilege on Windows (Developer Mode or admin)",
 )
 
 
@@ -40,19 +57,23 @@ def test_assert_safe_expands_user(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     # with the user's actual home directory.
     fake_home = tmp_path / "home"
     fake_home.mkdir()
+    # expanduser() reads HOME on POSIX but USERPROFILE on Windows.
     monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
     repo = fake_home / "repo"
     repo.mkdir()
     resolved = assert_safe_watch_root("~/repo")
     assert resolved == repo.resolve()
 
 
+@requires_symlinks
 def test_assert_safe_rejects_resolved_home_via_symlink(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
     # symlink target = HOME → must still be rejected after resolve()
     link = tmp_path / "linked-home"
     link.symlink_to(fake_home)

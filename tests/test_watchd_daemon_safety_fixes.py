@@ -180,6 +180,11 @@ def test_safe_reconcile_helper_swallows_write_daemon_state_exception(
     watcher_mod._safe_reconcile(watcher)
 
 
+@pytest.mark.skipif(
+    not hasattr(signal, "SIGHUP"),
+    reason="SIGHUP is POSIX-only; on Windows run_daemon skips the handler "
+    "and relies on the registry self-watch",
+)
 def test_sighup_handler_routes_through_safe_reconcile_and_never_crashes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

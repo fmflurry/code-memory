@@ -12,17 +12,23 @@ values ``{"slug": str, "added_ts": float}``::
       "/Users/x/Workspace/repo-a": {"slug": "repo-a", "added_ts": 1700000000.0}
     }
 
-Concurrency: ``add``/``remove``/``prune`` each take an advisory
-``fcntl.flock`` exclusive lock on a sibling lock file for the duration of
-their read-modify-write-atomic-replace critical section, so N concurrent
+Concurrency: ``add``/``remove``/``prune`` each take an advisory exclusive
+lock on a sibling lock file for the duration of their
+read-modify-write-atomic-replace critical section, so N concurrent
 writers touching distinct (or the same) keys never lose an update.
-POSIX-only for this phase (``fcntl`` has no Windows equivalent; a
-``msvcrt``-based lock is left for a future phase).
+``fcntl.flock`` on POSIX; byte-range ``msvcrt.locking`` on Windows
+(``fcntl`` does not exist there — a bare import killed every watcher
+module at import time on Windows).
 """
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows — fcntl is POSIX-only
+    fcntl = None  # type: ignore[assignment]
+    import msvcrt
+
 import json
 import os
 import plistlib
@@ -101,6 +107,37 @@ def _atomic_write(registry_path: Path, raw: dict[str, Any]) -> None:
             tmp_path.unlink(missing_ok=True)
 
 
+def _lock_exclusive(lock_fh: Any) -> None:
+    """Advisory exclusive lock — ``flock`` on POSIX, byte-range on Windows.
+
+    ``msvcrt.locking(LK_LOCK)`` only retries for ~10 s before raising, so
+    loop to match ``flock``'s blocking semantics. The range is one byte at
+    offset 0; byte-range locks may extend past EOF, so the (empty) lock
+    file never needs content.
+    """
+    if fcntl is not None:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+        return
+    while True:
+        try:
+            lock_fh.seek(0)
+            msvcrt.locking(lock_fh.fileno(), msvcrt.LK_LOCK, 1)
+            return
+        except OSError:
+            continue
+
+
+def _lock_release(lock_fh: Any) -> None:
+    if fcntl is not None:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        return
+    try:
+        lock_fh.seek(0)
+        msvcrt.locking(lock_fh.fileno(), msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass  # process exit releases the range anyway
+
+
 def _with_lock(registry_path: Path, mutate: Any) -> None:
     """Serialize a read-modify-write-atomic-replace critical section.
 
@@ -110,13 +147,13 @@ def _with_lock(registry_path: Path, mutate: Any) -> None:
     registry_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = _lock_path(registry_path)
     with lock_path.open("a+") as lock_fh:
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+        _lock_exclusive(lock_fh)
         try:
             raw = _read_raw(registry_path)
             new_raw = mutate(raw)
             _atomic_write(registry_path, new_raw)
         finally:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+            _lock_release(lock_fh)
 
 
 def add(root: Path | str, slug: str) -> None:

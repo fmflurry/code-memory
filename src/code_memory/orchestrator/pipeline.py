@@ -1663,12 +1663,14 @@ def _owning_project(
     so the first match wins. ``None`` means the file lives outside any
     indexed project.
     """
-    abs_path = str(Path(file_path).resolve())
+    abs_path = Path(file_path).resolve().as_posix()
     for dir_, proj_key in proj_dirs:
         # Match on the directory boundary (``dir/file.cs``) — substring
         # without the trailing separator would treat ``/A/B.csproj`` as
-        # owning files under ``/A/Beta/`` which it doesn't.
-        prefix = dir_.rstrip("/") + "/"
+        # owning files under ``/A/Beta/`` which it doesn't. Both sides are
+        # compared in posix form: ``proj_dirs`` carries native separators
+        # on Windows, and a literal ``/`` never prefix-matches those.
+        prefix = Path(dir_).as_posix().rstrip("/") + "/"
         if abs_path.startswith(prefix):
             return proj_key
     return None

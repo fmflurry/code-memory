@@ -422,16 +422,17 @@ def _build_tree(repo: Path, entries: dict[str, tuple[str, str, str]]) -> str:
         sub_oid = _build_tree(repo, sub_entries)
         leaf_lines.append(f"040000 tree {sub_oid}\t{sub}")
 
+    # bytes, not text=True: text mode CRLF-translates stdin on Windows and
+    # git mktree silently embeds the \r in every tree entry name.
     payload = "\n".join(leaf_lines) + "\n"
     out = subprocess.run(
         ["git", "-C", str(repo), "mktree"],
-        input=payload,
+        input=payload.encode(),
         capture_output=True,
-        text=True,
         check=True,
         env=_git_env(),
     )
-    return out.stdout.strip()
+    return out.stdout.decode().strip()
 
 
 def _now() -> float:

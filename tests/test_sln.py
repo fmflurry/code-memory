@@ -97,5 +97,11 @@ def test_handles_windows_path_separators(tmp_path: Path) -> None:
     sln = _seed(tmp_path)
     info = parse_sln(sln)
     assert info is not None
-    # No path should contain a literal backslash on POSIX.
-    assert all("\\" not in p.csproj_path for p in info.projects)
+    # The ``\`` in each .sln entry must be read as a separator, so every
+    # entry resolves to its real on-disk csproj. ``csproj_path`` itself
+    # stays a native ``str(Path)`` — the graph keys the Project nodes by
+    # that form (see ``test_parses_project_entries``).
+    assert {p.csproj_path for p in info.projects} == {
+        str((tmp_path / "Acme.App" / "Acme.App.csproj").resolve()),
+        str((tmp_path / "Acme.Core" / "Acme.Core.csproj").resolve()),
+    }

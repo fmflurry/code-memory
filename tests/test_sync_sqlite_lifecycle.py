@@ -234,6 +234,11 @@ def _isolate_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.timeout(600)
+# Not hung, just slow on Windows: every sync_repo spawns 8-10 git
+# subprocesses, and process creation there (plus EDR scanning) costs
+# ~100ms each — 150 iterations legitimately take ~3 minutes, past the
+# suite-wide 120s ceiling.
 def test_sync_repo_across_many_threaded_calls_is_thread_safe_and_leak_free(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

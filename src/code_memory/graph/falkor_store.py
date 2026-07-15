@@ -28,12 +28,37 @@ def get_falkor_db(host: str, port: int) -> FalkorDB:
 
     Multiple ``FalkorStore()`` instances pointed at the same endpoint
     share one underlying connection instead of each opening their own.
+
+    Socket timeouts are mandatory: redis-py's default is ``None`` (block
+    forever), so a half-open endpoint — a WSL2-forwarded port with no
+    responder, or an endpoint security layer quarantining the first flow
+    of a process — hangs every reingest/watch/MCP process indefinitely
+    and they pile up. ``socket_timeout`` must exceed the server-side
+    ``TIMEOUT_MAX`` (60 s, set below) so long graph queries are not cut
+    short. The constructor is retried once because per-process traffic
+    inspection can eat exactly the first connection and allow the next
+    (observed: attempt 1 times out, attempt 2 answers instantly).
     """
     key = (host, port)
     with _DB_LOCK:
         db = _DBS.get(key)
         if db is None:
-            db = FalkorDB(host=host, port=port)
+            last_exc: Exception | None = None
+            for _ in range(2):
+                try:
+                    db = FalkorDB(
+                        host=host,
+                        port=port,
+                        socket_connect_timeout=10,
+                        socket_timeout=90,
+                    )
+                    break
+                except Exception as exc:  # noqa: BLE001 — retry once, then surface
+                    last_exc = exc
+                    db = None
+            if db is None:
+                assert last_exc is not None
+                raise last_exc
             _DBS[key] = db
         return db
 
