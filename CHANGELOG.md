@@ -71,6 +71,16 @@ non-git directory.
 Reason: without the guard, every tool call in an unsafe root spawned an
 unbounded `code-memory` child process, pegging CPU load average to 120+.
 
+**Claude Code plugin + marketplace manifests realigned to the Python
+package version.** `plugins/claude-code/.claude-plugin/plugin.json` and the
+`code-memory` entry in `.claude-plugin/marketplace.json` were stuck at
+`0.3.0` since their last bump while the hook code kept moving; both now
+read `0.10.0`, matching the PyPI/npm release.
+
+Reason: a mismatched plugin manifest version is what Claude Code's update
+detection compares against, so a stale `0.3.0` silently hid every hook fix
+shipped since that version from users already on the marketplace install.
+
 ## [0.9.0] — 2026-07-08
 
 Release theme: **Watcher consolidation + daemon resource-leak fixes — single OS autostart, multi-root registry**.

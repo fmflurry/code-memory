@@ -124,6 +124,9 @@ code-memory health
 code-memory ingest .
 ```
 
+> [!IMPORTANT]
+> **Upgrading from an older version?** When `uvx --from flurryx-code-memory` runs without a version pin, it reuses a cached ephemeral environment instead of re-resolving against PyPI, so older cached installs stay pinned to the old version indefinitely. The `--refresh` flag does not help. To force the newest release, use `uvx --from flurryx-code-memory@latest` (note the `@latest` suffix). If you installed before this release, run the `@latest` form once to upgrade.
+
 ### 📦 Prereqs (auto-pulled where possible)
 
 |                              |                                                                       |
@@ -203,7 +206,7 @@ claude plugin marketplace add https://github.com/fmflurry/code-memory
 claude plugin install code-memory@code-memory --scope user
 claude mcp add code-memory --scope user \
   -e CODE_MEMORY_PROJECT=auto \
-  -- uvx --from flurryx-code-memory code-memory-mcp
+  -- uvx --from flurryx-code-memory@latest code-memory-mcp
 
 # 5. OpenCode plugin
 npm i -g code-memory-opencode
@@ -223,7 +226,7 @@ Just the Claude Code MCP server — no auto-learn / auto-record hooks, no Docker
 
 ```bash
 claude mcp add code-memory \
-  -- uvx --from flurryx-code-memory code-memory-mcp
+  -- uvx --from flurryx-code-memory@latest code-memory-mcp
 ```
 
 </details>

@@ -10,7 +10,7 @@
       "name": "code-memory",
       "source": "./plugins/claude-code",
       "description": "Auto-injects a code-memory Context Pack on each user prompt, re-indexes files after Write/Edit, runs a debounced cross-file resolver, records sessions as episodes, and detects durable user assertions to nudge codememory_assert_claim.",
-      "version": "0.3.0",
+      "version": "0.10.0",
       "author": {
         "name": "fmflurry"
       },
