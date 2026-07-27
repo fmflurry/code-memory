@@ -8,6 +8,69 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
+## [0.10.0] — 2026-07-27
+
+Release theme: **Docker Desktop dependency dropped, Windows console/encoding
+hardening, PyPI trusted publishing**.
+
+### Added
+
+**Docker Desktop is no longer a hard requirement.** Any working Docker
+engine is now accepted — native `docker` on `PATH` is tried first (Docker
+Desktop keeps working unchanged), then docker-ce inside WSL2 via
+`wsl -e docker` on Windows. New `code_memory/_docker.py` resolves and caches
+the engine choice once per process; `install.ps1` can provision docker-ce
+inside the default WSL2 distro (systemd, `get.docker.com`, docker group,
+optional logon boot task) and verifies `127.0.0.1:6333` is reachable from
+Windows; `install.sh` offers Colima on macOS or docker-ce on Linux via new
+`--colima` / `--docker-ce` flags.
+
+Reason: Docker Desktop's licensing and resource footprint were a recurring
+friction point for contributors and CI; any engine that speaks the same
+Docker API now works, with WSL2 as the Windows fallback path instead of a
+Docker Desktop mandate.
+
+**PyPI publish-on-tag CI workflow.** A new GitHub Actions workflow builds
+and publishes the package to PyPI via trusted publishing whenever a
+`v*` tag is pushed, plus accompanying release docs.
+
+Reason: removes the manual `twine upload` step from the release process
+and avoids storing a long-lived PyPI API token as a repo secret.
+
+### Fixed
+
+**Windows console flashes hidden across all spawn paths.** Detached hook
+spawns, the `pythonw` watcher, the MCP server, and the schtasks daemon each
+used to allocate a visible `cmd` window on Windows. JS spawns now set
+`windowsHide` and route through `pythonw.exe` when resolvable; Python's
+`install_windows_no_window_default()` wraps `subprocess.Popen` with
+`CREATE_NO_WINDOW` at the `cli.py` and `mcp_server.py` entry points; the
+schtasks daemon task registration goes through a windowless `pythonw`
+command as well, closing a gap the earlier per-repo install path fix
+didn't cover.
+
+Reason: a flashing console window on every hook invocation and daemon tick
+was a visible annoyance and a giveaway that something was silently
+spawning processes in the background.
+
+**Updater subprocess output decoded as UTF-8, not the ANSI code page.**
+`claude plugin list` prints a U+276F arrow and wsl/docker emit UTF-8; under
+cp1252 the reader thread raised `UnicodeDecodeError`, leaving `stdout=None`
+and crashing `update --check` on Windows. Output is now decoded as UTF-8
+with `errors="replace"`, and `WSL_UTF8=1` is exported so `wsl.exe`
+diagnostics stay decodable too.
+
+Reason: `code-memory update --check` was unusable on stock Windows
+terminals whenever a dependency printed a non-ASCII character.
+
+**OpenCode plugin guards ingest/autostart against unsafe roots.** A new
+`isSafeProjectRoot(cwd)` guard blocks ingest, autostart install, reingest,
+and resolve from running when `cwd` is the filesystem root, `$HOME`, or a
+non-git directory.
+
+Reason: without the guard, every tool call in an unsafe root spawned an
+unbounded `code-memory` child process, pegging CPU load average to 120+.
+
 ## [0.9.0] — 2026-07-08
 
 Release theme: **Watcher consolidation + daemon resource-leak fixes — single OS autostart, multi-root registry**.
