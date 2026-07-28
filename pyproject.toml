@@ -16,7 +16,7 @@ dependencies = [
   "pydantic>=2.8",
   "typer>=0.12",
   "rich>=13.7",
-  "mcp>=1.0",
+  "mcp>=1.0,<2",
   "anyio>=4.4",
   "watchdog>=4.0",
 ]
