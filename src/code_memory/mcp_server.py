@@ -11,6 +11,7 @@ Tools:
   - codememory_dependencies(file, depth?, project?)
   - codememory_injects(symbol, project?)                   — Angular/Razor DI
   - codememory_injectors(token, project?)
+  - codememory_layer_violations(project)                   — clean-arch layer checks
   - codememory_definitions(symbol, project?)
   - codememory_assembly_members(type, assembly?, project?) — .NET DLL surface
   - codememory_drift(head_sha, project?)                   — temporal
@@ -308,6 +309,22 @@ _TOOLS: list[Tool] = [
                 "project": _project_schema(),
             },
             "required": ["token", "project"],
+        },
+    ),
+    Tool(
+        name="codememory_layer_violations",
+        description=(
+            "Clean-architecture dependency-rule violations: files in a "
+            "lower-rank (more inward, e.g. domain) layer that depend on "
+            "a symbol defined by a file in a higher-rank (more outward, "
+            "e.g. infrastructure) layer. Use to audit layer boundaries."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": _project_schema(),
+            },
+            "required": ["project"],
         },
     ),
     Tool(
@@ -933,9 +950,27 @@ def _ingest(
         )
 
     pipe = Pipeline(project=project)
+    t0 = _now()
     stats = pipe.ingest_repo(
         root, mode=mode, since=since, dry_run=dry_run, on_progress=on_progress
     )
+    if not dry_run:
+        try:
+            from .metrics import MetricsStore
+
+            db_path = os.environ.get("CODEMEMORY_METRICS_DB") or str(CONFIG.data_dir / "metrics.db")
+            ms = MetricsStore(Path(db_path))
+            ms.record_ingest(
+                files=stats.files,
+                symbols=stats.symbols,
+                duration_s=_now() - t0,
+                project=pipe.slug,
+            )
+            flush_cache_stats = getattr(pipe.embedder, "flush_cache_stats", None)
+            if flush_cache_stats is not None:
+                flush_cache_stats(ms)
+        except Exception:
+            pass
     return _text(
         {
             "project": pipe.slug,
@@ -981,6 +1016,12 @@ def _injectors(args: dict[str, Any]) -> list[TextContent]:
     g, slug = _graph_for(_require_project(args))
     rows = g.injectors(args["token"])
     return _text({"project": slug, "token": args["token"], "injectors": rows})
+
+
+def _layer_violations(args: dict[str, Any]) -> list[TextContent]:
+    g, slug = _graph_for(_require_project(args))
+    rows = g.layer_violations()
+    return _text({"project": slug, "violations": rows})
 
 
 def _definitions(args: dict[str, Any]) -> list[TextContent]:
@@ -1430,7 +1471,7 @@ def _health(args: dict[str, Any]) -> list[TextContent]:
             from .metrics import MetricsStore
 
             ms = MetricsStore(metrics_path)
-            metrics_block.update(ms.summary())
+            metrics_block.update(ms.summary(project=project))
             metrics_block["tool_usage"] = ms.tool_usage_summary()
             metrics_block["efficiency"] = ms.efficiency_summary()
         except Exception as exc:
@@ -1545,6 +1586,7 @@ _HANDLERS = {
     "codememory_dependencies": _dependencies,
     "codememory_injects": _injects,
     "codememory_injectors": _injectors,
+    "codememory_layer_violations": _layer_violations,
     "codememory_definitions": _definitions,
     "codememory_assembly_members": _assembly_members,
     "codememory_drift": _drift,

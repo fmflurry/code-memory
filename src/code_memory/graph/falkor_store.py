@@ -9,10 +9,16 @@ from typing import Any
 
 from falkordb import FalkorDB
 
-from ..config import CONFIG
+from ..config import CONFIG, TEST_PATH_PATTERNS
 
 NodeLabel = str  # File | Symbol | Module
 EdgeType = str  # IMPORTS | CALLS | DEFINES | EXPORTS
+
+# Labels ``sweep_stale`` is allowed to tombstone. Cypher can't
+# parameterize a node label, so the caller-supplied string is
+# f-string-interpolated into the query — this allowlist is the guard
+# against an unexpected or adversarial value reaching that query.
+_SWEEPABLE_LABELS = {"File", "Symbol", "Module", "Layer"}
 
 # Process-singleton FalkorDB registry, keyed by (host, port). A
 # long-lived daemon constructs a fresh FalkorStore() per Pipeline() —
@@ -91,7 +97,7 @@ class FalkorStore:
                 pass
 
     def ensure_indexes(self) -> None:
-        for label in ("File", "Symbol", "Module"):
+        for label in ("File", "Symbol", "Module", "Layer"):
             try:
                 self.graph.query(f"CREATE INDEX FOR (n:{label}) ON (n.key)")
             except Exception:
@@ -299,6 +305,57 @@ class FalkorStore:
             """,
             params,
         )
+
+    def sweep_stale(
+        self,
+        label: str,
+        head_sha: str,
+        head_ord: int | None = None,
+    ) -> int:
+        """Tombstone ``label`` nodes not reconfirmed at ``head_sha``.
+
+        Closes a real gap: ``delete_file`` tombstones the ``IN_LAYER``
+        edge of a deleted file but never the ``Layer`` node itself, and
+        ``vacuum`` can never collect an orphaned ``Layer`` node because
+        every vacuum predicate requires ``invalid_sha IS NOT NULL`` —
+        nothing else ever sets it for a label ``vacuum`` doesn't special
+        case. This sweeps any node of ``label`` whose ``last_seen_sha``
+        wasn't refreshed to the current ingest's ``head_sha`` and marks
+        it invalid, using the same ``invalid_sha`` / ``invalid_ord`` /
+        ``invalid_at`` triple as every other tombstoning path so
+        ``vacuum``'s existing eligibility predicate picks it up later.
+
+        Already-tombstoned nodes (``invalid_sha IS NOT NULL``) are left
+        alone — re-stamping them would overwrite the SHA/ordinal at
+        which they actually went stale.
+
+        ``label`` is validated against a fixed allowlist before being
+        f-string-interpolated into the Cypher ``MATCH (n:{label})``
+        clause — this is the only place a raw label string reaches a
+        query unparameterized (Cypher can't parameterize labels), so an
+        unexpected or adversarial value must be rejected up front rather
+        than silently reaching the database.
+
+        Returns the number of nodes tombstoned by this call.
+        """
+        if label not in _SWEEPABLE_LABELS:
+            raise ValueError(f"sweep_stale: unsupported label {label!r}")
+        result = self.graph.query(
+            f"""
+            MATCH (n:{label})
+            WHERE n.last_seen_sha IS NOT NULL
+              AND n.last_seen_sha <> $head
+              AND n.invalid_sha IS NULL
+            SET n.invalid_sha = $head,
+                n.invalid_ord = $ord,
+                n.invalid_at = $ts
+            RETURN count(n)
+            """,
+            {"head": head_sha, "ord": head_ord, "ts": time.time()},
+        )
+        if not result.result_set:
+            return 0
+        return int(result.result_set[0][0])
 
     # ------------------------------------------------------------------
     # Vacuum + time-travel — bound monotonic graph growth and let callers
@@ -782,6 +839,90 @@ class FalkorStore:
             {"name": token},
         ).result_set
         return [{"file": file_key} for (file_key,) in rows]
+
+    def layer_of(self, file_key: str) -> dict[str, Any] | None:
+        """Return the ``{"name", "rank"}`` of the ``Layer`` ``file_key`` belongs
+        to, or ``None`` when the file has no ``IN_LAYER`` edge (unclassified).
+
+        Filters ``invalid_sha IS NULL`` on the ``File``, the ``Layer``,
+        AND the ``IN_LAYER`` edge itself (bound to ``r`` rather than left
+        anonymous) — a tombstoned file, a swept Layer node, or a
+        tombstoned edge between two otherwise-live nodes (what a file
+        going classified -> unclassified produces) must none of them
+        report a live layer.
+        """
+        rows = self.graph.query(
+            "MATCH (f:File {key: $key})-[r:IN_LAYER]->(l:Layer) "
+            "WHERE f.invalid_sha IS NULL AND l.invalid_sha IS NULL "
+            "  AND r.invalid_sha IS NULL "
+            "RETURN l.name, l.rank LIMIT 1",
+            {"key": file_key},
+        ).result_set
+        if not rows:
+            return None
+        name, rank = rows[0]
+        return {"name": name, "rank": rank}
+
+    def layer_violations(self) -> list[dict[str, Any]]:
+        """Clean-architecture dependency-rule violations.
+
+        A violation is a file in a lower-rank (more inward, e.g.
+        ``domain``) layer that depends — via ``CALLS``, ``REFERENCES``,
+        or ``INJECTS`` — on a symbol defined by a file in a higher-rank
+        (more outward, e.g. ``infrastructure``) layer. The opposite
+        direction (outward depending on inward) is the allowed
+        clean-architecture flow and is never flagged. The module-import
+        relationship type is deliberately excluded from the union: it
+        only ever targets ``:Module`` nodes, and nothing in the ingest
+        pipeline emits a ``DEFINES`` edge into a ``Module`` — that arm
+        could never match a row, so keeping it would be dead code
+        contradicting this docstring.
+
+        Tombstoned files (``invalid_sha`` set) on either end of the
+        dependency are excluded, and the dependent/target file are
+        required to differ (``lo.key <> hi.key``) so a file that both
+        has two live ``IN_LAYER`` edges (e.g. mid-reclassification) and
+        calls a symbol it defines itself (ordinary recursion) never
+        produces a spurious self-violation row.
+
+        HIGH 2 (round 4): the ``IN_LAYER`` edges (``r1``/``r2``) and both
+        Layer nodes are also filtered on ``invalid_sha`` — the previous
+        anonymous ``-[:IN_LAYER]->`` patterns had no variable bound to
+        either edge, so a tombstoned edge between two otherwise-live
+        nodes (e.g. after a dependent file moves into an allowed layer)
+        kept being traversed, and neither Layer node's own liveness was
+        ever checked, so an already-fixed violation kept being reported
+        until a physical ``vacuum()``.
+        """
+        rows = self.graph.query(
+            """
+            MATCH (lo:File)-[r1:IN_LAYER]->(loLayer:Layer)
+            MATCH (hi:File)-[r2:IN_LAYER]->(hiLayer:Layer)
+            MATCH (lo)-[:CALLS|REFERENCES|INJECTS]->(sym)<-[:DEFINES]-(hi)
+            WHERE lo.invalid_sha IS NULL
+              AND hi.invalid_sha IS NULL
+              AND r1.invalid_sha IS NULL
+              AND r2.invalid_sha IS NULL
+              AND loLayer.invalid_sha IS NULL
+              AND hiLayer.invalid_sha IS NULL
+              AND lo.key <> hi.key
+              AND loLayer.rank < hiLayer.rank
+              AND NOT ANY(p IN $test_patterns WHERE lo.key CONTAINS p)
+              AND NOT ANY(p IN $test_patterns WHERE hi.key CONTAINS p)
+            RETURN DISTINCT lo.key, loLayer.name, hi.key, hiLayer.name, sym.name
+            """,
+            {"test_patterns": list(TEST_PATH_PATTERNS)},
+        ).result_set
+        return [
+            {
+                "file": file_key,
+                "layer": layer_name,
+                "depends_on_file": dep_file_key,
+                "depends_on_layer": dep_layer_name,
+                "symbol": symbol_name,
+            }
+            for file_key, layer_name, dep_file_key, dep_layer_name, symbol_name in rows
+        ]
 
     def importers(self, target: str) -> list[dict[str, Any]]:
         """Files that import a Module whose key matches ``target``.

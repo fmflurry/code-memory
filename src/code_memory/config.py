@@ -452,3 +452,225 @@ class Config:
 
 
 CONFIG = Config()
+
+
+# ---------------------------------------------------------------------------
+# Architecture layer conventions — used by the ``Layer`` graph projection
+# (``Pipeline._index_architecture``) to detect clean-architecture dependency
+# violations (an inner layer depending on an outer one).
+
+
+@dataclass(frozen=True)
+class LayerRule:
+    """One entry in the architecture layer-convention table.
+
+    ``segments`` are lowercase directory-segment spellings that identify
+    files belonging to this conceptual layer. A single flat table can
+    union spellings from multiple conventions (.NET's ``Core``/``Domain``
+    and Angular's ``domain`` both map to rank 0 here) since the
+    conventions agree on rank per concept.
+    """
+
+    name: str
+    rank: int
+    segments: tuple[str, ...]
+
+
+ArchitectureLayers = dict[str, LayerRule]
+
+
+DEFAULT_ARCHITECTURE_LAYERS: ArchitectureLayers = {
+    "domain": LayerRule(name="domain", rank=0, segments=("core", "domain")),
+    "application": LayerRule(name="application", rank=1, segments=("application",)),
+    "infrastructure": LayerRule(
+        name="infrastructure", rank=2, segments=("infrastructure",)
+    ),
+    "presentation": LayerRule(
+        name="presentation", rank=3, segments=("presentation",)
+    ),
+}
+
+
+def resolve_architecture_layers(
+    overrides: ArchitectureLayers | None = None,
+) -> ArchitectureLayers:
+    """Merge caller-supplied layer overrides on top of the defaults.
+
+    Overrides replace the *whole* :class:`LayerRule` for a given layer
+    name (never a field-level merge) and may introduce wholly new,
+    bespoke layer names on top of the built-in .NET/Angular spellings.
+    Never mutates ``DEFAULT_ARCHITECTURE_LAYERS``.
+    """
+    resolved: ArchitectureLayers = dict(DEFAULT_ARCHITECTURE_LAYERS)
+    if overrides:
+        resolved.update(overrides)
+    return resolved
+
+
+# Directory segments that name a generic container, never a bounded-context
+# / module name. When the segment immediately preceding a layer match is
+# one of these, ``classify_file_layer`` keeps walking up the path looking
+# for a meaningful context instead of returning the generic name — two
+# bounded contexts that both happen to nest their layers under ``src/``
+# must not collapse into the same Layer node. A ``frozenset`` so it can
+# never be mutated by a caller holding a reference to it.
+GENERIC_CONTEXT_SEGMENTS: frozenset[str] = frozenset({"src", "lib", "app", "source"})
+
+# Literal substring markers identifying a test/spec file's ``File.key``,
+# matched CASE-SENSITIVELY (never lower-cased on either side — see
+# ``FalkorStore.layer_violations()``). Used to exclude test-authored
+# dependencies (e.g. an ``application/*.use-case.spec.ts`` importing an
+# infrastructure adapter to build a fake) from clean-architecture
+# layer-violation reports; a spec depending on anything to construct its
+# test double is not a genuine layering violation. Case-sensitivity is
+# load-bearing: lower-casing both sides would make ``"tests.cs"`` a
+# substring of a legitimate production file like ``"protests.cs"``.
+TEST_PATH_PATTERNS: frozenset[str] = frozenset({
+    ".spec.ts", ".spec.tsx", ".spec.js",
+    ".test.ts", ".test.tsx", ".test.js",
+    "/test_",       # pytest test_*.py convention
+    "_test.py",     # pytest *_test.py convention
+    ".Tests/",      # .NET Xxx.Tests project-folder convention
+    "Tests.cs",     # .NET XxxTests.cs test-class file convention
+})
+
+# Delimiters recognised for the dot/dash-delimited layer-name TAIL match
+# (``Billing.Core`` -> tail ``Core``, ``billing-domain`` -> tail ``domain``).
+_TAIL_DELIMITERS = (".", "-")
+
+
+def _tail_match(part: str) -> tuple[str, str] | None:
+    """Split ``part`` on its LAST ``.``/``-`` delimiter into (prefix, tail).
+
+    Returns ``None`` when ``part`` has no such delimiter (or the
+    delimiter sits at the very start/end, leaving an empty prefix or
+    tail) — a segment with no delimiter must never be matched via
+    substring containment (``MyCoreUtils`` / ``Coordinator`` must NOT
+    match ``core``).
+    """
+    idx = max(part.rfind(d) for d in _TAIL_DELIMITERS)
+    if idx <= 0 or idx >= len(part) - 1:
+        return None
+    return part[:idx], part[idx + 1 :]
+
+
+# The bare word "api" is deliberately NOT a ``presentation`` segment
+# spelling (round 3, "api collision" fix): it is both a legitimate .NET
+# ``Module.Api`` folder-suffix convention AND an extremely common bare
+# app/service name (Nx/Turborepo ``apps/api``, kebab-case
+# ``payment-api``/``user-api`` service names) — treating it as an
+# ordinary layer segment let a single top-level ``api`` app, or a
+# ``*-api`` service name matched via the dash-tail rule, swallow an
+# entire unrelated subtree as rank-3 presentation. The narrower, more
+# intentional ``.Api`` DOT-tail convention (``Billing.Api``) is kept —
+# it is reachable ONLY through this dedicated dot-only path, never via
+# whole-segment matching nor the dash-tail path shared by every other
+# layer word. Repos that want the old bare/dash-``api`` behaviour back
+# can reinstate it per-repo via an ``[architecture]`` override that adds
+# ``"api"`` back into ``presentation``'s ``segments`` — that goes
+# through the ordinary whole-segment/tail lookup, not this constant.
+_DOT_ONLY_TAIL_WORD = "api"
+
+
+def _dot_tail_match(part: str) -> tuple[str, str] | None:
+    """Split ``part`` on its LAST literal ``.`` only — never ``-``.
+
+    Used exclusively for the ``_DOT_ONLY_TAIL_WORD`` ("api") convention.
+    Mirrors :func:`_tail_match`'s prefix/tail split and empty-token
+    guard, but restricted to the dot delimiter alone.
+    """
+    idx = part.rfind(".")
+    if idx <= 0 or idx >= len(part) - 1:
+        return None
+    return part[:idx], part[idx + 1 :]
+
+
+def _ancestor_context(parts: tuple[str, ...], index: int) -> str:
+    """Nearest ancestor segment of ``parts[index]`` that isn't generic.
+
+    Walks up from ``parts[index - 1]``, skipping ``GENERIC_CONTEXT_SEGMENTS``
+    (case-insensitively), and falls back to the ``"root"`` sentinel when
+    nothing but generic segments (or nothing at all) precedes the match.
+    """
+    j = index - 1
+    while j >= 0 and parts[j].lower() in GENERIC_CONTEXT_SEGMENTS:
+        j -= 1
+    return parts[j] if j >= 0 else "root"
+
+
+def classify_file_layer(
+    file_path: str, layers: ArchitectureLayers | None = None
+) -> tuple[str, str, int] | None:
+    """Classify ``file_path`` into ``(context, layer_name, rank)``.
+
+    Walks ``Path(file_path).parts`` **shallow-to-deep**, looking for
+    either (a) a whole segment (matched case-insensitively) that names a
+    configured layer, or (b) a segment whose dot/dash-delimited TAIL
+    token names one (the .NET "module-per-folder" convention —
+    ``Billing.Core``, ``billing-domain``). The **shallowest** matching
+    segment wins — a genuine ``infrastructure/api/*.adapter.ts`` adapter
+    must classify as infrastructure, not have a deeper nested ``api``
+    (presentation) folder win instead.
+
+    Context differs by match kind:
+
+    * Whole-segment match: ``context`` is the nearest ancestor segment
+      that isn't a generic container directory (``GENERIC_CONTEXT_SEGMENTS``
+      — ``src``, ``lib``, ``app``, ``source``); falls back to ``"root"``
+      when nothing but generic segments (or nothing at all) precedes the
+      match, or when the match is the first path component.
+    * Tail match: ``context`` is the PREFIX of that SAME segment
+      (``Billing.Core`` -> ``Billing``) — the module name IS the segment
+      itself for this convention, there is no separate ancestor folder
+      carrying it.
+
+    Returns ``None`` when no configured segment (whole or tail) appears
+    anywhere in the path. ``layers`` defaults to
+    ``DEFAULT_ARCHITECTURE_LAYERS`` when omitted (``None``); an
+    explicitly-passed ``{}`` disables matching entirely for this call —
+    no implicit fallback to the defaults happens inside this function
+    (that merge is :func:`resolve_architecture_layers`'s job).
+
+    (c) A third, narrower path handles the ``.Api`` DOT-tail convention
+    specifically (``Billing.Api`` -> presentation) — see
+    ``_DOT_ONLY_TAIL_WORD``. Bare ``api`` and ``*-api`` DASH-tail names
+    are NOT layer segments by default (a top-level ``apps/api`` app or a
+    ``payment-api`` service name must not swallow an unrelated subtree
+    as presentation); a custom ``layers`` override can reinstate the old
+    bare-segment behaviour by adding ``"api"`` back into a rule's
+    ``segments`` — that goes through the ordinary whole-segment path.
+    """
+    active = DEFAULT_ARCHITECTURE_LAYERS if layers is None else layers
+    if not active:
+        return None
+
+    segment_to_rule: dict[str, LayerRule] = {}
+    for rule in active.values():
+        for seg in rule.segments:
+            segment_to_rule[seg] = rule
+
+    parts = Path(file_path).parts
+    for index in range(len(parts)):
+        part = parts[index]
+
+        whole = segment_to_rule.get(part.lower())
+        if whole is not None:
+            context = _ancestor_context(parts, index)
+            return (context, whole.name, whole.rank)
+
+        tail = _tail_match(part)
+        if tail is not None:
+            prefix, tail_token = tail
+            matched = segment_to_rule.get(tail_token.lower())
+            if matched is not None:
+                return (prefix, matched.name, matched.rank)
+
+        dot_tail = _dot_tail_match(part)
+        if dot_tail is not None:
+            prefix, tail_token = dot_tail
+            if tail_token.lower() == _DOT_ONLY_TAIL_WORD:
+                presentation_rule = active.get("presentation")
+                if presentation_rule is not None:
+                    return (prefix, presentation_rule.name, presentation_rule.rank)
+
+    return None

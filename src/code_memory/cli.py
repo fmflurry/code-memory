@@ -132,14 +132,34 @@ def ingest(
 
     try:
         pipe = Pipeline(project=slug, skip_vectors=no_vectors)
+        t0 = time.time()
         stats = pipe.ingest_repo(
             safe_root,
             mode="full" if full else "auto",
             since=since,
             dry_run=dry_run,
         )
+        duration_s = time.time() - t0
     finally:
         release(safe_root, slug)
+
+    if not dry_run:
+        try:
+            from .metrics import MetricsStore
+
+            db_path = os.environ.get("CODEMEMORY_METRICS_DB") or CONFIG.data_dir / "metrics.db"
+            ms = MetricsStore(Path(db_path))
+            ms.record_ingest(
+                files=stats.files,
+                symbols=stats.symbols,
+                duration_s=duration_s,
+                project=slug,
+            )
+            flush_cache_stats = getattr(pipe.embedder, "flush_cache_stats", None)
+            if flush_cache_stats is not None:
+                flush_cache_stats(ms)
+        except Exception:
+            pass
 
     _emit(
         {"project": slug, "dry_run": dry_run, "ingested": asdict(stats)},
@@ -758,6 +778,16 @@ def injectors(
     """List files that inject ``token`` (reverse INJECTS edges)."""
     rows = _graph_for(project).injectors(token)
     _emit({"token": token, "injectors": rows}, as_json=as_json)
+
+
+@app.command()
+def layer_violations(
+    project: str | None = ProjectOpt,
+    as_json: bool = JsonOpt,
+) -> None:
+    """List clean-architecture layer violations (inward depending on outward)."""
+    rows = _graph_for(project).layer_violations()
+    _emit({"violations": rows}, as_json=as_json)
 
 
 @app.command()

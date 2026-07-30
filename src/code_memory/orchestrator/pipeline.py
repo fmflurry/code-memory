@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from ..config import CONFIG, Config, detect_project_slug
+from ..config import CONFIG, Config, classify_file_layer, detect_project_slug
 from ..embed import M3Embedder, get_embedder
 from ..episodic import Episode, EpisodicStore
 from ..episodic.sqlite_store import episode_payload, episode_text
@@ -663,6 +663,10 @@ class Pipeline:
             root, stats, dry_run=dry_run, head_sha=head_sha, head_ord=head_ord
         )
         if not dry_run:
+            # Project Layer nodes / IN_LAYER edges while the shadow graph
+            # is still active, before it gets promoted to live below.
+            self._index_architecture(root, stats, head_sha=head_sha, head_ord=head_ord)
+        if not dry_run:
             # All data committed to shadow; atomically swap into the live
             # collection.  If this step fails the shadow persists and the
             # live collection is still intact from before the rebuild.
@@ -1035,6 +1039,185 @@ class Pipeline:
         stats.projects["files_assigned"] = assigned
         stats.projects["files_unowned"] = unowned
 
+    def _index_architecture(
+        self,
+        root: Path,
+        stats: IngestStats,
+        *,
+        head_sha: str | None = None,
+        head_ord: int | None = None,
+    ) -> None:
+        """Project ``Layer`` nodes + ``File -[:IN_LAYER]-> Layer`` edges.
+
+        Modelled on ``_index_file_containment`` above, but with NO
+        ``f.lang`` filter — clean-architecture layering applies to every
+        language (Angular's ``domain/application/infrastructure/
+        presentation`` folders and .NET's ``Core/Application/
+        Infrastructure/Api``), not just .NET.
+
+        Each classified file gets tied to a ``Layer`` node scoped to its
+        ``(context, name)`` pair — one independent layer stack per
+        bounded module/feature rather than a single global one. The key
+        is namespaced ``{root}::layer::{context}::{name}``; it must
+        never start with ``name::`` — that's the resolver's placeholder
+        prefix (``resolver.PLACEHOLDER_PREFIX``) and ``_cleanup_orphans``
+        would silently delete anything living there.
+
+        File keys are absolute paths, so classification is done on the
+        path RELATIVE to ``root`` — never the raw absolute key — so an
+        ancestor directory outside the repo that happens to be spelled
+        ``Core``/``Domain``/``Api``/etc. can't leak a bogus classification
+        into unrelated files. A file key that doesn't resolve to
+        somewhere under ``root`` is skipped (no crash).
+
+        Already-tombstoned files (``invalid_sha IS NOT NULL``) are
+        excluded from the query so a deleted file doesn't keep
+        reclassifying and permanently re-confirming its old Layer node,
+        which would prevent ``sweep_stale`` below from ever converging.
+
+        Before writing a file's new ``IN_LAYER`` edge, any of its OTHER
+        live ``IN_LAYER`` edges (pointing at a different Layer) are
+        tombstoned — ``upsert_edges`` only MERGEs the given triple, it
+        never removes a stale edge left behind by a reclassification
+        (e.g. a directory rename).
+
+        HIGH 1 (round 4): a file that goes classified -> unclassified
+        (e.g. refactored out of any layer directory) gets its stale
+        ``IN_LAYER`` edge tombstoned too — that path used to hit the
+        ``classified is None`` branch before ever reaching the edge
+        tombstone above, leaving the edge live forever (``sweep_stale``
+        only tombstones NODES, never edges) and disagreeing with the
+        correctly-cleared ``f.context``.
+
+        Runs ``sweep_stale("Layer", ...)`` unconditionally (whenever
+        ``head_sha`` is available) — including when zero files classify
+        this run (a delete-only delta) — so a Layer node orphaned by a
+        prior run still gets tombstoned and eventually vacuumed.
+
+        FIX 1: ``context`` is also stamped onto both the ``Layer`` node's
+        own props (previously computed then discarded) and onto the
+        classified ``File`` node itself. A file that used to classify but
+        no longer does gets its stale ``context`` explicitly cleared; a
+        file that never classified gets no context write at all.
+
+        HIGH (round 3): the File-node context write is a plain targeted
+        ``SET f.context = ...`` query — NOT ``GraphNode``/``upsert_nodes``.
+        ``_index_architecture`` re-derives classification for every live
+        file on every run, including ones never reparsed this ingest;
+        routing that write through ``upsert_nodes`` would unconditionally
+        bump those untouched files' ``last_seen_sha``/``last_seen_ord`` to
+        the current head (``ON MATCH SET`` in ``FalkorStore.upsert_nodes``
+        has no "only if something actually changed" guard), corrupting
+        the "last_seen = last ingest that actually saw this node"
+        invariant — and since ``"File"`` is sweepable, a genuinely missed
+        deletion would never surface via drift/sweep. The plain ``SET``
+        touches only ``context``, leaving ``lang``/``generated``/
+        temporal stamps untouched.
+        """
+        active = getattr(self, "_active_graph", self.graph)
+        rows = active.graph.query(
+            "MATCH (f:File) WHERE f.invalid_sha IS NULL RETURN f.key"
+        ).result_set
+        files = [row[0] for row in rows]
+
+        root_resolved = Path(root).resolve()
+        now_ts = time.time()
+        layer_nodes: dict[str, GraphNode] = {}
+        context_writes: list[dict[str, str]] = []
+        edges: list[GraphEdge] = []
+        unclassified: list[str] = []
+        for file_key in files:
+            try:
+                rel = Path(file_key).resolve().relative_to(root_resolved)
+            except ValueError:
+                continue  # not under root — skip, no crash
+            classified = classify_file_layer(str(rel))
+            if classified is None:
+                unclassified.append(file_key)
+                continue
+            context, name, rank = classified
+            layer_key = f"{root}::layer::{context}::{name}"
+            if layer_key not in layer_nodes:
+                layer_nodes[layer_key] = GraphNode(
+                    label="Layer",
+                    key=layer_key,
+                    props={"name": name, "rank": rank, "context": context},
+                )
+            context_writes.append({"file": file_key, "context": context})
+            active.graph.query(
+                """
+                MATCH (f:File {key:$key})-[r:IN_LAYER]->(l:Layer)
+                WHERE l.key <> $new_layer_key AND r.invalid_sha IS NULL
+                SET r.invalid_sha = $head, r.invalid_ord = $ord, r.invalid_at = $ts
+                """,
+                {
+                    "key": file_key,
+                    "new_layer_key": layer_key,
+                    "head": head_sha,
+                    "ord": head_ord,
+                    "ts": now_ts,
+                },
+            )
+            edges.append(
+                GraphEdge(
+                    type="IN_LAYER",
+                    src_label="File",
+                    src_key=file_key,
+                    dst_label="Layer",
+                    dst_key=layer_key,
+                )
+            )
+
+        if unclassified:
+            # Direct write (not upsert_nodes/GraphNode) so a file that has
+            # NEVER classified gets no query at all, while a file that
+            # used to classify has its stale context cleared.
+            active.graph.query(
+                "UNWIND $keys AS k MATCH (f:File {key: k}) SET f.context = NULL",
+                {"keys": unclassified},
+            )
+            # HIGH 1 (round 4): a file going classified -> unclassified
+            # must have its stale IN_LAYER edge tombstoned too — there's
+            # no new layer to compare against here (unlike the
+            # reclassification tombstone query above), so every live
+            # IN_LAYER edge from these files is invalidated outright.
+            # sweep_stale only ever tombstones NODES, never edges, so
+            # without this the edge would live forever and disagree with
+            # the just-cleared f.context.
+            active.graph.query(
+                """
+                UNWIND $keys AS key
+                MATCH (f:File {key: key})-[r:IN_LAYER]->(l:Layer)
+                WHERE r.invalid_sha IS NULL
+                SET r.invalid_sha = $head, r.invalid_ord = $ord, r.invalid_at = $ts
+                """,
+                {
+                    "keys": unclassified,
+                    "head": head_sha,
+                    "ord": head_ord,
+                    "ts": now_ts,
+                },
+            )
+
+        if context_writes:
+            # Plain SET, not upsert_nodes/GraphNode — see the HIGH
+            # (round 3) note above. Never touches last_seen_sha/ord.
+            active.graph.query(
+                "UNWIND $rows AS row MATCH (f:File {key: row.file}) "
+                "SET f.context = row.context",
+                {"rows": context_writes},
+            )
+
+        if layer_nodes:
+            active.upsert_nodes(
+                list(layer_nodes.values()), head_sha=head_sha, head_ord=head_ord
+            )
+        if edges:
+            active.upsert_edges(edges, head_sha=head_sha, head_ord=head_ord)
+
+        if head_sha is not None:
+            active.sweep_stale("Layer", head_sha, head_ord)
+
     def _upsert_dotnet_projects(
         self,
         projects: list[CsprojInfo],
@@ -1267,6 +1450,11 @@ class Pipeline:
         self._ingest_dotnet_projects(
             root, stats, dry_run=dry_run, head_sha=head_sha, head_ord=head_ord
         )
+        if not dry_run:
+            # Reachable even for a delete-only delta (stats.files == 0):
+            # a deleted file can change which Layer nodes are still
+            # referenced.
+            self._index_architecture(root, stats, head_sha=head_sha, head_ord=head_ord)
         if delta.is_empty:
             stats.notes.append("no changes since last ingest")
         return stats
