@@ -91,12 +91,27 @@ def test_class_declarations_have_no_param_count(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------- _pick_by_arity
+#
+# ``_pick_by_arity`` / ``_pick_target``'s real (and only) production caller
+# is ``_resolve_all`` in resolver.py, which always passes candidates
+# drawn from ``state.name_index[name]`` — declared, constructed, and
+# type-hinted as ``list[tuple[str, str, int | None, str | None]]`` (the
+# FIX 2 namespace-qualified-resolution 4-tuple: file, key, params,
+# namespace) at its single construction site. No real call path ever
+# produces a bare 3-tuple. These tests call the two functions directly
+# (white-box), so they must pass the SAME honest 4-tuple shape the
+# functions actually declare and receive in production — a bare 3-tuple
+# here no longer reflects any real caller and only exercised a
+# backward-compat shim added to keep this file passing. ``namespace`` is
+# ``None`` in every case below since these tests are specifically about
+# arity disambiguation, not namespace — namespace-guard behaviour has
+# its own dedicated coverage in test_resolver.py (FIX 2 section).
 
 
 def test_pick_by_arity_returns_unique_match() -> None:
     candidates = [
-        ("/r/a.cs", "/r/a.cs::Run#1", 0),
-        ("/r/a.cs", "/r/a.cs::Run#10", 2),
+        ("/r/a.cs", "/r/a.cs::Run#1", 0, None),
+        ("/r/a.cs", "/r/a.cs::Run#10", 2, None),
     ]
     assert _pick_by_arity(candidates, 2) == "/r/a.cs::Run#10"
     assert _pick_by_arity(candidates, 0) == "/r/a.cs::Run#1"
@@ -105,20 +120,20 @@ def test_pick_by_arity_returns_unique_match() -> None:
 def test_pick_by_arity_returns_none_when_ambiguous() -> None:
     """Two candidates with identical arity → no resolution."""
     candidates = [
-        ("/r/a.cs", "/r/a.cs::Run#1", 2),
-        ("/r/b.cs", "/r/b.cs::Run#10", 2),
+        ("/r/a.cs", "/r/a.cs::Run#1", 2, None),
+        ("/r/b.cs", "/r/b.cs::Run#10", 2, None),
     ]
     assert _pick_by_arity(candidates, 2) is None
 
 
 def test_pick_by_arity_returns_none_when_no_match() -> None:
-    candidates = [("/r/a.cs", "/r/a.cs::Run#1", 0)]
+    candidates = [("/r/a.cs", "/r/a.cs::Run#1", 0, None)]
     assert _pick_by_arity(candidates, 5) is None
 
 
 def test_pick_by_arity_ignores_negative_input() -> None:
     """Arity == -1 means the call site arity is unknown; never resolve."""
-    candidates = [("/r/a.cs", "/r/a.cs::Run#1", 0)]
+    candidates = [("/r/a.cs", "/r/a.cs::Run#1", 0, None)]
     assert _pick_by_arity(candidates, -1) is None
 
 
@@ -127,8 +142,8 @@ def test_pick_by_arity_ignores_negative_input() -> None:
 
 def test_pick_target_prefers_same_file_with_matching_arity() -> None:
     candidates = [
-        ("/r/a.cs", "/r/a.cs::Run#1", 0),
-        ("/r/a.cs", "/r/a.cs::Run#10", 2),
+        ("/r/a.cs", "/r/a.cs::Run#1", 0, None),
+        ("/r/a.cs", "/r/a.cs::Run#10", 2, None),
     ]
     out = _pick_target(candidates, preferred_file="/r/a.cs", arity=2)
     assert out == "/r/a.cs::Run#10"
@@ -137,8 +152,8 @@ def test_pick_target_prefers_same_file_with_matching_arity() -> None:
 def test_pick_target_falls_back_when_arity_unknown() -> None:
     """When arity is -1, same-file logic still returns first same-file hit."""
     candidates = [
-        ("/r/a.cs", "/r/a.cs::Run#1", 0),
-        ("/r/a.cs", "/r/a.cs::Run#10", 2),
+        ("/r/a.cs", "/r/a.cs::Run#1", 0, None),
+        ("/r/a.cs", "/r/a.cs::Run#10", 2, None),
     ]
     out = _pick_target(candidates, preferred_file="/r/a.cs", arity=-1)
     assert out == "/r/a.cs::Run#1"

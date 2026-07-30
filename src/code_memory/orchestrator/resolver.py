@@ -64,6 +64,7 @@ class ResolverStats:
     edges_resolved_same_file: int = 0
     edges_resolved_imported: int = 0
     edges_resolved_unique: int = 0
+    edges_resolved_namespace: int = 0
     edges_resolved_assembly: int = 0
     edges_left_ambiguous: int = 0
     edges_left_external: int = 0
@@ -111,10 +112,13 @@ class _GraphState:
     # ``receiver_type`` is the inferred type of ``this.<field>`` for
     # ``this.<field>.<method>()`` patterns; ``None`` otherwise.
     call_edges: list[tuple[str, str, int, str | None]]
-    # symbol_name -> list of (file_path, full_symbol_key, param_count) defining it.
-    # ``param_count`` is ``None`` for non-callable kinds; resolver
-    # ignores arity matching when either side is missing.
-    name_index: dict[str, list[tuple[str, str, int | None]]]
+    # symbol_name -> list of (file_path, full_symbol_key, param_count,
+    # namespace) defining it. ``param_count`` is ``None`` for non-callable
+    # kinds; resolver ignores arity matching when either side is missing.
+    # ``namespace`` (e.g. a C# ``BcA.Domain``) is ``None`` for languages
+    # with no namespace concept — see FIX 2 (namespace-qualified
+    # resolution) in ``_resolve_all``.
+    name_index: dict[str, list[tuple[str, str, int | None, str | None]]]
     # set of project file paths (resolved absolute), for relative import lookup
     project_files: set[str]
     # file_path -> project_key (CONTAINED_IN); empty for non-.NET projects
@@ -131,22 +135,51 @@ class _GraphState:
     # constraints). Same resolution rules as CALLS / INJECTS; arity is
     # always unknown (type references carry no call-site arity).
     reference_edges: list[tuple[str, str]] = field(default_factory=list)
+    # file_path -> its own namespace, derived from the DEFINES rows as the
+    # SINGLE distinct non-None namespace among the symbols that file
+    # defines. Used by FIX 2's namespace-qualified resolution tier to
+    # disambiguate a name shared by two bounded contexts (BC A's
+    # ``Invoice`` vs BC B's). A file whose symbols straddle 2+ DISTINCT
+    # namespaces is deliberately omitted here (own namespace treated as
+    # unknown) rather than picking an arbitrary one — "first non-None
+    # wins" was order-dependent (identical DEFINES rows supplied in
+    # opposite order resolved to different BCs, both at
+    # confidence="high"); set-based aggregation is order-independent by
+    # construction.
+    file_namespace: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, graph: FalkorStore) -> _GraphState:
         rows = graph.graph.query(
             "MATCH (f:File)-[:DEFINES]->(s:Symbol) "
             "WHERE s.unresolved IS NULL "
-            "RETURN f.key, s.name, s.key, s.params"
+            "RETURN f.key, s.name, s.key, s.params, s.namespace "
+            "ORDER BY s.start"
         ).result_set
         file_defines: dict[str, set[str]] = defaultdict(set)
-        name_index: dict[str, list[tuple[str, str, int | None]]] = defaultdict(list)
+        name_index: dict[str, list[tuple[str, str, int | None, str | None]]] = defaultdict(
+            list
+        )
+        # Collected as a set per file so the eventual single-namespace
+        # derivation below is independent of DEFINES row order — see the
+        # ``file_namespace`` field docstring above.
+        file_namespaces_seen: dict[str, set[str]] = defaultdict(set)
         for row in rows:
             f_key, s_name, s_key = row[0], row[1], row[2]
             params = row[3] if len(row) > 3 else None
             params_int = int(params) if isinstance(params, (int, float)) else None
+            namespace = row[4] if len(row) > 4 else None
+            namespace_str = namespace if isinstance(namespace, str) and namespace else None
             file_defines[f_key].add(s_name)
-            name_index[s_name].append((f_key, s_key, params_int))
+            name_index[s_name].append((f_key, s_key, params_int, namespace_str))
+            if namespace_str:
+                file_namespaces_seen[f_key].add(namespace_str)
+
+        file_namespace: dict[str, str] = {
+            f_key: next(iter(namespaces))
+            for f_key, namespaces in file_namespaces_seen.items()
+            if len(namespaces) == 1
+        }
 
         rows = graph.graph.query(
             "MATCH (f:File)-[:IMPORTS]->(m:Module) RETURN f.key, m.key"
@@ -233,6 +266,7 @@ class _GraphState:
             type_index=dict(type_index),
             inject_edges=inject_edges,
             reference_edges=reference_edges,
+            file_namespace=file_namespace,
         )
 
 
@@ -242,7 +276,7 @@ class _GraphState:
 def _resolve_all(state: _GraphState, stats: ResolverStats) -> list[ResolvedEdge]:
     resolutions: list[ResolvedEdge] = []
     # per-file cache: imported file path -> symbols defined there
-    import_cache: dict[str, dict[str, list[tuple[str, str, int | None]]]] = {}
+    import_cache: dict[str, dict[str, list[tuple[str, str, int | None, str | None]]]] = {}
 
     # Normalise to (file, placeholder, arity, receiver_type). Only CALLS
     # carries a receiver type; DI is by type and type refs have no call
@@ -369,6 +403,87 @@ def _resolve_all(state: _GraphState, stats: ResolverStats) -> list[ResolvedEdge]
                             stats.edges_resolved_unique += 1
                             continue
 
+            # (2.75) namespace-qualified resolution — FIX 2. A name shared
+            # by two bounded contexts (BC A's ``Invoice`` vs BC B's) must
+            # not be left to arity coincidence. Narrow the project-wide
+            # name-index candidates to those whose namespace matches the
+            # referencing file's own namespace. A namespace-unique match
+            # binds directly with "high" confidence, independent of arity
+            # — arity alone must never be trusted across a BC boundary
+            # (see the ``_pick_by_arity`` guard below).
+            #
+            # CRITICAL (round 3): when own-namespace narrowing yields 2+
+            # candidates (an ordinary same-BC overload set, e.g. BcB's
+            # own ``Factory.Create(x)`` / ``Factory.Create(x, y)``), the
+            # arity tiebreak must run against THAT NARROWED set, not the
+            # full project-wide list — falling through to the full list
+            # re-exposes it to unrelated same-named symbols in OTHER
+            # namespaces, which trips ``_pick_by_arity``'s multi-namespace
+            # refusal and makes an ordinary in-BC overload call vanish
+            # into permanent ambiguity. Only fall through to the
+            # imports-fallback / full-list-plus-guard tiers when
+            # own-namespace narrowing yields ZERO candidates or the
+            # file's own namespace is unknown.
+            candidates = state.name_index.get(name, [])
+            if candidates:
+                own_namespace = state.file_namespace.get(file_path)
+                own_narrowed = (
+                    [c for c in candidates if c[3] == own_namespace]
+                    if own_namespace is not None
+                    else []
+                )
+                if len(own_narrowed) == 1:
+                    resolutions.append(
+                        ResolvedEdge(
+                            file_path,
+                            placeholder_key,
+                            own_narrowed[0][1],
+                            "high",
+                            edge_type=edge_type,
+                        )
+                    )
+                    stats.edges_resolved_namespace += 1
+                    continue
+                if len(own_narrowed) > 1:
+                    arity_match = _pick_by_arity(own_narrowed, arity)
+                    if arity_match is not None:
+                        resolutions.append(
+                            ResolvedEdge(
+                                file_path,
+                                placeholder_key,
+                                arity_match,
+                                "high",
+                                edge_type=edge_type,
+                            )
+                        )
+                        stats.edges_resolved_namespace += 1
+                        continue
+                    stats.edges_left_ambiguous += 1
+                    continue
+                # own_narrowed is empty (own namespace unknown, or known
+                # but matches nothing) — fall back to the file's raw
+                # import list (regardless of relative/bare kind — a C#
+                # ``using X.Y;`` is classified "bare" but its text IS the
+                # namespace string).
+                import_keys = {
+                    mod_key for mod_key, _kind in state.file_imports.get(file_path, [])
+                }
+                imports_narrowed = [
+                    c for c in candidates if c[3] is not None and c[3] in import_keys
+                ]
+                if len(imports_narrowed) == 1:
+                    resolutions.append(
+                        ResolvedEdge(
+                            file_path,
+                            placeholder_key,
+                            imports_narrowed[0][1],
+                            "high",
+                            edge_type=edge_type,
+                        )
+                    )
+                    stats.edges_resolved_namespace += 1
+                    continue
+
             # (3) project-unique (with arity tiebreak)
             candidates = state.name_index.get(name, [])
             if len(candidates) == 1:
@@ -457,7 +572,7 @@ def _resolve_via_assembly(
 
 
 def _pick_target(
-    candidates: list[tuple[str, str, int | None]],
+    candidates: list[tuple[str, str, int | None, str | None]],
     *,
     preferred_file: str | None,
     arity: int = -1,
@@ -478,7 +593,7 @@ def _pick_target(
         same_file = [c for c in candidates if c[0] == preferred_file]
         if same_file:
             if arity >= 0:
-                for f, k, p in same_file:
+                for f, k, p, _namespace in same_file:
                     if p == arity:
                         return k
             return same_file[0][1]
@@ -486,15 +601,29 @@ def _pick_target(
 
 
 def _pick_by_arity(
-    candidates: list[tuple[str, str, int | None]], arity: int
+    candidates: list[tuple[str, str, int | None, str | None]], arity: int
 ) -> str | None:
     """Return the unique candidate whose param count matches ``arity``.
 
     Returns ``None`` when arity is unknown (call_edge arity == -1) or
     when the match isn't unique. The resolver treats any of those as
     "ambiguous" — we never coin-flip across overloads.
+
+    FIX 2 guard: also returns ``None`` whenever the FULL input candidate
+    list (before arity filtering) spans 2+ distinct non-``None``
+    namespaces — arity alone must never be trusted to pick a winner
+    across a bounded-context boundary (BC A's arity-2 ctor coincidentally
+    being the only project-wide arity-2 match must not silently bind
+    across BC B's call site). A candidate set where every namespace is
+    ``None`` (ordinary non-namespaced code) is NOT "spanning multiple
+    namespaces" and keeps resolving by arity exactly as before.
     """
     if arity < 0:
+        return None
+    distinct_namespaces = {
+        namespace for _f, _k, _p, namespace in candidates if namespace is not None
+    }
+    if len(distinct_namespaces) >= 2:
         return None
     matches = [c for c in candidates if c[2] == arity]
     if len(matches) == 1:
@@ -504,13 +633,14 @@ def _pick_by_arity(
 
 def _imported_symbols(
     state: _GraphState, file_path: str
-) -> dict[str, list[tuple[str, str, int | None]]]:
-    """Return {symbol_name -> [(defining_file, symbol_key, params)]} reachable from ``file_path``.
+) -> dict[str, list[tuple[str, str, int | None, str | None]]]:
+    """Return {symbol_name -> [(defining_file, symbol_key, params, namespace)]}
+    reachable from ``file_path``.
 
     Only relative imports are followed (bare module specifiers like
     ``@scope/lib`` are treated as external).
     """
-    out: dict[str, list[tuple[str, str, int | None]]] = defaultdict(list)
+    out: dict[str, list[tuple[str, str, int | None, str | None]]] = defaultdict(list)
     file_dir = Path(file_path).parent
     for mod_key, kind in state.file_imports.get(file_path, []):
         if kind != "relative":
@@ -519,9 +649,9 @@ def _imported_symbols(
         if target_file is None:
             continue
         for sym_name in state.file_defines.get(target_file, ()):
-            for f, k, params in state.name_index.get(sym_name, []):
+            for f, k, params, ns in state.name_index.get(sym_name, []):
                 if f == target_file:
-                    out[sym_name].append((f, k, params))
+                    out[sym_name].append((f, k, params, ns))
     return out
 
 
