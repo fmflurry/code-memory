@@ -21,6 +21,8 @@ and aware of past episodes + durable user claims.
   module import graph.
 - `codememory_at_sha`, `codememory_callers_at_sha`, `codememory_drift` —
   temporal queries (what existed at a past commit, what's stale).
+- `codememory_layer_violations` — clean-architecture violations (inward
+  depending on outward).
 - `codememory_assert_claim` — record durable user assertions
   (preferences, decisions, rejections, ownership, location).
 

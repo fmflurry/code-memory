@@ -8,6 +8,138 @@ when the repo grows.
 This file complements `git log`: commits explain mechanics, this file
 explains intent.
 
+## [Unreleased]
+
+## [0.11.0] — 2026-07-30
+
+Release theme: **Clean-architecture guards, cross-context symbol resolution, embed-cache durability**.
+
+### Added
+
+**Layer semantic nodes + clean-architecture violation detection.** Files are
+automatically classified into architecture layers (domain/application/infrastructure/
+presentation, configurable via `LayerRule`), connected to `Layer` nodes via
+`IN_LAYER` edges in the graph. A new `layer_violations()` query detects all
+violations — files in a lower-rank (inner) layer that depend on files in a
+higher-rank (outer) layer via `CALLS`/`REFERENCES`/`INJECTS` edges. The `sweep_stale()`
+method tombstones orphaned `Layer` nodes and stale `IN_LAYER` edges when directories
+are deleted or renamed.
+
+Exposed as:
+- **MCP tool**: `codememory_layer_violations(project)` — audits boundaries.
+- **CLI command**: `code-memory layer-violations` — list all violations.
+- **Methods**: `FalkorStore.layer_of(file)`, `FalkorStore.layer_violations()`,
+  `FalkorStore.sweep_stale(label, head_sha, head_ord)`.
+- **Config**: `LayerRule` dataclass, `DEFAULT_ARCHITECTURE_LAYERS` dict,
+  `classify_file_layer(path, layers)` function in `config.py`.
+- **Graph schema**: New `Layer` node label, `IN_LAYER` edge type. Both `Layer` and
+  `File` nodes now carry a `context` property (the bounded-context name, derived from
+  directory names by skipping generic segments like `src`, `lib`, `app`, `source`).
+
+**Reason:** teams using clean-architecture patterns need an automated guard rail
+that catches violations before they ship — grep + manual review doesn't scale.
+Index-time classification + graph queries scale to thousands of files with <1 s
+latencies.
+
+**Classifier semantics stated precisely.** The layer classifier uses shallowest-segment-wins
+for directory traversal, and a deliberate dot/dash-delimited TAIL match
+(``Billing.Core`` → domain via dot; ``billing-domain`` → domain via dash) requiring
+a real delimiter so ``MyCoreUtils`` / ``Coordinator`` don't false-match. Bare ``api``
+segment is deliberately NOT a layer (it collides with app/service names like
+``apps/api`` and ``payment-api``), while the .NET ``.Api`` pattern (dot-only tail)
+still resolves to presentation. The generic segments ``src`` / ``lib`` / ``app`` / ``source``
+are always skipped when deriving a bounded-context name — two modules both nesting
+their layers under ``src/`` never collapse into the same context. Repos needing bare
+``api`` classification can re-add it via the `[architecture]` config override.
+
+**Test/spec files excluded from layer-violations detection.** A configurable
+``TEST_PATH_PATTERNS`` (case-sensitive on purpose) identifies test files
+(matching ``.spec.ts``, ``.test.ts``, ``.Tests/``, ``Tests.cs``, ``test_*.py``, etc.),
+which are excluded from violation reports. Test files legitimately depend on all
+layers to construct fakes and mocks — the rule catches architectural violations
+in production code only. Case-sensitive matching is load-bearing: lowercasing would
+incorrectly match ``protests.cs`` against the ``Tests.cs`` pattern.
+
+**Namespace-qualified symbol resolution (FIX 2).** A companion tier in the resolver
+disambiguates same-named symbols across bounded contexts by C# namespace (e.g.,
+`BcA.Domain.Invoice` vs `BcB.Domain.Invoice`). Previously, a call to `Invoice`
+could silently bind the WRONG context's constructor via an arity coincidence —
+now, when a referencing file has a namespace, only candidates in that namespace
+are considered for binding, and arity tiebreaks operate only within the
+namespace-narrowed set, never across BC boundaries. A file declaring symbols in
+2+ distinct namespaces is treated as namespace-unknown rather than guessing.
+
+**Reason:** the resolver's (name) tier was order-independent for candidates in the
+same namespace (picking by arity) but order-dependent across namespaces (relying on
+the arity coincidence to win). The namespace-qualified tier runs first, narrowing
+the candidate set before arity is consulted, and a guard in ``_pick_by_arity``
+refuses to cross a BC boundary via arity alone.
+
+### Fixed
+
+**Ingest metrics now recorded.** The pipeline was calling ``MetricsStore.record_ingest()``
+(existent but with no callers), so ``ingest.count`` and ``last_ingest_ts`` reported
+hardcoded 0 and null in ``codememory_health``. Now wired for both the CLI and MCP
+ingest paths, with a new ``project`` column and project-filtered ``summary()`` method.
+
+**Reason:** operators couldn't track ingest frequency or timing without monitoring
+stdout logs.
+
+**Embedding-cache observability (hit/miss ratio).** Cache hit/miss counters
+(``EmbedCache.hits`` / ``.misses``) were never flushed to the metrics DB, so
+``codememory_health`` reported a hardcoded 0.0 even at perfect cache hit rates.
+A new ``CachedEmbedder.flush_cache_stats()`` method records the counts and resets
+them (reset is critical: without it, ``MetricsStore.summary()``'s aggregations
+would double-count on every subsequent flush). Cache stats are now flushed from
+both the CLI ingest path and the MCP retrieve path.
+
+**Reason:** understanding embed-cache effectiveness requires actual hit/miss data —
+a silent 0.0 was useless for capacity planning.
+
+**Embed cache key now pins the Ollama model digest (BREAKING).** The cache key was
+``model:bge-m3`` with no version, so an Ollama `:latest` re-pull moving to new
+weights would silently mix old and new vectors under the unchanged key, causing
+queries to hit partial stale embeddings with no error. The key is now
+``model:<name>@<digest>`` (digest resolved via Ollama's ``/api/tags`` endpoint).
+**This is a BREAKING cache change**: existing cache rows are orphaned and
+re-embed on next ingest (one-time compute cost; not a graph re-ingest). Ollama
+now being unreachable is a hard error (explicitly required to resolve the digest),
+rather than a silent fallback to a digest-less key. Also note: Ollama and TEI no
+longer share a cache namespace — the digest concept is Ollama-specific, so two
+backends can't produce the same key up-front as they used to.
+
+**Reason:** silent cache corruption was worse than no cache; the digest fix guarantees
+cache hits are always using the currently-pulled weights. Ollama digest resolution
+is deferred to the first real ``embed()`` call (not construction), so ``--no-vectors``
+ingests don't require Ollama reachable.
+
+**SQLite durability — WAL mode + busy timeout.** Both ``embed_cache.sqlite`` and
+``metrics.db`` now open in WAL (Write-Ahead Logging) mode, with graceful degrade
+where WAL is unsupported (e.g. network mounts without shared-memory mmap). An
+explicit ``PRAGMA busy_timeout=5000`` is set per connection, making lock contention
+timeout 5 s instead of the subprocess-default 0 (immediate return). WAL mode allows
+readers to proceed while a writer holds a transaction, whereas DELETE mode (the
+sqlite3 default) blocks readers for the duration.
+
+**Reason:** on machines with concurrent readers and writers (watch daemon + MCP
+queries + CLI ingests), DELETE mode caused frequent `database is locked` errors.
+WAL is file-persisted; busy_timeout is per-connection, so both changes interact
+correctly.
+
+### Known Limitations
+
+**`layer_violations()` does not detect import-only cross-layer dependencies.** 
+`IMPORTS` edges target `:Module` nodes and nothing in the pipeline emits `DEFINES` 
+into a `Module`, so the join can't match — a bare side-effecting import from an 
+inner layer to an outer one is not flagged. Measure recall against hand-audited 
+repos knowing this gap.
+
+**A bare `Api/` directory no longer classifies as presentation.** The `api` segment 
+was removed to avoid colliding with app/service names. A `.NET` repo laid out as 
+`src/BcA/Api/` will now get no layer for those files. The dot-tail pattern 
+(`Billing.Api`) still works. To re-enable bare `api`, add it to config via 
+`[architecture] presentation.segments = ("presentation", "api")`.
+
 ## [0.10.0] — 2026-07-27
 
 Release theme: **Docker Desktop dependency dropped, Windows console/encoding

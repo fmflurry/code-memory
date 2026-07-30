@@ -29,6 +29,7 @@ const NUDGE = [
   "- `codememory_definitions` — exact symbol locations",
   "- `codememory_callers` / `codememory_callees` — call graph",
   "- `codememory_importers` / `codememory_dependencies` — imports",
+  "- `codememory_layer_violations` — clean-arch layer boundary audit",
   "",
   "Prefer one targeted MCP call before scanning the filesystem.",
 ].join("\n");

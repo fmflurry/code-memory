@@ -32,6 +32,7 @@ const NUDGE = [
   "- `mcp__code-memory__codememory_definitions` — exact symbol locations",
   "- `mcp__code-memory__codememory_callers` / `_callees` — call graph",
   "- `mcp__code-memory__codememory_importers` / `_dependencies` — imports",
+  "- `mcp__code-memory__codememory_layer_violations` — clean-arch layer boundary audit",
   "",
   "Docs inventory / repo documentation / where docs live: call retrieve first,",
   "then glob/read for exhaustive verification.",

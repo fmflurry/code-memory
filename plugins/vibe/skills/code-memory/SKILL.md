@@ -26,6 +26,8 @@ standing instruction that replaces it: you drive the index explicitly.
   import graph.
 - `codememory_at_sha`, `codememory_callers_at_sha`, `codememory_drift` —
   temporal queries (what existed at a past commit, what's stale).
+- `codememory_layer_violations` — clean-architecture layer boundary audits
+  (detects inward depending on outward).
 - `codememory_assert_claim` — record durable user assertions (preferences,
   decisions, rejections, ownership, location).
 

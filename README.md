@@ -1322,6 +1322,12 @@ Tools advertised:
 | `codememory_at_sha`             | Nodes (Symbol or File) alive at a past commit. Caller passes `sha_ord` from `git rev-list --count --first-parent <sha>`. |
 | `codememory_callers_at_sha`     | Callers of a symbol as the graph looked at a past commit ("what called X before commit Y deleted it"). |
 
+**Architecture (clean-architecture compliance)**
+
+| Tool                            | Purpose                                                                                       |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `codememory_layer_violations`   | Clean-architecture dependency-rule violations: files in a lower-rank (more inward, e.g. domain) layer that depend on a symbol defined by a file in a higher-rank (more outward, e.g. infrastructure) layer. Use to audit layer boundaries against a `LayerRule`-based schema. |
+
 Every tool requires an explicit `project` argument — the silent cwd-fallback
 was hiding namespace bugs (see commit `3663772`). Pass the slug printed by
 `code-memory project` (or `code-memory projects` to list all known slugs).
@@ -1402,6 +1408,40 @@ pipx install git+https://github.com/dev/code-memory
 uvx --from git+https://github.com/dev/code-memory code-memory-mcp
 # speaks JSON-RPC on stdio; useful with `npx @modelcontextprotocol/inspector`
 ```
+
+### Architecture layer checking
+
+`code-memory` indexes clean-architecture layers (domain/application/infrastructure/presentation in Angular or Core/Application/Infrastructure/Api in .NET) as **graph nodes** and automatically detects dependency-rule violations — when a file in a lower-rank (more inward) layer depends on a file in a higher-rank (more outward) layer.
+
+**Layer classification:** Files are classified based on path segments. The default configuration maps:
+
+| Layer      | Rank | Segments                       |
+| ---------- | ---- | ------------------------------ |
+| domain     | 0    | `core`, `domain`               |
+| application | 1  | `application`                  |
+| infrastructure | 2 | `infrastructure`              |
+| presentation | 3 | `presentation`                |
+
+A file is classified into the **shallowest** matching segment in its path (relative to the ingest root), so monorepos with multiple features get one independent layer stack per feature/module rather than a single global one. The bare `api` segment is **not** a presentation layer — it collides with too many service names (`apps/api`, `payment-api`); use the dot-delimited form `Billing.Api` for .NET `Module.Api` conventions instead, which matches via a dedicated dot-only tail rule.
+
+**Violation detection:** `codememory_layer_violations` returns files in layer N that call/reference/inject symbols defined by files in layer N+1 or higher. Self-calls and tombstoned files are excluded. Custom layer rules are configurable via `resolve_architecture_layers(overrides)` in config.
+
+**CLI example:**
+
+```bash
+code-memory layer-violations                    # list violations for current project
+code-memory layer-violations --json             # machine-readable output
+```
+
+**MCP usage:**
+
+```python
+violations = client.layer_violations(project="my-app")
+for v in violations:
+    print(f"{v['file']} ({v['layer']}) → {v['depends_on_file']} ({v['depends_on_layer']})")
+```
+
+**Known limitation:** Violations detect `CALLS`/`REFERENCES`/`INJECTS` edges only. A bare side-effecting import with no resolved symbol usage (e.g., `import "./side-effect.js"`) is not yet detected because `IMPORTS` edges target `:Module` nodes and nothing in the ingest pipeline emits `DEFINES` edges into modules.
 
 ### Harness plugins
 

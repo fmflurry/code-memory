@@ -42,6 +42,7 @@ If the user's phrasing matches the left column, call the right tool. Do
 | "what changed since" / "stale references" / "drift"       | `codememory_drift(head_sha=…, project=…)`                   |
 | "what used to call X before deletion"                     | `codememory_callers_at_sha(symbol="X", sha=…, sha_ord=…)`   |
 | "what existed at commit C"                                | `codememory_at_sha(sha=C, sha_ord=N, project=…)`            |
+| "audit clean-architecture" / "layer violations"           | `codememory_layer_violations(project=…)`                    |
 | "I just wrote / edited a file"                            | `codememory_reingest(path=…, project=…)`                    |
 | "I finished a task"                                       | `codememory_record(prompt=…, patch=…, verdict=…, project=…)`|
 | "how healthy is code-memory" / "backend status"          | `codememory_health(project=…)`                              |
@@ -92,6 +93,7 @@ inspect a prior tool response.
 | `codememory_drift`              | `head_sha`, `project`                          | —                                           |
 | `codememory_at_sha`             | `sha`, `project`                                | `sha_ord` (auto-computed if omitted), `label` (`Symbol`/`File`, default Symbol), `limit` (200) |
 | `codememory_callers_at_sha`     | `symbol`, `sha`, `project`                      | `sha_ord` (auto-computed if omitted)         |
+| `codememory_layer_violations`   | `project`                                      | —                                           |
 | `codememory_health`              | `project`                                      | —                                           |
 
 `symbol` is a bare identifier (`getBearerToken`), not a dotted expression.
