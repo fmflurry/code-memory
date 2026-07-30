@@ -276,6 +276,11 @@ class Retriever:
                         claims_hit_count=len(claims),
                     )
                 )
+                flush_cache_stats = getattr(
+                    self.embedder, "flush_cache_stats", None
+                )
+                if flush_cache_stats is not None:
+                    flush_cache_stats(self._metrics)
             except Exception:
                 pass  # metrics never fail retrieval
 

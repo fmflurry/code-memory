@@ -27,15 +27,18 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from ..config import CONFIG
 from .cache import EmbedCache, hash_chunk
 from .m3 import HybridVec, M3Embedder, SparseVec
 from .ollama import OllamaEmbedder
 from .tei import TEIEmbedder
+
+if TYPE_CHECKING:
+    from ..metrics import MetricsStore
 
 log = logging.getLogger(__name__)
 
@@ -73,11 +76,11 @@ class CachedEmbedder:
         self,
         inner: Embedder,
         cache: EmbedCache,
-        model_id: str,
+        model_id: str | Callable[[], str],
     ) -> None:
         self._inner = inner
         self._cache = cache
-        self._model_id = model_id
+        self._model_id: str | Callable[[], str] = model_id
 
     @property
     def cache(self) -> EmbedCache:
@@ -85,13 +88,39 @@ class CachedEmbedder:
 
     @property
     def model_id(self) -> str:
-        return self._model_id
+        """Resolve ``model_id`` lazily on first access, then memoize.
+
+        ``self._model_id`` starts as a plain string (TEI/FlagEmbed) or a
+        zero-arg callable (Ollama — resolving the model digest requires
+        an HTTP round trip, deferred until the first real ``embed()``
+        call so ``--no-vectors`` ingests never need Ollama reachable).
+        """
+        value = self._model_id
+        if callable(value):
+            value = value()
+            self._model_id = value
+        return value
+
+    def flush_cache_stats(self, metrics: "MetricsStore") -> None:
+        """Record accumulated hit/miss counts and reset them.
+
+        ``EmbedCache.hits``/``.misses`` are cumulative-since-open, not
+        deltas — resetting after recording is load-bearing: without it,
+        ``MetricsStore.summary()``'s ``SUM(hits)`` across ``cache_stats``
+        rows would double-count on every subsequent flush.
+        """
+        hits, misses = self._cache.hits, self._cache.misses
+        if hits == 0 and misses == 0:
+            return
+        metrics.record_cache_stats(hits=hits, misses=misses)
+        self._cache.hits = 0
+        self._cache.misses = 0
 
     def embed(self, texts: Sequence[str]) -> list[HybridVec]:
         if not texts:
             return []
         hashes = [hash_chunk(t) for t in texts]
-        cached = self._cache.get_many(hashes, self._model_id)
+        cached = self._cache.get_many(hashes, self.model_id)
         # Build miss-list + remember positions so we can splice results
         # back into input order.
         miss_positions: list[int] = []
@@ -109,7 +138,7 @@ class CachedEmbedder:
         if new_vecs:
             self._cache.put_many(
                 zip(miss_hashes, new_vecs, strict=True),
-                model=self._model_id,
+                model=self.model_id,
             )
 
         # Reassemble in original order.
@@ -152,14 +181,22 @@ def _cache_enabled() -> bool:
     return raw not in ("1", "true", "yes", "on")
 
 
-def _build_inner_embedder(backend: str) -> tuple[Embedder, str]:
+def _build_inner_embedder(backend: str) -> tuple[Embedder, str | Callable[[], str]]:
     """Return (embedder, model_id). model_id namespaces the cache.
 
-    Note: the cache key includes only the embedding model name, not
-    the backend — Ollama and TEI serving the *same* ``bge-m3`` weights
-    yield the same vectors (within floating-point tolerance), so the
-    cache hits are interchangeable across backends. Saves the cache
-    cold-start cost when an operator switches Ollama → TEI.
+    ``model_id`` is a plain string for FlagEmbed/TEI, but a zero-arg
+    callable for Ollama: pinning the cache key to the resolved model
+    *digest* (via Ollama's ``/api/tags``) requires a network round trip,
+    and ``Pipeline.__init__`` calls :func:`get_embedder` unconditionally
+    — even under ``--no-vectors``/``skip_vectors=True``, before the
+    skip check runs. Resolving eagerly here would make a graph-only
+    ingest require Ollama reachable for no reason, so resolution is
+    deferred to :class:`CachedEmbedder`'s first real ``embed()`` call.
+
+    Note: this also means Ollama and TEI no longer share a cache
+    namespace — the digest concept is Ollama-specific, so the two
+    backends can't produce an identical string key up front the way
+    they used to.
     """
     if backend == "flagembed":
         log.info("embed: backend=flagembed (in-process m3, dense+sparse)")
@@ -174,7 +211,7 @@ def _build_inner_embedder(backend: str) -> tuple[Embedder, str]:
         return emb_tei, f"model:{getattr(emb_tei, 'model', 'bge-m3')}"
     log.info("embed: backend=ollama (HTTP, dense-only)")
     emb = OllamaEmbedder()
-    return emb, f"model:{getattr(emb, 'model', 'bge-m3')}"
+    return emb, lambda: f"model:{emb.model}@{emb.model_digest()}"
 
 
 def get_embedder() -> Embedder:
@@ -194,7 +231,10 @@ def get_embedder() -> Embedder:
                 _SINGLETON = inner
             else:
                 cache_path = _cache_db_path()
-                log.info("embed: cache at %s (model=%s)", cache_path, model_id)
+                model_label = (
+                    model_id if isinstance(model_id, str) else "<lazy, resolved on first embed>"
+                )
+                log.info("embed: cache at %s (model=%s)", cache_path, model_label)
                 cache = EmbedCache(cache_path)
                 _SINGLETON = CachedEmbedder(inner=inner, cache=cache, model_id=model_id)
         return _SINGLETON

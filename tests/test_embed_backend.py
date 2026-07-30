@@ -79,19 +79,29 @@ def test_get_embedder_returns_tei_when_configured(
     assert isinstance(e._inner, embed_pkg.TEIEmbedder)
 
 
-def test_tei_and_ollama_share_cache_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Same bge-m3 weights served by either backend → same cache namespace.
+def test_ollama_and_tei_no_longer_share_a_cache_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Superseded by the model-digest fix (see
+    tests/test_embed_cache_key_digest.py for the full contract). Ollama's
+    cache key now pins the resolved model *digest*, fetched from
+    Ollama's own ``/api/tags``, so a ``:latest`` re-pull can't silently
+    mix old/new vectors under one key. That digest concept is
+    Ollama-specific -- TEI has no equivalent endpoint -- so the two
+    backends can no longer share a cache namespace by construction:
+    Ollama's ``model_id`` is now a lazily-resolved zero-arg callable,
+    while TEI's stays a plain, immediate string.
 
-    Saves operators the cost of re-embedding the whole corpus when
-    they swap Ollama for TEI (or vice versa). Both build with
-    ``model:<embed_model>`` as the cache key prefix.
+    This replaces the old ``test_tei_and_ollama_share_cache_key``, which
+    asserted the opposite (``ollama_key == tei_key``, both plain
+    strings) -- that contract is no longer valid once the digest fix
+    lands, and cross-backend cache reuse is an accepted, deliberate
+    casualty of closing the "silently wrong vectors forever" bug.
     """
-    # Probe the private `_build_inner_embedder` helper directly so we
-    # don't need a live Ollama / TEI daemon to exercise the key path.
-    _, ollama_key = embed_pkg._build_inner_embedder("ollama")
+    _, ollama_key_source = embed_pkg._build_inner_embedder("ollama")
     _, tei_key = embed_pkg._build_inner_embedder("tei")
-    assert ollama_key == tei_key
-    assert ollama_key.startswith("model:")
+
+    assert callable(ollama_key_source)
+    assert isinstance(tei_key, str)
+    assert tei_key.startswith("model:")
 
 
 def test_get_embedder_returns_ollama_by_default(monkeypatch: pytest.MonkeyPatch) -> None:

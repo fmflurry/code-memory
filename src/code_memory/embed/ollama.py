@@ -64,6 +64,10 @@ class OllamaEmbedder:
             pool=connect_timeout,
         )
         self._client = httpx.Client(timeout=timeout)
+        # Memoized on first success only — see model_digest(). A failed
+        # resolution must never stick, or transient Ollama downtime at
+        # process start would permanently poison a long-lived MCP server.
+        self._digest: str | None = None
 
     def embed(self, texts: Sequence[str]) -> list[HybridVec]:
         if not texts:
@@ -98,6 +102,52 @@ class OllamaEmbedder:
 
     def embed_one(self, text: str) -> HybridVec:
         return self.embed([text])[0]
+
+    def model_digest(self) -> str:
+        """Resolve and memoize this model's content digest via Ollama's
+        ``/api/tags``.
+
+        The embed-cache key pins this digest so a ``:latest`` re-pull
+        that swaps the underlying weights can't silently mix old and
+        new vectors under an unchanged model-name key. Hard-fails
+        (raises ``RuntimeError``) when Ollama is unreachable, the
+        response is malformed, or the configured model isn't present —
+        deliberately, since falling back to a digest-less key would
+        reintroduce that exact silent-corruption bug. Only a
+        *successful* resolution is memoized; a failure must not stick,
+        so transient downtime doesn't permanently poison a long-lived
+        process.
+        """
+        if self._digest is not None:
+            return self._digest
+
+        try:
+            res = self._client.get(f"{self.url}/api/tags")
+            res.raise_for_status()
+            data = res.json()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(
+                f"Ollama unreachable while resolving model digest for "
+                f"{self.model!r} via {self.url}/api/tags: {exc}"
+            ) from exc
+
+        models = data.get("models") or []
+        for entry in models:
+            name = entry.get("name", "")
+            if name == self.model or name.split(":", 1)[0] == self.model:
+                digest = entry.get("digest")
+                if not digest:
+                    raise RuntimeError(
+                        f"Ollama /api/tags entry for model {self.model!r} "
+                        f"has no digest: {entry!r}"
+                    )
+                self._digest = digest
+                return digest
+
+        raise RuntimeError(
+            f"model {self.model!r} not found in Ollama /api/tags response "
+            f"({self.url}/api/tags) — is it pulled?"
+        )
 
     def close(self) -> None:
         self._client.close()

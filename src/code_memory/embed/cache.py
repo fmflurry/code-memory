@@ -95,6 +95,23 @@ class EmbedCache:
         # the same instance from different threads. SQLite serialises
         # writes internally; reads are concurrent.
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        # WAL lets readers proceed while a writer holds a transaction
+        # open (DELETE mode, the sqlite3 default, blocks them). Some
+        # network mounts refuse WAL (no shared-memory mmap support) —
+        # degrade gracefully rather than fail construction.
+        try:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            log.warning(
+                "EmbedCache: WAL journal mode unavailable at %s; "
+                "falling back to the filesystem's default journal mode",
+                self.path,
+            )
+        # Explicit, rather than relying on sqlite3.connect's implicit
+        # timeout=5.0 default (which sets the same busy_timeout under
+        # the hood) — documents intent instead of an unstated stdlib
+        # default.
+        self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(_SCHEMA)
         self.conn.commit()
         # Stats so callers can log hit/miss ratios.
