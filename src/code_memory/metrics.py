@@ -1,9 +1,12 @@
+import logging
 import sqlite3
 import time
 import json
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 @dataclass
 class RetrieveTiming:
@@ -17,14 +20,45 @@ class RetrieveTiming:
     eps_hit_count: int = 0
     claims_hit_count: int = 0
 
+_MIGRATIONS = [
+    "ALTER TABLE ingest_stats ADD COLUMN project TEXT",
+]
+
 class MetricsStore:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
-    
+
+    def _connect(self) -> sqlite3.Connection:
+        """Open a connection with an explicit busy_timeout.
+
+        Every call site goes through this rather than a bare
+        ``sqlite3.connect`` — busy_timeout is per-connection (unlike
+        journal_mode, which is file-persisted), so it has to be set
+        here, not just once in ``_init_db``.
+        """
+        conn = sqlite3.connect(str(self.path))
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
+
     def _init_db(self):
-        with sqlite3.connect(str(self.path)) as conn:
+        with self._connect() as conn:
+            # WAL lets readers proceed while a writer holds a
+            # transaction open; DELETE mode (the sqlite3 default)
+            # blocks them for the duration. Some network mounts refuse
+            # WAL (no shared-memory mmap support) — degrade gracefully
+            # rather than fail construction. File-persisted, so once
+            # here is enough (unlike busy_timeout, which is
+            # per-connection).
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.OperationalError:
+                log.warning(
+                    "MetricsStore: WAL journal mode unavailable at %s; "
+                    "falling back to the filesystem's default journal mode",
+                    self.path,
+                )
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS retrieves (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,10 +123,15 @@ class MetricsStore:
                     ts REAL NOT NULL
                 )
             """)
+            for stmt in _MIGRATIONS:
+                try:
+                    conn.execute(stmt)
+                except sqlite3.OperationalError:
+                    pass  # column already exists
             conn.commit()
-    
+
     def record_retrieve(self, m: RetrieveTiming):
-        with sqlite3.connect(str(self.path)) as conn:
+        with self._connect() as conn:
             conn.execute(
                 "INSERT INTO retrieves (query, embed_ms, code_search_ms, eps_search_ms, claims_ms, total_ms, code_hit_count, eps_hit_count, claims_hit_count, ts) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (m.query, m.embed_ms, m.code_search_ms, m.eps_search_ms, m.claims_ms, m.total_ms, m.code_hit_count, m.eps_hit_count, m.claims_hit_count, time.time())
@@ -100,7 +139,7 @@ class MetricsStore:
             conn.commit()
     
     def record_backend_health(self, backend: str, status: str, latency_ms: float):
-        with sqlite3.connect(str(self.path)) as conn:
+        with self._connect() as conn:
             conn.execute(
                 "INSERT INTO backend_health (backend, status, latency_ms, ts) VALUES (?,?,?,?)",
                 (backend, status, latency_ms, time.time())
@@ -108,23 +147,23 @@ class MetricsStore:
             conn.commit()
     
     def record_cache_stats(self, hits: int, misses: int):
-        with sqlite3.connect(str(self.path)) as conn:
+        with self._connect() as conn:
             conn.execute(
                 "INSERT INTO cache_stats (hits, misses, ts) VALUES (?,?,?)",
                 (hits, misses, time.time())
             )
             conn.commit()
     
-    def record_ingest(self, files: int, symbols: int, duration_s: float):
-        with sqlite3.connect(str(self.path)) as conn:
+    def record_ingest(self, files: int, symbols: int, duration_s: float, project: str = "") -> None:
+        with self._connect() as conn:
             conn.execute(
-                "INSERT INTO ingest_stats (files, symbols, duration_s, ts) VALUES (?,?,?,?)",
-                (files, symbols, duration_s, time.time())
+                "INSERT INTO ingest_stats (files, symbols, duration_s, project, ts) VALUES (?,?,?,?,?)",
+                (files, symbols, duration_s, project or None, time.time())
             )
             conn.commit()
 
     def record_tool_call(self, tool: str, project: str, *, query_text: str = "", output_chars: int = 0, result_count: int = 0, session_id: str = ""):
-        with sqlite3.connect(str(self.path)) as conn:
+        with self._connect() as conn:
             conn.execute(
                 "INSERT INTO tool_calls (tool, project, query_text, output_chars, result_count, session_id, ts) VALUES (?,?,?,?,?,?,?)",
                 (tool, project, query_text or None, output_chars, result_count, session_id or None, time.time())
@@ -132,7 +171,7 @@ class MetricsStore:
             conn.commit()
 
     def record_fs_read(self, tool: str, path: str, project: str, *, output_chars: int = 0, session_id: str = ""):
-        with sqlite3.connect(str(self.path)) as conn:
+        with self._connect() as conn:
             conn.execute(
                 "INSERT INTO fs_reads (tool, path, output_chars, session_id, project, ts) VALUES (?,?,?,?,?,?)",
                 (tool, path or None, output_chars, session_id or None, project, time.time())
@@ -140,7 +179,7 @@ class MetricsStore:
             conn.commit()
 
     def tool_usage_summary(self, project: str | None = None) -> dict:
-        with sqlite3.connect(str(self.path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             where = " WHERE project=?" if project else ""
             params = (project,) if project else ()
@@ -154,7 +193,7 @@ class MetricsStore:
             }
 
     def efficiency_summary(self, project: str | None = None) -> dict:
-        with sqlite3.connect(str(self.path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             # Aggregate tool_calls
             tc_where = " WHERE project=?" if project else ""
@@ -203,24 +242,27 @@ class MetricsStore:
                 "sessions": list(session_map.values()),
             }
 
-    def summary(self) -> dict[str, Any]:
-        with sqlite3.connect(str(self.path)) as conn:
+    def summary(self, project: str | None = None) -> dict[str, Any]:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             # Retrieve stats
             r = conn.execute(
                 "SELECT COUNT(*) as count, AVG(total_ms) as avg_total_ms, AVG(embed_ms) as avg_embed_ms, AVG(code_search_ms) as avg_code_search_ms FROM retrieves"
             ).fetchone()
-            
+
             # Cache stats
             c = conn.execute(
                 "SELECT COALESCE(SUM(hits),0) as total_hits, COALESCE(SUM(misses),0) as total_misses FROM cache_stats"
             ).fetchone()
             total_cache = c["total_hits"] + c["total_misses"]
             hit_ratio = c["total_hits"] / total_cache if total_cache > 0 else 0.0
-            
+
             # Ingest stats
+            ingest_where = " WHERE project=?" if project else ""
+            ingest_params = (project,) if project else ()
             i = conn.execute(
-                "SELECT COUNT(*) as count, COALESCE(SUM(symbols),0) as total_symbols, MAX(ts) as last_ingest_ts FROM ingest_stats"
+                f"SELECT COUNT(*) as count, COALESCE(SUM(symbols),0) as total_symbols, MAX(ts) as last_ingest_ts FROM ingest_stats{ingest_where}",
+                ingest_params
             ).fetchone()
             
             # Backend health - latest per backend
@@ -249,7 +291,7 @@ class MetricsStore:
             }
     
     def recent_retrieves(self, limit: int = 10) -> list[dict]:
-        with sqlite3.connect(str(self.path)) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM retrieves ORDER BY ts DESC LIMIT ?", (limit,)
