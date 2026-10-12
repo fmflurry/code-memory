@@ -10,6 +10,32 @@ explains intent.
 
 ## [Unreleased]
 
+### Added
+
+**GDScript (Godot 4) extraction.** ``.gd`` files now map to the
+``gdscript`` grammar (``lang_for("x.gd") == "gdscript"``). The extractor
+captures ``class_name`` and inner ``class`` declarations, ``func``
+(including ``static func``) with parameter arity, ``_init`` constructors,
+``signal`` (with arity), file- and class-scope ``const`` / ``var``
+(including ``@export var``) properties, and ``enum`` — function-local
+``var`` / ``const`` are excluded, matching the other languages.
+``extends`` inheritance and parameter / return / var / const type
+annotations become references; ``call`` and ``attribute_call``
+(``obj.method()``) become call edges with call-site arity; and
+``preload("res://...")`` / ``load("res://...")`` string arguments become
+import edges (the call itself is suppressed — it is a file dependency, not
+a callable).
+
+v1 limitations: Godot engine types (``Vector2``, ``Color``, ``Signal``,
+``Dictionary``, ``NodePath``, ``Array``, ...) are emitted as references —
+only scalar primitives are filtered. ``preload`` / ``load`` match by bare
+callee text, so a user-defined ``func load(...)`` shadowing the builtin is
+still treated as an import; real shadowing resolution is deferred.
+
+**Reason:** Godot 4 is a supported target (client plus headless
+dedicated-server replays share GDScript simulation code); without native
+grammar support a ``.gd`` codebase extracts to an empty graph.
+
 ## [0.11.0] — 2026-07-30
 
 Release theme: **Clean-architecture guards, cross-context symbol resolution, embed-cache durability**.

@@ -31,6 +31,8 @@ LANG_BY_EXT: dict[str, str] = {
     ".phtml": "php",
     # Dart / Flutter
     ".dart": "dart",
+    # Godot 4 — tree_sitter_language_pack ships the ``gdscript`` grammar.
+    ".gd": "gdscript",
 }
 
 SYMBOL_NODE_TYPES = {
@@ -89,6 +91,48 @@ _DART_SIGNATURE_SYMBOL_NODES = {
     "getter_signature",
     "setter_signature",
 }
+
+# GDScript-specific symbol nodes. ``class_definition`` and
+# ``function_definition`` are already in ``SYMBOL_NODE_TYPES`` (shared with
+# Dart / Python); the names below are unique to the Godot grammar but are
+# still gated on ``lang == "gdscript"`` so other languages' output stays
+# byte-for-byte stable.
+_GDSCRIPT_SYMBOL_NODE_TYPES = frozenset(
+    {
+        "class_name_statement",
+        "constructor_definition",
+        "signal_statement",
+        "const_statement",
+        "variable_statement",
+        "enum_definition",
+    }
+)
+
+# GDScript declarations that are symbols only at file / class scope. Inside a
+# ``func`` body a ``var`` / ``const`` is a local, not a property; emitting it
+# would flood symbol queries the way minified bundles would.
+_GDSCRIPT_LOCAL_CAPABLE_NODE_TYPES = frozenset({"variable_statement", "const_statement"})
+
+# Ancestor types that mark a GDScript function-body scope. Any ``var`` /
+# ``const`` nested under one of these is a local. ``body`` covers ``func`` and
+# ``_init``; ``get_body`` / ``set_body`` cover property accessors.
+_GDSCRIPT_FUNCTION_SCOPE_NODE_TYPES = frozenset(
+    {"function_definition", "constructor_definition", "body", "get_body", "set_body"}
+)
+
+# GDScript nodes that expose a type annotation via a ``type`` field.
+# ``function_definition`` / ``constructor_definition`` instead use
+# ``return_type`` (handled explicitly in the walker). ``signal`` has no type
+# field: its parameter types flow through ``typed_parameter``.
+_GDSCRIPT_TYPE_FIELD_NODES = frozenset(
+    {
+        "typed_parameter",
+        "variable_statement",
+        "const_statement",
+        "function_definition",
+        "constructor_definition",
+    }
+)
 
 CALL_NODE_TYPES = {
     "call_expression",
@@ -434,6 +478,10 @@ _CALLABLE_KINDS = {
     "getter_signature",
     "setter_signature",
     "constructor_signature",
+    # GDScript — ``func`` reuses ``function_definition`` (already listed);
+    # these two are the extra callables that carry a parameter list.
+    "constructor_definition",
+    "signal_statement",
 }
 
 
@@ -541,11 +589,17 @@ def _walk(
             if any(c.type == "compound_statement" for c in node.children):
                 pushed_ns = True
 
-    if t in SYMBOL_NODE_TYPES or (
-        ex.lang == "dart" and t in _DART_SIGNATURE_SYMBOL_NODES
+    if (
+        t in SYMBOL_NODE_TYPES
+        or (ex.lang == "dart" and t in _DART_SIGNATURE_SYMBOL_NODES)
+        or (ex.lang == "gdscript" and t in _GDSCRIPT_SYMBOL_NODE_TYPES)
     ):
         name = _symbol_name(node, source)
-        if name:
+        if name and not (
+            ex.lang == "gdscript"
+            and t in _GDSCRIPT_LOCAL_CAPABLE_NODE_TYPES
+            and _gdscript_is_function_local(node)
+        ):
             partial = (
                 t in _PARTIAL_CAPABLE_KINDS and _has_partial_modifier(node, source)
             )
@@ -578,12 +632,17 @@ def _walk(
         injected = _inject_type(node, source)
         if injected:
             ex.injects.append(injected)
-    elif t in CALL_NODE_TYPES:
+    elif t in CALL_NODE_TYPES or (ex.lang == "gdscript" and t == "attribute_call"):
+        # GDScript ``obj.method(...)`` parses as ``attribute_call``; the
+        # grammar has no single call-expression node for method invocation.
+        gd_import = _gdscript_import_target(node, source) if ex.lang == "gdscript" else None
+        if gd_import:
+            # ``preload`` / ``load`` are file dependencies, not callables.
+            ex.imports.append(gd_import)
         # Angular DI: ``inject(Token)`` becomes an INJECTS edge instead
         # of a (stoplisted) CALL. Without this, the entire DI graph for
         # Angular 14+ codebases is invisible.
-        token = _angular_inject_token(node, source)
-        if token:
+        elif (token := _angular_inject_token(node, source)):
             ex.injects.append(token)
         else:
             callee = _callee_name(node, source)
@@ -639,6 +698,21 @@ def _walk(
             for child in node.children:
                 if child.type in _DART_TYPE_CHILD_NODES:
                     _collect_type_refs(child, source, ex.references)
+    if ex.lang == "gdscript":
+        # Inheritance: ``extends Node2D`` (the whole subtree is a type).
+        # Type annotations: parameter / var / const ``type`` fields and
+        # function / constructor ``return_type`` (signal parameter types
+        # arrive via ``typed_parameter``).
+        # NOTE: Godot *engine* types (Vector2, Color, Signal, Dictionary,
+        # NodePath, Array, ...) are intentionally emitted as references in
+        # v1 — only scalar primitives are filtered; they resolve like user
+        # types.
+        if t == "extends_statement":
+            _collect_type_refs(node, source, ex.references)
+        elif t in _GDSCRIPT_TYPE_FIELD_NODES:
+            tnode = node.child_by_field_name("type") or node.child_by_field_name("return_type")
+            if tnode is not None:
+                _collect_type_refs(tnode, source, ex.references)
     # C# pattern / cast / typeof: tree-sitter doesn't expose a `type`
     # field on these, so collect the type child positionally.
     if t == "cast_expression":
@@ -741,6 +815,10 @@ def _symbol_name(node: Node, source: bytes) -> str | None:
             if child.type == "identifier":
                 return _slice(source, child)
         return None
+    if node.type == "constructor_definition":
+        # GDScript ``func _init()``: the grammar exposes no ``name`` field;
+        # the constructor is identified by the ``_init`` token.
+        return "_init"
     for child in node.children:
         if child.type in {"identifier", "type_identifier", "property_identifier"}:
             return _slice(source, child)
@@ -1523,6 +1601,53 @@ def _dart_import_uri(node: Node, source: bytes) -> str | None:
             return _slice(source, cur).strip().strip("'\"")
         queue.extend(cur.children)
     return None
+
+
+def _gdscript_import_target(node: Node, source: bytes) -> str | None:
+    """Return the ``res://`` path of a GDScript ``preload`` / ``load`` call.
+
+    The grammar parses both as a plain ``call`` whose first child is a bare
+    ``identifier``; only a string-literal first argument is accepted. Returns
+    ``None`` for ordinary calls so the CALLS edge path still runs.
+
+    Caveat (accepted v1 limitation): the callee is matched by bare text only,
+    so a user-defined ``func load(p)`` shadowing the engine builtin still
+    produces an import edge and suppresses the call. This mirrors the
+    text-based callee recovery used by the other languages; a real fix needs
+    scope resolution, out of scope here.
+    """
+    if node.type != "call":
+        return None
+    first = node.children[0] if node.children else None
+    if first is None or first.type != "identifier":
+        return None
+    if _slice(source, first) not in {"preload", "load"}:
+        return None
+    args = node.child_by_field_name("arguments")
+    if args is None:
+        return None
+    for sub in args.children:
+        if sub.type == "string":
+            text = _slice(source, sub).strip().strip("'\"")
+            return text or None
+    return None
+
+
+def _gdscript_is_function_local(node: Node) -> bool:
+    """True when ``node`` sits inside a GDScript function-like body.
+
+    A ``var`` / ``const`` is a property at file or class scope but only a
+    local inside a ``func`` (``body``) or a property accessor
+    (``get_body`` / ``set_body``). Walks the ``parent`` chain — the grammar
+    always attaches parents, so this is cheaper and clearer than threading an
+    extra scope stack through ``_walk``.
+    """
+    parent = node.parent
+    while parent is not None:
+        if parent.type in _GDSCRIPT_FUNCTION_SCOPE_NODE_TYPES:
+            return True
+        parent = parent.parent
+    return False
 
 
 def _dart_callee(node: Node, source: bytes) -> str | None:
